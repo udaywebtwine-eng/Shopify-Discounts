@@ -1,0 +1,31 @@
+query CartInput {
+  cart {
+    lines {
+      id
+      quantity
+      cost {
+        subtotalAmount {
+          amount
+        }
+      }
+      merchandise {
+        __typename
+        ... on ProductVariant {
+          id
+          product {
+            id
+            suggestedProducts: metafield(namespace: "custom", key: "suggested_products") {
+              value
+            }
+          }
+        }
+      }
+    }
+  }
+  discount {
+    discountClasses
+    metafield(namespace: "$app:discount", key: "function_configuration") {
+      value
+    }
+  }
+}
