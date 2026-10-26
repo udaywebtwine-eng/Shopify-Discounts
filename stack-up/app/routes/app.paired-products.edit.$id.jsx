@@ -175,6 +175,7 @@ export const loader = async ({ request, params }) => {
     return {
         numericId,
         discountNodeId: discountNode.id,
+        shopifyStatus: disc.status || "ACTIVE",
         title: disc.title || "",
         percentage: String(config.percentage || "20"),
         combinesWith: disc.combinesWith || {
@@ -197,10 +198,76 @@ export const action = async ({ request, params }) => {
     const formData = await request.formData();
     const intent = formData.get("intent") || "update";
 
+    // Handle Deactivate
+    if (intent === "deactivate") {
+        console.log("-------------------> [Deactivate Clicked] Offer ID:", numericId);
+        const targetId = formData.get("discountNodeId") || `gid://shopify/DiscountAutomaticNode/${numericId}`;
+
+        try {
+            const response = await admin.graphql(
+                `#graphql
+                mutation DeactivateAutomaticDiscount($id: ID!) {
+                  discountAutomaticDeactivate(id: $id) {
+                    automaticDiscountNode {
+                      id
+                    }
+                    userErrors {
+                      field
+                      message
+                    }
+                  }
+                }`,
+                { variables: { id: targetId } }
+            );
+            const json = await response.json();
+            const userErrors = json.data?.discountAutomaticDeactivate?.userErrors || [];
+            if (userErrors.length > 0) {
+                return { error: userErrors.map((e) => e.message).join(", ") };
+            }
+            return redirect(`/app/paired-products/edit/${numericId}`);
+        } catch (err) {
+            console.error("-------------------> [EditAction] Error deactivating discount:", err);
+            return { error: err instanceof Error ? err.message : "Failed to deactivate offer." };
+        }
+    }
+
+    // Handle Activate
+    if (intent === "activate") {
+        console.log("-------------------> [Activate Clicked] Offer ID:", numericId);
+        const targetId = formData.get("discountNodeId") || `gid://shopify/DiscountAutomaticNode/${numericId}`;
+
+        try {
+            const response = await admin.graphql(
+                `#graphql
+                mutation ActivateAutomaticDiscount($id: ID!) {
+                  discountAutomaticActivate(id: $id) {
+                    automaticDiscountNode {
+                      id
+                    }
+                    userErrors {
+                      field
+                      message
+                    }
+                  }
+                }`,
+                { variables: { id: targetId } }
+            );
+            const json = await response.json();
+            const userErrors = json.data?.discountAutomaticActivate?.userErrors || [];
+            if (userErrors.length > 0) {
+                return { error: userErrors.map((e) => e.message).join(", ") };
+            }
+            return redirect(`/app/paired-products/edit/${numericId}`);
+        } catch (err) {
+            console.error("-------------------> [EditAction] Error activating discount:", err);
+            return { error: err instanceof Error ? err.message : "Failed to activate offer." };
+        }
+    }
+
     // Handle Delete
     if (intent === "delete") {
         console.log("-------------------> [Delete Clicked] Deleting offer ID:", numericId);
-        const deleteId = formData.get("discountNodeId") || `gid://shopify/DiscountAutomaticApp/${numericId}`;
+        const deleteId = formData.get("discountNodeId") || `gid://shopify/DiscountAutomaticNode/${numericId}`;
 
         try {
             const response = await admin.graphql(
@@ -666,12 +733,57 @@ export default function PairedProductsEdit() {
         submit(formData, { method: "post" });
     };
 
-    const status =
-        hasEndDate && endsAt && endsAt < todayStr
-            ? "EXPIRED"
-            : startsAt > todayStr
-                ? "SCHEDULED"
-                : "ACTIVE";
+    useEffect(() => {
+        setTitle(data.title);
+        setPercentage(data.percentage);
+        setMainProducts(data.initialMainProducts);
+        setSubProducts(data.initialSubProducts);
+        setCombinesWithOrder(data.combinesWith.orderDiscounts || false);
+        setCombinesWithProduct(data.combinesWith.productDiscounts || false);
+        setCombinesWithShipping(data.combinesWith.shippingDiscounts || false);
+        setStartsAt(data.startsAt || todayStr);
+        setHasEndDate(data.hasEndDate);
+        setEndsAt(data.endsAt || "");
+        setIsSaved(false);
+        shopify.saveBar?.hide("edit-paired-offer-save-bar");
+    }, [data, todayStr, shopify]);
+
+    const isDeactivatedOrExpired =
+        data.shopifyStatus === "EXPIRED" ||
+        (hasEndDate && endsAt && endsAt < todayStr);
+
+    const handleDeactivateOffer = () => {
+        setIsSaved(true);
+        shopify.saveBar?.hide("edit-paired-offer-save-bar");
+        const formData = new FormData();
+        formData.append("intent", "deactivate");
+        formData.append("discountNodeId", data.discountNodeId);
+        submit(formData, { method: "post" });
+    };
+
+    const handleActivateOffer = () => {
+        setIsSaved(true);
+        shopify.saveBar?.hide("edit-paired-offer-save-bar");
+        const formData = new FormData();
+        formData.append("intent", "activate");
+        formData.append("discountNodeId", data.discountNodeId);
+        submit(formData, { method: "post" });
+    };
+
+    const handleDeleteOffer = () => {
+        setIsSaved(true);
+        shopify.saveBar?.hide("edit-paired-offer-save-bar");
+        const formData = new FormData();
+        formData.append("intent", "delete");
+        formData.append("discountNodeId", data.discountNodeId);
+        submit(formData, { method: "post" });
+    };
+
+    const status = isDeactivatedOrExpired
+        ? "EXPIRED"
+        : startsAt > todayStr
+            ? "SCHEDULED"
+            : "ACTIVE";
     const statusTone =
         status === "ACTIVE"
             ? "success"
@@ -690,6 +802,104 @@ export default function PairedProductsEdit() {
             <s-link slot="breadcrumb-actions" href="/app/paired-products">
                 Paired Products Offers
             </s-link>
+
+            {/* Official Polaris Web Component More Actions Menu */}
+            <s-button
+                slot="secondary-actions"
+                commandFor="offer-actions"
+            >
+                More actions
+            </s-button>
+
+            <s-menu
+                id="offer-actions"
+                accessibilityLabel="Offer actions"
+            >
+                {isDeactivatedOrExpired ? (
+                    <s-button onClick={handleActivateOffer}>
+                        Activate
+                    </s-button>
+                ) : (
+                    <s-button
+                        commandFor="deactivate-offer-modal"
+                        command="--show"
+                    >
+                        Deactivate
+                    </s-button>
+                )}
+
+                <s-button
+                    tone="critical"
+                    commandFor="delete-offer-modal"
+                    command="--show"
+                >
+                    Delete
+                </s-button>
+            </s-menu>
+
+            {/* Deactivate Confirmation Modal */}
+            <s-modal id="deactivate-offer-modal" heading="Deactivate offer?">
+                <s-stack gap="base">
+                    <s-paragraph>
+                        Are you sure you want to deactivate <b>&ldquo;{title || data.title}&rdquo;</b>? Customers will no longer receive this discount at checkout.
+                    </s-paragraph>
+                    {isDirty && (
+                        <s-paragraph tone="caution">
+                            Note: Any unsaved changes you made will be discarded.
+                        </s-paragraph>
+                    )}
+                </s-stack>
+
+                <s-button
+                    slot="primary-action"
+                    variant="primary"
+                    tone="critical"
+                    commandFor="deactivate-offer-modal"
+                    command="--hide"
+                    onClick={handleDeactivateOffer}
+                >
+                    Deactivate
+                </s-button>
+                <s-button
+                    slot="secondary-actions"
+                    variant="secondary"
+                    commandFor="deactivate-offer-modal"
+                    command="--hide"
+                >
+                    Cancel
+                </s-button>
+            </s-modal>
+
+            {/* Delete Confirmation Modal */}
+            <s-modal id="delete-offer-modal" heading="Delete offer?">
+                <s-stack gap="base">
+                    <s-paragraph>
+                        Are you sure you want to delete <b>&ldquo;{title || data.title}&rdquo;</b>?
+                    </s-paragraph>
+                    <s-paragraph tone="critical">
+                        This action cannot be undone.
+                    </s-paragraph>
+                </s-stack>
+
+                <s-button
+                    slot="primary-action"
+                    variant="primary"
+                    tone="critical"
+                    commandFor="delete-offer-modal"
+                    command="--hide"
+                    onClick={handleDeleteOffer}
+                >
+                    Delete offer
+                </s-button>
+                <s-button
+                    slot="secondary-actions"
+                    variant="secondary"
+                    commandFor="delete-offer-modal"
+                    command="--hide"
+                >
+                    Cancel
+                </s-button>
+            </s-modal>
 
             <SaveBar id="edit-paired-offer-save-bar" open={showSaveBar}>
                 <button
