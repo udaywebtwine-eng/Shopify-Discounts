@@ -1,8 +1,10 @@
 import { useState, useEffect } from "react";
-import { useLoaderData, useNavigate, useSubmit, useActionData, useSearchParams } from "react-router";
+import { useLoaderData, useSubmit, useActionData, useSearchParams } from "react-router";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
+import prisma from "../db.server";
 import { getShopTimezone, formatDateInShopTimezone } from "../utils/timezone";
+import { syncRecentOrdersFromShopify } from "../utils/orders.server";
 
 export const loader = async ({ request }) => {
     const { admin, session } = await authenticate.admin(request);
@@ -43,6 +45,68 @@ export const loader = async ({ request }) => {
         const json = await response.json();
         const nodes = json.data?.discountNodes?.nodes || [];
 
+        // Auto-sync offers from Shopify to PostgreSQL DB so existing offers are recovered
+        try {
+            for (const node of nodes) {
+                const disc = node.discount;
+                if (!disc || disc.__typename !== "DiscountAutomaticApp" || !node.metafield?.value) continue;
+                let config = null;
+                try { config = JSON.parse(node.metafield.value); } catch { continue; }
+                if (!config || config.discountType !== "PAIRED_PRODUCTS") continue;
+
+                const numericId = node.id.split("/").pop();
+                await prisma.pairedOffer.upsert({
+                    where: { discountId: node.id },
+                    update: {
+                        title: disc.title || config.title || "Paired Products Discount",
+                        percentage: parseFloat(config.percentage) || 0,
+                        status: disc.status || "ACTIVE",
+                        startsAt: disc.startsAt ? new Date(disc.startsAt) : undefined,
+                        endsAt: disc.endsAt ? new Date(disc.endsAt) : null,
+                        mainProducts: JSON.stringify(config.mainProducts || []),
+                        subProducts: JSON.stringify(config.subProducts || []),
+                    },
+                    create: {
+                        shop: session.shop,
+                        discountId: node.id,
+                        numericId,
+                        title: disc.title || config.title || "Paired Products Discount",
+                        percentage: parseFloat(config.percentage) || 0,
+                        status: disc.status || "ACTIVE",
+                        combinesWithOrder: Boolean(disc.combinesWith?.orderDiscounts),
+                        combinesWithProduct: Boolean(disc.combinesWith?.productDiscounts),
+                        combinesWithShipping: Boolean(disc.combinesWith?.shippingDiscounts),
+                        startsAt: disc.startsAt ? new Date(disc.startsAt) : new Date(),
+                        endsAt: disc.endsAt ? new Date(disc.endsAt) : null,
+                        mainProducts: JSON.stringify(config.mainProducts || []),
+                        subProducts: JSON.stringify(config.subProducts || []),
+                    },
+                });
+            }
+        } catch (syncErr) {
+            console.warn("Could not auto-sync offers to DB:", syncErr);
+        }
+
+        // Auto-sync recent orders to calculate Total Sales and Total Discounts
+        if (session?.shop) {
+            await syncRecentOrdersFromShopify(admin, session.shop);
+        }
+
+        // Fetch DB usage counts
+        let dbOfferMap = {};
+        try {
+            const dbOffers = await prisma.pairedOffer.findMany({
+                where: { shop: session.shop },
+                select: { discountId: true, numericId: true, usageCount: true },
+            });
+            for (const d of dbOffers) {
+                dbOfferMap[d.discountId] = d;
+                dbOfferMap[d.numericId] = d;
+            }
+        } catch (e) {
+            console.warn("Could not fetch DB offer usage counts:", e);
+        }
+
         liveOffers = nodes
             .map((node) => {
                 const disc = node.discount;
@@ -73,6 +137,9 @@ export const loader = async ({ request }) => {
                     shippingDiscounts: Boolean(disc.combinesWith?.shippingDiscounts),
                 };
 
+                const dbItem = dbOfferMap[node.id] || dbOfferMap[numericId];
+                const usageCount = dbItem?.usageCount || 0;
+
                 return {
                     id: node.id,
                     numericId,
@@ -82,6 +149,7 @@ export const loader = async ({ request }) => {
                     subProductCount,
                     status: disc.status || "ACTIVE",
                     combinesWith,
+                    usageCount,
                     startDate: disc.startsAt ? formatDateInShopTimezone(disc.startsAt, shopTimezone) : "Immediate",
                     endDate: disc.endsAt ? formatDateInShopTimezone(disc.endsAt, shopTimezone) : null,
                 };
@@ -89,7 +157,7 @@ export const loader = async ({ request }) => {
             .filter(Boolean);
 
         console.log("-------------------> [Index: Table] Loaded " + liveOffers.length + " Paired Products offers:");
-        console.log("-------------------> [Index: Table] Offers:", liveOffers.map((o) => ({ id: o.numericId, title: o.title, discount: o.discountPercentage, status: o.status })));
+        console.log("-------------------> [Index: Table] Offers:", liveOffers.map((o) => ({ id: o.numericId, title: o.title, discount: o.discountPercentage, status: o.status, usageCount: o.usageCount })));
     } catch (err) {
         console.error("-------------------> [Index: Table] Error querying discountNodes:", err);
     }
@@ -137,6 +205,22 @@ export const action = async ({ request }) => {
                 if (userErrors.length === 0 && (json.data?.discountAutomaticDelete?.deletedAutomaticDiscountId || json.data?.discountAutomaticDelete)) {
                     console.log("-------------------> [Delete Success] Deleted offer ID:", json.data.discountAutomaticDelete.deletedAutomaticDiscountId);
                     deleted = true;
+
+                    // Delete from PostgreSQL DB as well
+                    try {
+                        await prisma.pairedOffer.deleteMany({
+                            where: {
+                                OR: [
+                                    id ? { discountId: id } : undefined,
+                                    numericId ? { numericId } : undefined,
+                                ].filter(Boolean),
+                            },
+                        });
+                        console.log("-------------------> 💾 [Index: Delete] Removed offer from DB for ID:", numericId || id);
+                    } catch (dbErr) {
+                        console.warn("Could not delete from DB:", dbErr);
+                    }
+
                     break;
                 } else if (userErrors.length > 0) {
                     lastError = userErrors.map((e) => e.message).join(", ");
@@ -157,6 +241,7 @@ export const action = async ({ request }) => {
     return null;
 };
 
+// eslint-disable-next-line react/prop-types
 function MetricCard({ label, value, iconType, onClick, disabled }) {
     return (
         <s-clickable
@@ -183,9 +268,8 @@ function MetricCard({ label, value, iconType, onClick, disabled }) {
 }
 
 export default function PairedProducts() {
-    const { shopName, offers } = useLoaderData();
+    const { offers } = useLoaderData();
     const actionData = useActionData();
-    const navigate = useNavigate();
     const submit = useSubmit();
     const [searchParams, setSearchParams] = useSearchParams();
     const shopify = useAppBridge();
@@ -349,8 +433,9 @@ export default function PairedProducts() {
                             <s-table-header>Sub products</s-table-header>
                             <s-table-header>Status</s-table-header>
                             <s-table-header>Combinations</s-table-header>
+                            <s-table-header>Used</s-table-header>
                             <s-table-header>Schedule</s-table-header>
-                            <s-table-header >Actions</s-table-header>
+                            <s-table-header>Actions</s-table-header>
                         </s-table-header-row>
 
                         {/* Table Body */}
@@ -476,6 +561,13 @@ export default function PairedProducts() {
                                                     />
                                                 </span>
                                             </s-stack>
+                                        </s-table-cell>
+
+                                        {/* Used count */}
+                                        <s-table-cell>
+                                            <s-text weight={offer.usageCount > 0 ? "bold" : "regular"}>
+                                                {offer.usageCount || 0} times
+                                            </s-text>
                                         </s-table-cell>
 
                                         <s-table-cell>

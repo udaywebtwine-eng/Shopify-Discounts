@@ -8,15 +8,17 @@ import {
 } from "react-router";
 import { useAppBridge, SaveBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
+import prisma from "../db.server";
 import {
     getShopTimezone,
     getShopTodayDate,
     formatDateInShopTimezone,
     dateToShopISO,
 } from "../utils/timezone";
+import { syncRecentOrdersFromShopify } from "../utils/orders.server";
 
 export const loader = async ({ request, params }) => {
-    const { admin } = await authenticate.admin(request);
+    const { admin, session } = await authenticate.admin(request);
     const numericId = params.id;
 
     console.log("-------------------> [EditLoader] Loading offer for numericId:", numericId);
@@ -172,6 +174,26 @@ export const loader = async ({ request, params }) => {
     console.log("------------------->   Main Products (" + initialMainProducts.length + "):", initialMainProducts.map((p) => `${p.quantity}x ${p.title}`));
     console.log("------------------->   Sub Products (" + initialSubProducts.length + "):", initialSubProducts.map((p) => `${p.quantity}x ${p.title}`));
 
+    // Auto-sync recent orders to calculate Total Sales and Total Discounts
+    if (session?.shop) {
+        await syncRecentOrdersFromShopify(admin, session.shop);
+    }
+
+    let dbOffer = null;
+    try {
+        dbOffer = await prisma.pairedOffer.findFirst({
+            where: { numericId },
+            include: {
+                orders: {
+                    take: 5,
+                    orderBy: { createdAt: "desc" },
+                },
+            },
+        });
+    } catch (e) {
+        console.warn("Could not query DB for offer analytics:", e);
+    }
+
     return {
         numericId,
         discountNodeId: discountNode.id,
@@ -189,11 +211,17 @@ export const loader = async ({ request, params }) => {
         shopTimezone,
         initialMainProducts,
         initialSubProducts,
+        analytics: {
+            usageCount: dbOffer?.usageCount || 0,
+            totalRevenue: dbOffer?.totalRevenue || 0,
+            totalDiscountAmount: dbOffer?.totalDiscountAmount || 0,
+            recentOrders: dbOffer?.orders || [],
+        },
     };
 };
 
 export const action = async ({ request, params }) => {
-    const { admin } = await authenticate.admin(request);
+    const { admin, session } = await authenticate.admin(request);
     const numericId = params.id;
     const formData = await request.formData();
     const intent = formData.get("intent") || "update";
@@ -224,6 +252,17 @@ export const action = async ({ request, params }) => {
             if (userErrors.length > 0) {
                 return { error: userErrors.map((e) => e.message).join(", ") };
             }
+
+            try {
+                await prisma.pairedOffer.updateMany({
+                    where: { numericId },
+                    data: { status: "EXPIRED" },
+                });
+                console.log("-------------------> 💾 [Deactivate] Synced EXPIRED status to DB for ID:", numericId);
+            } catch (dbErr) {
+                console.warn("Could not sync deactivation to DB:", dbErr);
+            }
+
             return redirect(`/app/paired-products/edit/${numericId}`);
         } catch (err) {
             console.error("-------------------> [EditAction] Error deactivating discount:", err);
@@ -257,6 +296,17 @@ export const action = async ({ request, params }) => {
             if (userErrors.length > 0) {
                 return { error: userErrors.map((e) => e.message).join(", ") };
             }
+
+            try {
+                await prisma.pairedOffer.updateMany({
+                    where: { numericId },
+                    data: { status: "ACTIVE" },
+                });
+                console.log("-------------------> 💾 [Activate] Synced ACTIVE status to DB for ID:", numericId);
+            } catch (dbErr) {
+                console.warn("Could not sync activation to DB:", dbErr);
+            }
+
             return redirect(`/app/paired-products/edit/${numericId}`);
         } catch (err) {
             console.error("-------------------> [EditAction] Error activating discount:", err);
@@ -289,6 +339,15 @@ export const action = async ({ request, params }) => {
             const userErrors = json.data?.discountAutomaticDelete?.userErrors || [];
             if (userErrors.length > 0) {
                 return { error: userErrors.map((e) => e.message).join(", ") };
+            }
+
+            try {
+                await prisma.pairedOffer.deleteMany({
+                    where: { numericId },
+                });
+                console.log("-------------------> 💾 [Delete] Removed offer from DB for ID:", numericId);
+            } catch (dbErr) {
+                console.warn("Could not delete offer from DB:", dbErr);
             }
 
             console.log("-------------------> 🎉 [EditAction] Offer deleted successfully!");
@@ -428,6 +487,44 @@ export const action = async ({ request, params }) => {
         }
 
         console.log("-------------------> [Save Edit Success] Offer updated successfully in Shopify for ID:", numericId);
+
+        // Sync updated offer to PostgreSQL DB via Prisma
+        const discountNodeId = formData.get("discountNodeId") || `gid://shopify/DiscountAutomaticNode/${numericId}`;
+        try {
+            await prisma.pairedOffer.upsert({
+                where: { discountId: discountNodeId },
+                update: {
+                    title,
+                    percentage,
+                    combinesWithOrder,
+                    combinesWithProduct,
+                    combinesWithShipping,
+                    startsAt: effectiveStartsAt ? new Date(effectiveStartsAt) : undefined,
+                    endsAt: effectiveEndsAt ? new Date(effectiveEndsAt) : null,
+                    mainProducts: JSON.stringify(mainProducts),
+                    subProducts: JSON.stringify(subProducts),
+                },
+                create: {
+                    shop: session?.shop || "",
+                    discountId: discountNodeId,
+                    numericId,
+                    title,
+                    percentage,
+                    status: "ACTIVE",
+                    combinesWithOrder,
+                    combinesWithProduct,
+                    combinesWithShipping,
+                    startsAt: effectiveStartsAt ? new Date(effectiveStartsAt) : new Date(),
+                    endsAt: effectiveEndsAt ? new Date(effectiveEndsAt) : null,
+                    mainProducts: JSON.stringify(mainProducts),
+                    subProducts: JSON.stringify(subProducts),
+                },
+            });
+            console.log("-------------------> 💾 [EditAction] Successfully synced offer to PostgreSQL DB! ID:", numericId);
+        } catch (dbErr) {
+            console.error("-------------------> [EditAction] Error updating DB:", dbErr);
+        }
+
         return redirect("/app/paired-products");
     } catch (err) {
         console.error("-------------------> [Save Edit Failed] Exception:", err);
@@ -1341,6 +1438,26 @@ export default function PairedProductsEdit() {
                         <s-paragraph size="small" tone="subdued">
                             When a customer adds the required quantity of Main and Sub products to cart, {percentage || "0"}% discount will be applied automatically at checkout.
                         </s-paragraph>
+                    </s-stack>
+                </s-stack>
+            </s-section>
+
+            {/* Performance & Usage Analytics */}
+            <s-section slot="aside" heading="Performance">
+                <s-stack gap="base">
+                    <s-stack direction="inline" justifyContent="space-between" alignItems="center">
+                        <s-text tone="subdued">Times used</s-text>
+                        <s-text weight="bold">{data.analytics?.usageCount || 0} times</s-text>
+                    </s-stack>
+                    <s-divider />
+                    <s-stack direction="inline" justifyContent="space-between" alignItems="center">
+                        <s-text tone="subdued">Total sales</s-text>
+                        <s-text weight="bold">${(data.analytics?.totalRevenue || 0).toFixed(2)}</s-text>
+                    </s-stack>
+                    <s-divider />
+                    <s-stack direction="inline" justifyContent="space-between" alignItems="center">
+                        <s-text tone="subdued">Total discount</s-text>
+                        <s-text weight="bold">${(data.analytics?.totalDiscountAmount || 0).toFixed(2)}</s-text>
                     </s-stack>
                 </s-stack>
             </s-section>

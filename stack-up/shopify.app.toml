@@ -7,7 +7,7 @@ name = "StackUp"
 
 [access_scopes]
 # Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
-scopes = "read_products,read_discounts,write_discounts"
+scopes = "read_products,read_discounts,write_discounts,read_orders"
 
 [discount.metafields.app.function_configuration]
 type = "json"
@@ -27,6 +27,10 @@ topics = ["app/uninstalled"]
 [[webhooks.subscriptions]]
 uri = "/webhooks/app/scopes_update"
 topics = ["app/scopes_update"]
+
+[[webhooks.subscriptions]]
+uri = "/webhooks/orders/create"
+topics = ["orders/create"]
 
 [auth]
 redirect_urls = ["https://example.com/api/auth"]

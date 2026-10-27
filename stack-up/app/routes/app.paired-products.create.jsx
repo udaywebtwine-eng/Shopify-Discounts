@@ -8,6 +8,7 @@ import {
 } from "react-router";
 import { useAppBridge, SaveBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
+import prisma from "../db.server";
 import { getShopTimezone, getShopTodayDate, dateToShopISO } from "../utils/timezone";
 
 export const loader = async ({ request }) => {
@@ -46,7 +47,7 @@ export const loader = async ({ request }) => {
 };
 
 export const action = async ({ request }) => {
-  const { admin } = await authenticate.admin(request);
+  const { admin, session } = await authenticate.admin(request);
   const formData = await request.formData();
 
   const title = (formData.get("title") || "").trim();
@@ -187,6 +188,34 @@ export const action = async ({ request }) => {
 
     const createdDiscount = json.data?.discountAutomaticAppCreate?.automaticAppDiscount;
     console.log("-------------------> 🎉 [CreateAction] Discount created successfully in Shopify!", createdDiscount);
+
+    // Save offer to PostgreSQL DB via Prisma
+    const discountId = createdDiscount?.discountId || "";
+    const numericId = discountId.split("/").pop() || "";
+
+    try {
+      await prisma.pairedOffer.create({
+        data: {
+          shop: session.shop,
+          discountId,
+          numericId,
+          title,
+          percentage,
+          status: createdDiscount?.status || "ACTIVE",
+          combinesWithOrder,
+          combinesWithProduct,
+          combinesWithShipping,
+          startsAt: effectiveStartsAt ? new Date(effectiveStartsAt) : new Date(),
+          endsAt: effectiveEndsAt ? new Date(effectiveEndsAt) : null,
+          mainProducts: JSON.stringify(mainProducts),
+          subProducts: JSON.stringify(subProducts),
+        },
+      });
+      console.log("-------------------> 💾 [CreateAction] Successfully saved offer to PostgreSQL DB! ID:", numericId);
+    } catch (dbErr) {
+      console.error("-------------------> [CreateAction] Error saving to DB:", dbErr);
+    }
+
     console.log("-------------------> ====================================================");
 
     return redirect("/app/paired-products?created=true");
