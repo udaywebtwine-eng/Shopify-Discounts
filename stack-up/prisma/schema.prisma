@@ -5,30 +5,64 @@ generator client {
   provider = "prisma-client-js"
 }
 
-// Note that some adapters may set a maximum length for the String type by default, please ensure your strings are long
-// enough when changing adapters.
-// See https://www.prisma.io/docs/orm/reference/prisma-schema-reference#string for more information
 datasource db {
-  provider = "sqlite"
-  url      = "file:dev.sqlite"
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
 }
 
 model Session {
-  id            String    @id
-  shop          String
-  state         String
-  isOnline      Boolean   @default(false)
-  scope         String?
-  expires       DateTime?
-  accessToken   String
-  userId        BigInt?
-  firstName     String?
-  lastName      String?
-  email         String?
-  accountOwner  Boolean   @default(false)
-  locale        String?
-  collaborator  Boolean?  @default(false)
-  emailVerified Boolean?  @default(false)
+  id                  String    @id
+  shop                String
+  state               String
+  isOnline            Boolean   @default(false)
+  scope               String?
+  expires             DateTime?
+  accessToken         String
+  userId              BigInt?
+  firstName           String?
+  lastName            String?
+  email               String?
+  accountOwner        Boolean   @default(false)
+  locale              String?
+  collaborator        Boolean?  @default(false)
+  emailVerified       Boolean?  @default(false)
   refreshToken        String?
   refreshTokenExpires DateTime?
+}
+
+model PairedOffer {
+  id                    String        @id @default(uuid())
+  shop                  String
+  discountId            String        @unique // e.g. gid://shopify/DiscountAutomaticNode/...
+  numericId             String
+  title                 String
+  percentage            Float
+  status                String        @default("ACTIVE") // ACTIVE / EXPIRED
+  combinesWithOrder     Boolean       @default(false)
+  combinesWithProduct   Boolean       @default(false)
+  combinesWithShipping  Boolean       @default(false)
+  startsAt              DateTime?
+  endsAt                DateTime?
+  mainProducts          String        // JSON array of { id, title, image, price, quantity }
+  subProducts           String        // JSON array of { id, title, image, price, quantity }
+  usageCount            Int           @default(0)   // Total times used / orders count
+  totalRevenue          Float         @default(0.0) // Total revenue generated
+  totalDiscountAmount   Float         @default(0.0) // Total discount given
+  orders                OrderUsage[]
+  createdAt             DateTime      @default(now())
+  updatedAt             DateTime      @updatedAt
+}
+
+model OrderUsage {
+  id             String       @id @default(uuid())
+  shop           String
+  orderId        String       @unique
+  orderName      String?      // e.g. "#1001"
+  customerEmail  String?
+  totalPrice     Float
+  discountAmount Float
+  currency       String       @default("USD")
+  offerId        String?
+  offer          PairedOffer? @relation(fields: [offerId], references: [id], onDelete: Cascade)
+  createdAt      DateTime     @default(now())
 }
