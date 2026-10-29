@@ -44,6 +44,11 @@ function parseSuggestedProductIds(metafieldValue) {
  * @returns {CartLinesDiscountsGenerateRunResult}
  */
 export function cartLinesDiscountsGenerateRun(input) {
+  // Check if StackUp is enabled in the shop metafield
+  if (input.shop?.appStatus?.value !== 'true') {
+    return { operations: [] };
+  }
+
   if (!input.cart.lines.length) {
     return { operations: [] };
   }

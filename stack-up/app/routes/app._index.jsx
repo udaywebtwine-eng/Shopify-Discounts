@@ -1,11 +1,29 @@
-import { useNavigate, useLoaderData } from "react-router";
+import { useEffect, useRef } from "react";
+import { useLoaderData, useFetcher } from "react-router";
 import { authenticate } from "../shopify.server";
+import { syncAppStatusMetafield } from "../utils/appStatus.server";
 
 export const loader = async ({ request }) => {
-  const { session } = await authenticate.admin(request);
+  const { session, admin } = await authenticate.admin(request);
   const shopName = session.shop.replace(".myshopify.com", "");
-  return { shopName, shop: session.shop };
+
+  // eslint-disable-next-line no-undef
+  const clientId = process.env.SHOPIFY_API_KEY;
+  const activateQuery = clientId
+    ? `&activateAppId=${encodeURIComponent(`${clientId}/app-embed`)}`
+    : "";
+
+  let themeEditorUrl = `https://admin.shopify.com/store/${shopName}/themes/current/editor?context=apps${activateQuery}`;
+
+  const { isAppEmbedEnabled, numericThemeId } = await syncAppStatusMetafield(admin);
+
+  if (numericThemeId) {
+    themeEditorUrl = `https://admin.shopify.com/store/${shopName}/themes/${numericThemeId}/editor?context=apps${activateQuery}`;
+  }
+
+  return { shopName, shop: session.shop, themeEditorUrl, isAppEmbedEnabled };
 };
+
 const BOTTOM_CARDS = [
   {
     title: "Product suggestions",
@@ -32,17 +50,97 @@ const BOTTOM_CARDS = [
 ];
 
 export default function Index() {
-  const navigate = useNavigate();
-  const { shopName } = useLoaderData();
+  const { shopName, themeEditorUrl: initialThemeEditorUrl, isAppEmbedEnabled: initialEmbedEnabled } = useLoaderData();
+  const fetcher = useFetcher();
+  const lastCheckRef = useRef(0);
+
+  const isAppEmbedEnabled =
+    fetcher.data?.isAppEmbedEnabled !== undefined
+      ? fetcher.data.isAppEmbedEnabled
+      : initialEmbedEnabled;
+
+  const themeEditorUrl = fetcher.data?.themeEditorUrl || initialThemeEditorUrl;
+
+  useEffect(() => {
+    const checkStatus = () => {
+      const now = Date.now();
+      // 5-second cooldown to prevent redundant requests
+      if (now - lastCheckRef.current < 5000) return;
+      if (fetcher.state !== "idle") return;
+
+      lastCheckRef.current = now;
+      fetcher.load("/app/status");
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        checkStatus();
+      }
+    };
+
+    const handleFocus = () => {
+      checkStatus();
+    };
+
+    window.addEventListener("focus", handleFocus);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      window.removeEventListener("focus", handleFocus);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [fetcher]);
+
+  const handleOpenTheme = (e) => {
+    e?.preventDefault?.();
+    if (themeEditorUrl) {
+      window.open(themeEditorUrl, "_blank", "noopener,noreferrer");
+    }
+  };
 
   return (
     <s-page heading="Automatic Discounts">
+      {!isAppEmbedEnabled && (
+        <s-button
+          slot="primary-action"
+          onClick={handleOpenTheme}
+          href={themeEditorUrl}
+          target="_blank"
+        >
+          Theme Editor
+        </s-button>
+      )}
+
       <s-box paddingBlockEnd="small">
         <s-heading tone="subdued">
           {shopName} • Create automatic offers for product combinations or selected products.
         </s-heading>
       </s-box>
       <s-section>
+        <s-box paddingBlockEnd="base">
+          {isAppEmbedEnabled ? (
+            <s-banner tone="success" heading="StackUp Theme Extension is Active">
+              <s-paragraph>
+                The app embed is active in your current theme. Your bundle widgets will display on matching product pages.
+              </s-paragraph>
+            </s-banner>
+          ) : (
+            <s-banner tone="warning" heading="Action Required: Enable StackUp in your Theme">
+              <s-paragraph>
+                To display your bundle offers and widgets on the product page, enable the <b>StackUp Bundles</b> app embed in your Shopify Theme Editor.
+              </s-paragraph>
+              <s-button
+                slot="secondary-actions"
+                variant="primary"
+                onClick={handleOpenTheme}
+                href={themeEditorUrl}
+                target="_blank"
+              >
+                🚀 Enable in Theme Editor
+              </s-button>
+            </s-banner>
+          )}
+        </s-box>
 
         <div
           style={{

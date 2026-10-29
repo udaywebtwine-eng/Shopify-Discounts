@@ -1,4 +1,9 @@
 query CartInput {
+  shop {
+    appStatus: metafield(namespace: "stack_up", key: "stack_up_app_enabled") {
+      value
+    }
+  }
   cart {
     lines {
       id

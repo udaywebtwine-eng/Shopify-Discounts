@@ -7,16 +7,21 @@ type = "function"
 uid = "17bcb551-17ec-ed9b-c018-2cc8c2a68d45a33fd616"
 description = "t:description"
 
-  [[extensions.targeting]]
-  target = "cart.lines.discounts.generate.run"
-  input_query = "src/cart_lines_discounts_generate_run.graphql"
-  export = "cart-lines-discounts-generate-run"
+[[extensions.targeting]]
+target = "cart.lines.discounts.generate.run"
+input_query = "src/cart_lines_discounts_generate_run.graphql"
+export = "cart-lines-discounts-generate-run"
 
-  [[extensions.targeting]]
-  target = "cart.delivery-options.discounts.generate.run"
-  input_query = "src/cart_delivery_options_discounts_generate_run.graphql"
-  export = "cart-delivery-options-discounts-generate-run"
+[[extensions.targeting]]
+target = "cart.delivery-options.discounts.generate.run"
+input_query = "src/cart_delivery_options_discounts_generate_run.graphql"
+export = "cart-delivery-options-discounts-generate-run"
 
-  [extensions.build]
-  command = ""
-  path = "dist/function.wasm"
+[extensions.build]
+command = ""
+path = "dist/function.wasm"
+
+[[extensions.metafields]]
+namespace = "stack_up"
+key = "stack_up_app_enabled"
+
