@@ -40,6 +40,14 @@ function parseSuggestedProductIds(metafieldValue) {
 }
 
 /**
+ * Extracts numeric ID from a Shopify GID or string ID.
+ */
+function getNumericId(id) {
+  if (!id) return '';
+  return String(id).split('/').pop().trim();
+}
+
+/**
  * @param {RunInput} input
  * @returns {CartLinesDiscountsGenerateRunResult}
  */
@@ -64,15 +72,30 @@ export function cartLinesDiscountsGenerateRun(input) {
     return { operations: [] };
   }
 
-  const mainProductIds = new Set(config.mainProductIds || []);
-  const subProductIds = new Set(config.subProductIds || []);
+  const mainProductIds = new Set();
+  (config.mainProductIds || []).forEach((id) => {
+    if (id) {
+      mainProductIds.add(String(id).trim());
+      mainProductIds.add(getNumericId(id));
+    }
+  });
+
+  const subProductIds = new Set();
+  (config.subProductIds || []).forEach((id) => {
+    if (id) {
+      subProductIds.add(String(id).trim());
+      subProductIds.add(getNumericId(id));
+    }
+  });
 
   // Map configured quantities per product
   const mainProductQuantities = {};
   if (Array.isArray(config.mainProducts)) {
     for (const item of config.mainProducts) {
       if (item?.id) {
-        mainProductQuantities[item.id] = Number(item.quantity) || 1;
+        const qty = Number(item.quantity) || 1;
+        mainProductQuantities[String(item.id).trim()] = qty;
+        mainProductQuantities[getNumericId(item.id)] = qty;
       }
     }
   }
@@ -81,7 +104,9 @@ export function cartLinesDiscountsGenerateRun(input) {
   if (Array.isArray(config.subProducts)) {
     for (const item of config.subProducts) {
       if (item?.id) {
-        subProductQuantities[item.id] = Number(item.quantity) || 1;
+        const qty = Number(item.quantity) || 1;
+        subProductQuantities[String(item.id).trim()] = qty;
+        subProductQuantities[getNumericId(item.id)] = qty;
       }
     }
   }
@@ -95,12 +120,18 @@ export function cartLinesDiscountsGenerateRun(input) {
     if (line.merchandise?.__typename === 'ProductVariant') {
       const product = line.merchandise.product;
       if (product?.id) {
-        cartProductIds.add(product.id);
-        const currentQty = cartProductQuantities.get(product.id) || 0;
-        cartProductQuantities.set(product.id, currentQty + (line.quantity || 1));
+        const fullId = String(product.id).trim();
+        const numId = getNumericId(fullId);
+        cartProductIds.add(fullId);
+        cartProductIds.add(numId);
+        const currentQty = cartProductQuantities.get(fullId) || cartProductQuantities.get(numId) || 0;
+        const newQty = currentQty + (line.quantity || 1);
+        cartProductQuantities.set(fullId, newQty);
+        cartProductQuantities.set(numId, newQty);
         cartLinesByProduct.push({
           lineId: line.id,
-          productId: product.id,
+          productId: fullId,
+          numericId: numId,
           suggestedMetafieldIds: parseSuggestedProductIds(product.suggestedProducts?.value),
         });
       }
@@ -124,8 +155,8 @@ export function cartLinesDiscountsGenerateRun(input) {
   // Fallback: If no explicit sub products chosen, check product's suggested_products metafield
   if (!hasSubProduct && subProductIds.size === 0) {
     for (const item of cartLinesByProduct) {
-      if (mainProductIds.has(item.productId)) {
-        if (item.suggestedMetafieldIds.some((id) => cartProductIds.has(id))) {
+      if (mainProductIds.has(item.productId) || mainProductIds.has(item.numericId)) {
+        if (item.suggestedMetafieldIds.some((id) => cartProductIds.has(id) || cartProductIds.has(getNumericId(id)))) {
           hasSubProduct = true;
           break;
         }
@@ -145,12 +176,14 @@ export function cartLinesDiscountsGenerateRun(input) {
 
   for (const line of input.cart.lines) {
     const productId = line.merchandise?.__typename === 'ProductVariant' ? line.merchandise.product?.id : null;
-    const isMain = productId && mainProductIds.has(productId);
-    let isSub = productId && subProductIds.has(productId);
+    const numId = getNumericId(productId);
+    const isMain = productId && (mainProductIds.has(productId) || mainProductIds.has(numId));
+    let isSub = productId && (subProductIds.has(productId) || subProductIds.has(numId));
 
     if (!isSub && subProductIds.size === 0 && productId) {
       for (const item of cartLinesByProduct) {
-        if (mainProductIds.has(item.productId) && item.suggestedMetafieldIds.includes(productId)) {
+        if ((mainProductIds.has(item.productId) || mainProductIds.has(item.numericId)) &&
+            (item.suggestedMetafieldIds.includes(productId) || item.suggestedMetafieldIds.includes(numId))) {
           isSub = true;
           break;
         }

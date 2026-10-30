@@ -1,10 +1,21 @@
 <!-- StackUp Theme App Embed -->
+{{ 'stack-up.css' | asset_url | stylesheet_tag }}
+{{ 'stack-up.js' | asset_url | script_tag }}
+
+<span data-stackup-embed-active hidden style="display:none !important;"></span>
+<script>
+  if (document.body) {
+    document.body.classList.add('stackup-active');
+  }
+  window.StackUpAppEmbedActive = true;
+</script>
+
 {% schema %}
 {
   "name": "StackUp Bundles",
   "target": "body",
-  "javascript": "stack-up.js",
   "stylesheet": "stack-up.css",
+  "javascript": "stack-up.js",
   "settings": []
 }
 {% endschema %}

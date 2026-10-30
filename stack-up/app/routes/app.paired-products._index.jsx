@@ -5,6 +5,7 @@ import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import { getShopTimezone, formatDateInShopTimezone } from "../utils/timezone";
 import { syncRecentOrdersFromShopify } from "../utils/orders.server";
+import { syncAllActiveOffersToShopMetafield } from "../utils/bundleMetafields.server";
 
 export const loader = async ({ request }) => {
     const { admin, session } = await authenticate.admin(request);
@@ -83,6 +84,7 @@ export const loader = async ({ request }) => {
                     },
                 });
             }
+            await syncAllActiveOffersToShopMetafield(admin);
         } catch (syncErr) {
             console.warn("Could not auto-sync offers to DB:", syncErr);
         }
@@ -92,19 +94,25 @@ export const loader = async ({ request }) => {
             await syncRecentOrdersFromShopify(admin, session.shop);
         }
 
-        // Fetch DB usage counts
+        // Fetch all DB offers for this shop (with shopName fallback)
+        let allDbOffers = [];
         let dbOfferMap = {};
         try {
-            const dbOffers = await prisma.pairedOffer.findMany({
-                where: { shop: session.shop },
-                select: { discountId: true, numericId: true, usageCount: true },
+            allDbOffers = await prisma.pairedOffer.findMany({
+                where: {
+                    OR: [
+                        { shop: session.shop },
+                        { shop: shopName },
+                        { shop: { contains: shopName } },
+                    ],
+                },
             });
-            for (const d of dbOffers) {
+            for (const d of allDbOffers) {
                 dbOfferMap[d.discountId] = d;
                 dbOfferMap[d.numericId] = d;
             }
         } catch (e) {
-            console.warn("Could not fetch DB offer usage counts:", e);
+            console.warn("Could not fetch DB offers:", e);
         }
 
         liveOffers = nodes
@@ -156,13 +164,221 @@ export const loader = async ({ request }) => {
             })
             .filter(Boolean);
 
-        console.log("-------------------> [Index: Table] Loaded " + liveOffers.length + " Paired Products offers:");
-        console.log("-------------------> [Index: Table] Offers:", liveOffers.map((o) => ({ id: o.numericId, title: o.title, discount: o.discountPercentage, status: o.status, usageCount: o.usageCount })));
-    } catch (err) {
-        console.error("-------------------> [Index: Table] Error querying discountNodes:", err);
-    }
+        // Auto-heal: If DB has active offers that were dropped by local dev restart, re-register them with the active function
+        const liveShopifyIds = new Set();
+        nodes.forEach((node) => {
+            liveShopifyIds.add(node.id);
+            liveShopifyIds.add(node.id.split("/").pop());
+        });
 
-    return { shopName, offers: liveOffers };
+        let activeFunctionId = null;
+        try {
+            const fnRes = await admin.graphql(
+                `#graphql
+                query GetFunctionId {
+                    shopifyFunctions(first: 25) {
+                        nodes {
+                            id
+                            title
+                            apiType
+                        }
+                    }
+                }`
+            );
+            const fnJson = await fnRes.json();
+            const functions = fnJson.data?.shopifyFunctions?.nodes || [];
+            const matched = functions.find(
+                (fn) =>
+                    fn.title?.toLowerCase().includes("paired") ||
+                    fn.apiType === "cart_lines_discounts_generate" ||
+                    fn.apiType === "order_discounts"
+            );
+            activeFunctionId = matched?.id || functions[0]?.id || "gid://shopify/ShopifyFunction/paired-products-discount";
+        } catch (fnErr) {
+            console.warn("Could not query shopifyFunctions:", fnErr);
+            activeFunctionId = "gid://shopify/ShopifyFunction/paired-products-discount";
+        }
+
+        for (const dbOffer of allDbOffers) {
+            const isPresentInShopify = liveShopifyIds.has(dbOffer.discountId) || liveShopifyIds.has(dbOffer.numericId);
+            if (!isPresentInShopify && activeFunctionId && dbOffer.status === "ACTIVE") {
+                console.log(`-------------------> [AutoRestore] Re-registering missing offer in Shopify: "${dbOffer.title}" with function ${activeFunctionId}`);
+                try {
+                    let mainProducts = [];
+                    let subProducts = [];
+                    try {
+                        mainProducts = JSON.parse(dbOffer.mainProducts);
+                        subProducts = JSON.parse(dbOffer.subProducts);
+                    } catch {
+                        mainProducts = [];
+                        subProducts = [];
+                    }
+
+                    const configPayload = {
+                        discountType: "PAIRED_PRODUCTS",
+                        percentage: dbOffer.percentage,
+                        title: dbOffer.title,
+                        mainProductIds: mainProducts.map((p) => p.id),
+                        subProductIds: subProducts.map((p) => p.id),
+                        mainProducts,
+                        subProducts,
+                    };
+
+                    const createRes = await admin.graphql(
+                        `#graphql
+                        mutation RecreateAutomaticDiscount($automaticAppDiscount: DiscountAutomaticAppInput!) {
+                            discountAutomaticAppCreate(automaticAppDiscount: $automaticAppDiscount) {
+                                automaticAppDiscount {
+                                    discountId
+                                    title
+                                    status
+                                }
+                                userErrors {
+                                    field
+                                    message
+                                }
+                            }
+                        }`,
+                        {
+                            variables: {
+                                automaticAppDiscount: {
+                                    title: dbOffer.title,
+                                    functionId: activeFunctionId,
+                                    startsAt: dbOffer.startsAt ? dbOffer.startsAt.toISOString() : new Date().toISOString(),
+                                    ...(dbOffer.endsAt ? { endsAt: dbOffer.endsAt.toISOString() } : {}),
+                                    discountClasses: ["ORDER"],
+                                    combinesWith: {
+                                        orderDiscounts: dbOffer.combinesWithOrder,
+                                        productDiscounts: dbOffer.combinesWithProduct,
+                                        shippingDiscounts: dbOffer.combinesWithShipping,
+                                    },
+                                    metafields: [
+                                        {
+                                            namespace: "$app:discount",
+                                            key: "function_configuration",
+                                            type: "json",
+                                            value: JSON.stringify(configPayload),
+                                        },
+                                    ],
+                                },
+                            },
+                        }
+                    );
+                    const createJson = await createRes.json();
+                    const newDiscount = createJson.data?.discountAutomaticAppCreate?.automaticAppDiscount;
+                    if (newDiscount?.discountId) {
+                        const newNumericId = newDiscount.discountId.split("/").pop();
+                        await prisma.pairedOffer.update({
+                            where: { id: dbOffer.id },
+                            data: {
+                                discountId: newDiscount.discountId,
+                                numericId: newNumericId,
+                                status: newDiscount.status || "ACTIVE",
+                            },
+                        });
+                        console.log(`-------------------> [AutoRestore] Successfully re-registered "${dbOffer.title}" as ${newDiscount.discountId}`);
+                        dbOffer.discountId = newDiscount.discountId;
+                        dbOffer.numericId = newNumericId;
+                        dbOffer.status = newDiscount.status || "ACTIVE";
+                    }
+                } catch (recreateErr) {
+                    console.warn(`-------------------> [AutoRestore] Error re-registering "${dbOffer.title}":`, recreateErr);
+                }
+            }
+        }
+
+        // Build comprehensive offers list: live Shopify offers + all DB offers
+        const combinedOffers = [];
+        const seenNumericIds = new Set();
+
+        for (const o of liveOffers) {
+            combinedOffers.push(o);
+            seenNumericIds.add(String(o.numericId));
+        }
+
+        for (const dbo of allDbOffers) {
+            if (!seenNumericIds.has(String(dbo.numericId))) {
+                let mainCount = 0;
+                let subCount = 0;
+                try {
+                    mainCount = JSON.parse(dbo.mainProducts || "[]").length;
+                    subCount = JSON.parse(dbo.subProducts || "[]").length;
+                } catch {
+                    mainCount = 0;
+                    subCount = 0;
+                }
+
+                combinedOffers.push({
+                    id: dbo.discountId,
+                    numericId: dbo.numericId,
+                    title: dbo.title,
+                    discountPercentage: `${dbo.percentage}%`,
+                    mainProductCount: mainCount,
+                    subProductCount: subCount,
+                    status: dbo.status || "ACTIVE",
+                    combinesWith: {
+                        orderDiscounts: dbo.combinesWithOrder,
+                        productDiscounts: dbo.combinesWithProduct,
+                        shippingDiscounts: dbo.combinesWithShipping,
+                    },
+                    usageCount: dbo.usageCount || 0,
+                    startDate: dbo.startsAt ? formatDateInShopTimezone(dbo.startsAt, shopTimezone) : "Immediate",
+                    endDate: dbo.endsAt ? formatDateInShopTimezone(dbo.endsAt, shopTimezone) : null,
+                });
+                seenNumericIds.add(String(dbo.numericId));
+            }
+        }
+
+        console.log("-------------------> [Index: Table] Loaded " + combinedOffers.length + " Paired Products offers (Live + DB):");
+        console.log("-------------------> [Index: Table] Offers:", combinedOffers.map((o) => ({ id: o.numericId, title: o.title, discount: o.discountPercentage, status: o.status, usageCount: o.usageCount })));
+        await syncAllActiveOffersToShopMetafield(admin);
+        return { shopName, offers: combinedOffers };
+    } catch (err) {
+        console.error("-------------------> [Index: Table] Error in loader:", err);
+        // Fallback: If GraphQL queries fail completely, still load directly from DB
+        try {
+            const fallbackDbOffers = await prisma.pairedOffer.findMany({
+                where: {
+                    OR: [
+                        { shop: session?.shop || "" },
+                        { shop: shopName },
+                        { shop: { contains: shopName } },
+                    ],
+                },
+            });
+            const fallbackOffers = fallbackDbOffers.map((dbo) => {
+                let mainCount = 0;
+                let subCount = 0;
+                try {
+                    mainCount = JSON.parse(dbo.mainProducts || "[]").length;
+                    subCount = JSON.parse(dbo.subProducts || "[]").length;
+                } catch {
+                    mainCount = 0;
+                    subCount = 0;
+                }
+                return {
+                    id: dbo.discountId,
+                    numericId: dbo.numericId,
+                    title: dbo.title,
+                    discountPercentage: `${dbo.percentage}%`,
+                    mainProductCount: mainCount,
+                    subProductCount: subCount,
+                    status: dbo.status || "ACTIVE",
+                    combinesWith: {
+                        orderDiscounts: dbo.combinesWithOrder,
+                        productDiscounts: dbo.combinesWithProduct,
+                        shippingDiscounts: dbo.combinesWithShipping,
+                    },
+                    usageCount: dbo.usageCount || 0,
+                    startDate: dbo.startsAt ? formatDateInShopTimezone(dbo.startsAt, shopTimezone) : "Immediate",
+                    endDate: dbo.endsAt ? formatDateInShopTimezone(dbo.endsAt, shopTimezone) : null,
+                };
+            });
+            return { shopName, offers: fallbackOffers };
+        } catch {
+            return { shopName, offers: [] };
+        }
+    }
 };
 
 export const action = async ({ request }) => {
@@ -206,7 +422,7 @@ export const action = async ({ request }) => {
                     console.log("-------------------> [Delete Success] Deleted offer ID:", json.data.discountAutomaticDelete.deletedAutomaticDiscountId);
                     deleted = true;
 
-                    // Delete from PostgreSQL DB as well
+                    // Delete from PostgreSQL DB and sync Shop Metafield
                     try {
                         await prisma.pairedOffer.deleteMany({
                             where: {
@@ -217,6 +433,8 @@ export const action = async ({ request }) => {
                             },
                         });
                         console.log("-------------------> 💾 [Index: Delete] Removed offer from DB for ID:", numericId || id);
+                        const { syncAllActiveOffersToShopMetafield } = await import("../utils/bundleMetafields.server");
+                        await syncAllActiveOffersToShopMetafield(admin);
                     } catch (dbErr) {
                         console.warn("Could not delete from DB:", dbErr);
                     }
@@ -362,6 +580,12 @@ export default function PairedProducts() {
             <s-link slot="breadcrumb-actions" href="/app">
                 Home
             </s-link>
+            <s-button slot="secondary-actions" href="/app/paired-products/customize">
+                🎨 Customize Widget
+            </s-button>
+            <s-button slot="primary-action" variant="primary" href="/app/paired-products/create">
+                Create offer
+            </s-button>
 
 
 

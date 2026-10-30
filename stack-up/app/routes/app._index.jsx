@@ -1,5 +1,5 @@
-import { useEffect, useRef } from "react";
 import { useLoaderData, useFetcher } from "react-router";
+import { useEffect } from "react";
 import { authenticate } from "../shopify.server";
 import { syncAppStatusMetafield } from "../utils/appStatus.server";
 
@@ -50,46 +50,33 @@ const BOTTOM_CARDS = [
 ];
 
 export default function Index() {
-  const { shopName, themeEditorUrl: initialThemeEditorUrl, isAppEmbedEnabled: initialEmbedEnabled } = useLoaderData();
+  const { shopName, themeEditorUrl: initialUrl, isAppEmbedEnabled: initialEnabled } = useLoaderData();
   const fetcher = useFetcher();
-  const lastCheckRef = useRef(0);
 
-  const isAppEmbedEnabled =
-    fetcher.data?.isAppEmbedEnabled !== undefined
-      ? fetcher.data.isAppEmbedEnabled
-      : initialEmbedEnabled;
-
-  const themeEditorUrl = fetcher.data?.themeEditorUrl || initialThemeEditorUrl;
+  const isAppEmbedEnabled = fetcher.data?.isAppEmbedEnabled ?? initialEnabled;
+  const themeEditorUrl = fetcher.data?.themeEditorUrl ?? initialUrl;
 
   useEffect(() => {
     const checkStatus = () => {
-      const now = Date.now();
-      // 5-second cooldown to prevent redundant requests
-      if (now - lastCheckRef.current < 5000) return;
-      if (fetcher.state !== "idle") return;
-
-      lastCheckRef.current = now;
-      fetcher.load("/app/status");
-    };
-
-    const handleVisibilityChange = () => {
       if (document.visibilityState === "visible") {
-        checkStatus();
+        fetcher.load("/app/status");
       }
     };
 
-    const handleFocus = () => {
-      checkStatus();
-    };
+    window.addEventListener("focus", checkStatus);
+    document.addEventListener("visibilitychange", checkStatus);
 
-    window.addEventListener("focus", handleFocus);
-    document.addEventListener("visibilitychange", handleVisibilityChange);
+    let intervalId;
+    if (!isAppEmbedEnabled) {
+      intervalId = setInterval(checkStatus, 5000);
+    }
 
     return () => {
-      window.removeEventListener("focus", handleFocus);
-      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("focus", checkStatus);
+      document.removeEventListener("visibilitychange", checkStatus);
+      if (intervalId) clearInterval(intervalId);
     };
-  }, [fetcher]);
+  }, [fetcher, isAppEmbedEnabled]);
 
   const handleOpenTheme = (e) => {
     e?.preventDefault?.();

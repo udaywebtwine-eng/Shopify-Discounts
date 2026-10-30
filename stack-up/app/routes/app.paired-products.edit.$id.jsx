@@ -70,8 +70,53 @@ export const loader = async ({ request, params }) => {
     }
 
     if (!discountNode) {
-        console.error("-------------------> [EditLoader] Offer not found for numericId:", numericId);
-        throw new Response("Offer Not Found", { status: 404 });
+        console.warn("-------------------> [EditLoader] discountNode not found in Shopify for numericId:", numericId, ". Falling back to database...");
+        const dbFallback = await prisma.pairedOffer.findFirst({
+            where: {
+                OR: [
+                    { numericId },
+                    { discountId: `gid://shopify/DiscountAutomaticNode/${numericId}` },
+                    { id: numericId },
+                ],
+            },
+        });
+
+        if (!dbFallback) {
+            console.error("-------------------> [EditLoader] Offer not found in DB or Shopify for numericId:", numericId);
+            throw new Response("Offer Not Found", { status: 404 });
+        }
+
+        let parsedMain = [];
+        let parsedSub = [];
+        try { parsedMain = JSON.parse(dbFallback.mainProducts || "[]"); } catch {}
+        try { parsedSub = JSON.parse(dbFallback.subProducts || "[]"); } catch {}
+
+        discountNode = {
+            id: dbFallback.discountId || `gid://shopify/DiscountAutomaticNode/${numericId}`,
+            discount: {
+                title: dbFallback.title,
+                status: dbFallback.status || "ACTIVE",
+                startsAt: dbFallback.startsAt ? dbFallback.startsAt.toISOString() : null,
+                endsAt: dbFallback.endsAt ? dbFallback.endsAt.toISOString() : null,
+                combinesWith: {
+                    orderDiscounts: dbFallback.combinesWithOrder,
+                    productDiscounts: dbFallback.combinesWithProduct,
+                    shippingDiscounts: dbFallback.combinesWithShipping,
+                },
+            },
+            metafield: {
+                id: null,
+                value: JSON.stringify({
+                    discountType: "PAIRED_PRODUCTS",
+                    percentage: dbFallback.percentage,
+                    title: dbFallback.title,
+                    mainProductIds: parsedMain.map((p) => p.id),
+                    subProductIds: parsedSub.map((p) => p.id),
+                    mainProducts: parsedMain,
+                    subProducts: parsedSub,
+                }),
+            },
+        };
     }
 
     const disc = discountNode.discount;
@@ -259,6 +304,8 @@ export const action = async ({ request, params }) => {
                     data: { status: "EXPIRED" },
                 });
                 console.log("-------------------> 💾 [Deactivate] Synced EXPIRED status to DB for ID:", numericId);
+                const { syncAllActiveOffersToShopMetafield } = await import("../utils/bundleMetafields.server");
+                await syncAllActiveOffersToShopMetafield(admin);
             } catch (dbErr) {
                 console.warn("Could not sync deactivation to DB:", dbErr);
             }
@@ -303,6 +350,8 @@ export const action = async ({ request, params }) => {
                     data: { status: "ACTIVE" },
                 });
                 console.log("-------------------> 💾 [Activate] Synced ACTIVE status to DB for ID:", numericId);
+                const { syncAllActiveOffersToShopMetafield } = await import("../utils/bundleMetafields.server");
+                await syncAllActiveOffersToShopMetafield(admin);
             } catch (dbErr) {
                 console.warn("Could not sync activation to DB:", dbErr);
             }
@@ -346,6 +395,8 @@ export const action = async ({ request, params }) => {
                     where: { numericId },
                 });
                 console.log("-------------------> 💾 [Delete] Removed offer from DB for ID:", numericId);
+                const { syncAllActiveOffersToShopMetafield } = await import("../utils/bundleMetafields.server");
+                await syncAllActiveOffersToShopMetafield(admin);
             } catch (dbErr) {
                 console.warn("Could not delete offer from DB:", dbErr);
             }
@@ -481,6 +532,109 @@ export const action = async ({ request, params }) => {
         const json = await response.json();
         const userErrors = json.data?.discountAutomaticAppUpdate?.userErrors || [];
         if (userErrors.length > 0) {
+            const isMissingInShopify = userErrors.some((e) =>
+                e.message?.toLowerCase().includes("not exist") ||
+                e.message?.toLowerCase().includes("not found") ||
+                e.field?.includes("id")
+            );
+
+            if (isMissingInShopify) {
+                console.warn("-------------------> [Save Edit] Discount node missing in Shopify. Auto-recreating via discountAutomaticAppCreate...");
+                let functionId = null;
+                try {
+                    const fnRes = await admin.graphql(
+                        `#graphql
+                        query GetFunctionId {
+                            shopifyFunctions(first: 25) {
+                                nodes {
+                                    id
+                                    title
+                                    apiType
+                                }
+                            }
+                        }`
+                    );
+                    const fnJson = await fnRes.json();
+                    const functions = fnJson.data?.shopifyFunctions?.nodes || [];
+                    const matched = functions.find(
+                        (fn) =>
+                            fn.title?.toLowerCase().includes("paired") ||
+                            fn.apiType === "cart_lines_discounts_generate" ||
+                            fn.apiType === "order_discounts"
+                    );
+                    functionId = matched?.id || functions[0]?.id || "gid://shopify/ShopifyFunction/paired-products-discount";
+                } catch {
+                    functionId = "gid://shopify/ShopifyFunction/paired-products-discount";
+                }
+
+                const createMutation = `#graphql
+                    mutation CreateAutomaticDiscount($automaticAppDiscount: DiscountAutomaticAppInput!) {
+                        discountAutomaticAppCreate(automaticAppDiscount: $automaticAppDiscount) {
+                            automaticAppDiscount {
+                                discountId
+                                title
+                                status
+                            }
+                            userErrors {
+                                field
+                                message
+                            }
+                        }
+                    }
+                `;
+
+                const createRes = await admin.graphql(createMutation, {
+                    variables: {
+                        automaticAppDiscount: {
+                            title,
+                            functionId,
+                            startsAt: effectiveStartsAt,
+                            ...(effectiveEndsAt ? { endsAt: effectiveEndsAt } : {}),
+                            discountClasses: ["ORDER"],
+                            combinesWith: {
+                                orderDiscounts: combinesWithOrder,
+                                productDiscounts: combinesWithProduct,
+                                shippingDiscounts: combinesWithShipping,
+                            },
+                            metafields: [metafieldItem],
+                        },
+                    },
+                });
+
+                const createJson = await createRes.json();
+                const newDiscount = createJson.data?.discountAutomaticAppCreate?.automaticAppDiscount;
+                if (newDiscount?.discountId) {
+                    const newNumericId = newDiscount.discountId.split("/").pop();
+                    await prisma.pairedOffer.updateMany({
+                        where: {
+                            OR: [
+                                { numericId },
+                                { discountId: `gid://shopify/DiscountAutomaticNode/${numericId}` },
+                            ],
+                        },
+                        data: {
+                            discountId: newDiscount.discountId,
+                            numericId: newNumericId,
+                            title,
+                            percentage,
+                            status: newDiscount.status || "ACTIVE",
+                            combinesWithOrder,
+                            combinesWithProduct,
+                            combinesWithShipping,
+                            startsAt: effectiveStartsAt ? new Date(effectiveStartsAt) : undefined,
+                            endsAt: effectiveEndsAt ? new Date(effectiveEndsAt) : null,
+                            mainProducts: JSON.stringify(mainProducts),
+                            subProducts: JSON.stringify(subProducts),
+                        },
+                    });
+
+                    const { syncAllActiveOffersToShopMetafield } = await import("../utils/bundleMetafields.server");
+                    await syncAllActiveOffersToShopMetafield(admin);
+                    console.log("-------------------> 🎉 [Save Edit] Successfully recreated discount in Shopify and updated DB!");
+                    return redirect("/app/paired-products");
+                }
+            }
+
             const errMsg = userErrors.map((e) => e.message).join(", ");
             console.error("-------------------> [Save Edit Failed] Shopify Error:", errMsg);
             return { error: errMsg };
@@ -524,6 +678,10 @@ export const action = async ({ request, params }) => {
         } catch (dbErr) {
             console.error("-------------------> [EditAction] Error updating DB:", dbErr);
         }
+
+        // Sync updated bundle data to Shop Metafield for instant storefront rendering
+        const { syncAllActiveOffersToShopMetafield } = await import("../utils/bundleMetafields.server");
+        await syncAllActiveOffersToShopMetafield(admin);
 
         return redirect("/app/paired-products");
     } catch (err) {
@@ -1061,7 +1219,7 @@ export default function PairedProductsEdit() {
                     <s-section heading="1. Select Main Product(s)">
                         <s-stack gap="base">
                             <s-paragraph tone="subdued">
-                                Choose the primary product(s) that the customer must add to their cart.
+                                Choose the primary product page(s) where this bundle will be displayed. When a customer views any of these product pages, the bundle widget will appear.
                             </s-paragraph>
 
                             <s-stack gap="base">
@@ -1151,7 +1309,7 @@ export default function PairedProductsEdit() {
                     <s-section heading="2. Select Sub / Add-on Product(s)">
                         <s-stack gap="base">
                             <s-paragraph tone="subdued">
-                                Choose the companion/accessory product(s) that pair with the main product(s).
+                                Choose the companion/accessory product(s) bundled with the main product. All selected companion products will be displayed together in the storefront bundle widget.
                             </s-paragraph>
 
                             <s-stack gap="base">

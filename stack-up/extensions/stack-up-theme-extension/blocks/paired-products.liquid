@@ -1,0 +1,541 @@
+{% comment %}
+  StackUp - Paired Products Bundle Widget
+  Target: section (Online Store 2.0 Product Template Block)
+{% endcomment %}
+
+{{ 'stack-up.css' | asset_url | stylesheet_tag }}
+{{ 'stack-up.js' | asset_url | script_tag }}
+
+{% assign app_status = shop.metafields.stack_up.stack_up_app_enabled.value %}
+{% assign is_app_enabled = false %}
+{% if app_status == 'true' or app_status == true or app_status == blank %}
+  {% assign is_app_enabled = true %}
+{% endif %}
+
+{% if is_app_enabled %}
+  {% assign custom_settings = shop.metafields.stack_up.paired_widget_settings.value %}
+
+  {% comment %} Look up bundle offer for current product {% endcomment %}
+  {% assign current_id = product.id | append: '' %}
+  {% assign prefixed_id = 'id_' | append: current_id %}
+  {% assign all_offers = shop.metafields.stack_up.paired_offers.value %}
+  {% assign bundle = product.metafields.stack_up.paired_bundle.value
+    | default: all_offers[prefixed_id]
+    | default: all_offers[current_id]
+  %}
+
+  {% if bundle == blank and all_offers != blank %}
+    {% for item in all_offers %}
+      {% assign offer_key = item[0] | append: '' %}
+      {% if offer_key == current_id or offer_key == prefixed_id %}
+        {% assign bundle = item[1] %}
+        {% break %}
+      {% endif %}
+    {% endfor %}
+  {% endif %}
+
+  {% assign is_editor = request.design_mode %}
+  {% assign is_active_offer = false %}
+  {% if bundle != blank and bundle.subProducts.size > 0 %}
+    {% assign is_active_offer = true %}
+  {% endif %}
+
+  {% comment %} Show if active offer exists OR if merchant is previewing in Theme Editor {% endcomment %}
+  {% if is_active_offer or is_editor %}
+    {% if is_active_offer %}
+      {% assign discount_pct = bundle.percentage %}
+      {% assign main_qty = bundle.mainQuantity | default: 1 %}
+      {% assign sub_products_count = bundle.subProducts.size %}
+    {% else %}
+      {% comment %} Sample Data for Theme Editor Preview {% endcomment %}
+      {% assign discount_pct = 20 %}
+      {% assign main_qty = 1 %}
+      {% assign sub_products_count = 1 %}
+    {% endif %}
+
+    {% assign total_bundle_items = sub_products_count | plus: 1 %}
+    {% assign default_btn_text = 'Add All ' | append: total_bundle_items | append: ' to Cart' %}
+    {% if total_bundle_items == 2 %}
+      {% assign default_btn_text = 'Add Both to Cart' %}
+    {% endif %}
+
+    {% comment %} Resolve Settings with Safe Defaults {% endcomment %}
+    {% assign heading = custom_settings.content.heading | default: 'Frequently Bought Together' %}
+    {% assign button_text = custom_settings.content.buttonText | default: default_btn_text %}
+    {% assign badge_template = custom_settings.content.badgeText | default: 'Save {percentage}% OFF' %}
+    {% assign badge_label = badge_template | replace: '{percentage}', discount_pct %}
+
+    {% assign card_bg = custom_settings.styles.cardSurface | default: '#ffffff' %}
+    {% assign border_color = custom_settings.styles.borderColor | default: '#e5e7eb' %}
+    {% assign border_width = custom_settings.styles.borderWidth | default: 1 %}
+    {% assign border_radius = custom_settings.styles.borderRadius | default: 12 %}
+    {% assign btn_bg = custom_settings.styles.buttonBg | default: '#111827' %}
+    {% assign btn_color = custom_settings.styles.buttonTextColor | default: '#ffffff' %}
+    {% assign plus_bg = custom_settings.styles.plusIconBg | default: '#f3f4f6' %}
+    {% assign plus_color = custom_settings.styles.plusIconColor | default: '#374151' %}
+    {% assign badge_bg = custom_settings.styles.badgeBg | default: '#ede9fe' %}
+    {% assign badge_text_color = custom_settings.styles.badgeTextColor | default: '#6d28d9' %}
+    {% assign total_bg = custom_settings.styles.totalBoxBg | default: '#f9fafb' %}
+
+    {% assign show_title = true %}
+    {% if custom_settings.display.showWidgetTitle == false %}
+      {% assign show_title = false %}
+    {% endif %}
+
+    {% assign show_plus = true %}
+    {% if custom_settings.display.showPlusIcon == false %}
+      {% assign show_plus = false %}
+    {% endif %}
+
+    {% assign show_total = true %}
+    {% if custom_settings.display.showTotalBox == false %}
+      {% assign show_total = false %}
+    {% endif %}
+
+    {% assign show_badge = true %}
+    {% if custom_settings.display.showSaleBadge == false %}
+      {% assign show_badge = false %}
+    {% endif %}
+
+    {% assign main_variant = product.selected_or_first_available_variant | default: product.variants[0] %}
+    {% assign main_available = main_variant.available %}
+    {% if main_available == null %}
+      {% assign main_available = product.available %}
+    {% endif %}
+    {% if is_editor and is_active_offer == false %}
+      {% assign main_available = true %}
+    {% endif %}
+
+    {% assign main_price = main_variant.price | default: 4800 %}
+    {% assign main_line_price = main_price | times: main_qty %}
+
+    {% assign total_original_price = main_line_price %}
+    {% if is_active_offer %}
+      {% for sub in bundle.subProducts %}
+        {% assign sp = sub.variants[0].price | default: sub.price %}
+        {% assign sq = sub.quantity | default: 1 %}
+        {% assign slp = sp | times: sq %}
+        {% assign total_original_price = total_original_price | plus: slp %}
+      {% endfor %}
+    {% else %}
+      {% assign total_original_price = main_line_price | plus: 2400 %}
+    {% endif %}
+
+    {% assign discount_mult = 100 | minus: discount_pct %}
+    {% assign final_bundle_total = total_original_price | times: discount_mult | divided_by: 100 %}
+
+    <div
+      class="stackup-paired-widget"
+      id="stackup-paired-widget-{{ product.id | default: 'preview' }}"
+      data-discount-percentage="{{ discount_pct }}"
+      data-main-quantity="{{ main_qty }}"
+      data-custom-btn-text="{{ custom_settings.content.buttonText }}"
+      style="
+        --stackup-card-bg: {{ card_bg }};
+        --stackup-border-color: {{ border_color }};
+        --stackup-border-width: {{ border_width }}px;
+        --stackup-radius: {{ border_radius }}px;
+        --stackup-btn-bg: {{ btn_bg }};
+        --stackup-btn-color: {{ btn_color }};
+        --stackup-plus-bg: {{ plus_bg }};
+        --stackup-plus-color: {{ plus_color }};
+        --stackup-badge-bg: {{ badge_bg }};
+        --stackup-badge-color: {{ badge_text_color }};
+        --stackup-total-bg: {{ total_bg }};
+      "
+    >
+      {% if is_editor and is_active_offer == false %}
+        <div style="background: #eff6ff; border: 1px solid #bfdbfe; color: #1e40af; padding: 6px 10px; border-radius: 6px; font-size: 11px; margin-bottom: 12px; display: flex; align-items: center; gap: 6px;">
+          <span>💡</span>
+          <span
+            ><strong>Theme Editor Preview:</strong> This product doesn't have an active offer in StackUp yet. Showing
+            sample bundle for styling.</span
+          >
+        </div>
+      {% endif %}
+
+      {% if show_title %}
+        <div class="stackup-widget-title-wrap">
+          <div class="stackup-widget-title">
+            <span class="stackup-sparkle-icon">✨</span>
+            <span>{{ heading }}</span>
+          </div>
+        </div>
+      {% endif %}
+
+      <div class="stackup-products-list">
+        <!-- Main Product Card -->
+        {% assign main_variant_title = main_variant.title %}
+        <div
+          class="stackup-product-item stackup-main-item{% if main_available == false %} is-out-of-stock{% endif %}"
+          data-price="{{ main_price }}"
+          data-quantity="{{ main_qty }}"
+          data-available="{{ main_available }}"
+          data-title="{{ product.title | escape }}"
+        >
+          <label class="stackup-checkbox-wrap" title="Included in Bundle">
+            <input type="checkbox" class="stackup-item-check" data-role="main" checked disabled>
+            <span class="stackup-custom-check">
+              <svg
+                width="11"
+                height="9"
+                viewBox="0 0 11 9"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2.2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <polyline points="1.5 4.5 4 7 9.5 1.5"></polyline>
+              </svg>
+            </span>
+          </label>
+
+          <div class="stackup-thumb">
+            {% if product.featured_image %}
+              {{ product.featured_image | image_url: width: 140 | image_tag: loading: 'lazy', alt: product.title }}
+            {% else %}
+              <div class="stackup-no-img">👕</div>
+            {% endif %}
+          </div>
+
+          <div class="stackup-info">
+            <div class="stackup-item-title-wrap">
+              <span class="stackup-item-title">{{ product.title | default: 'Main Product' }}</span>
+              <span
+                class="stackup-stock-badge main-stock-badge"
+                style="{% if main_available %}display: none;{% endif %}"
+                >Out of stock</span
+              >
+            </div>
+            {% if main_variant_title != blank and main_variant_title != 'Default Title' %}
+              <div class="stackup-item-variant">{{ main_variant_title }}</div>
+            {% endif %}
+            {% if main_qty > 1 %}
+              <div class="stackup-item-qty-wrap">
+                <span class="stackup-qty-pill">Qty: {{ main_qty }}</span>
+              </div>
+            {% endif %}
+          </div>
+
+          <div class="stackup-price-wrap">
+            <span class="stackup-price stackup-main-price">{{ main_line_price | money }}</span>
+            {% if main_qty > 1 %}
+              <span class="stackup-unit-price stackup-main-unit-price">({{ main_price | money }} each)</span>
+            {% endif %}
+          </div>
+        </div>
+
+        <!-- Single Plus Separator between Main Product and Subproducts -->
+        {% if show_plus and is_active_offer and bundle.subProducts.size > 0 %}
+          <div class="stackup-plus-wrap">
+            <div class="stackup-plus-line"></div>
+            <div class="stackup-plus-circle">
+              <svg
+                width="12"
+                height="12"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="3"
+                stroke-linecap="round"
+              >
+                <line x1="12" y1="5" x2="12" y2="19"></line>
+                <line x1="5" y1="12" x2="19" y2="12"></line>
+              </svg>
+            </div>
+            <div class="stackup-plus-line"></div>
+          </div>
+        {% endif %}
+
+        <!-- Sub / Add-on Product Cards (NO plus icon between subproducts) -->
+        {% if is_active_offer %}
+          {% for sub in bundle.subProducts %}
+            {% assign sub_qty = sub.quantity | default: 1 %}
+            {% assign sub_title = sub.title %}
+            {% assign sub_img = sub.image %}
+            {% assign sub_handle = sub.handle %}
+            {% assign sub_variants = sub.variants %}
+            {% assign sub_first_variant_id = sub.variants[0].id | default: sub.numericId %}
+            {% assign sub_price = sub.variants[0].price | default: sub.price %}
+
+            {% assign sub_prod = all_products[sub_handle] %}
+            {% assign sub_first_v_avail = true %}
+            {% if sub_prod != blank %}
+              {% assign sub_first_v_avail = sub_prod.selected_or_first_available_variant.available %}
+              {% if sub_first_v_avail == null %}
+                {% assign sub_first_v_avail = sub_prod.available %}
+              {% endif %}
+            {% elsif sub.variants[0].availableForSale != blank %}
+              {% assign sub_first_v_avail = sub.variants[0].availableForSale %}
+            {% elsif sub.availableForSale != blank %}
+              {% assign sub_first_v_avail = sub.availableForSale %}
+            {% endif %}
+
+            {% assign sub_line_price = sub_price | times: sub_qty %}
+
+            <div
+              class="stackup-product-item stackup-sub-item{% if sub_first_v_avail == false %} is-out-of-stock{% endif %}"
+              data-quantity="{{ sub_qty }}"
+              data-title="{{ sub_title | escape }}"
+              data-price="{{ sub_price }}"
+              data-available="{{ sub_first_v_avail }}"
+            >
+              <label class="stackup-checkbox-wrap">
+                <input type="checkbox" class="stackup-item-check" data-role="sub" checked>
+                <span class="stackup-custom-check">
+                  <svg
+                    width="11"
+                    height="9"
+                    viewBox="0 0 11 9"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2.2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <polyline points="1.5 4.5 4 7 9.5 1.5"></polyline>
+                  </svg>
+                </span>
+              </label>
+
+              <div class="stackup-thumb">
+                {% if sub_prod != blank and sub_prod.featured_image != blank %}
+                  {{ sub_prod.featured_image | image_url: width: 140 | image_tag: loading: 'lazy', alt: sub_title }}
+                {% elsif sub_img != blank %}
+                  <img src="{{ sub_img }}" alt="{{ sub_title | escape }}" loading="lazy" width="52" height="52">
+                {% else %}
+                  <div class="stackup-no-img">🎁</div>
+                {% endif %}
+              </div>
+
+              <div class="stackup-info">
+                <div class="stackup-sub-header">
+                  <span class="stackup-item-title">{{ sub_title }}</span>
+                  <span
+                    class="stackup-stock-badge sub-stock-badge"
+                    style="{% if sub_first_v_avail %}display: none;{% endif %}"
+                    >Out of stock</span
+                  >
+                </div>
+
+                <!-- Variant Selector if multiple variants exist -->
+                {% if sub_variants.size > 1 %}
+                  <select class="stackup-variant-select" aria-label="Select variant">
+                    {% for v in sub_variants %}
+                      {% assign v_num_id = v.id | plus: 0 %}
+                      {% assign v_avail = true %}
+                      {% if sub_prod != blank %}
+                        {% for sp_v in sub_prod.variants %}
+                          {% if sp_v.id == v_num_id %}
+                            {% assign v_avail = sp_v.available %}
+                            {% break %}
+                          {% endif %}
+                        {% endfor %}
+                      {% elsif v.availableForSale != blank %}
+                        {% assign v_avail = v.availableForSale %}
+                      {% endif %}
+                      <option
+                        value="{{ v.id }}"
+                        data-price="{{ v.price }}"
+                        data-available="{{ v_avail }}"
+                      >
+                        {{ v.title -}}
+                        {%- if v_avail == false %} (Out of stock){% endif %}
+                      </option>
+                    {% endfor %}
+                  </select>
+                {% else %}
+                  <input
+                    type="hidden"
+                    class="stackup-variant-select"
+                    value="{{ sub_first_variant_id }}"
+                    data-price="{{ sub_price }}"
+                    data-available="{{ sub_first_v_avail }}"
+                  >
+                {% endif %}
+
+                {% if sub_qty > 1 %}
+                  <div class="stackup-item-qty-wrap">
+                    <span class="stackup-qty-pill">Qty: {{ sub_qty }}</span>
+                  </div>
+                {% endif %}
+              </div>
+
+              <div class="stackup-price-wrap">
+                <span class="stackup-price stackup-sub-price">{{ sub_line_price | money }}</span>
+                {% if sub_qty > 1 %}
+                  <span class="stackup-unit-price stackup-sub-unit-price">({{ sub_price | money }} each)</span>
+                {% endif %}
+              </div>
+            </div>
+          {% endfor %}
+        {% else %}
+          <!-- Sample Sub Product for Theme Editor Preview -->
+          {% if show_plus %}
+            <div class="stackup-plus-wrap">
+              <div class="stackup-plus-line"></div>
+              <div class="stackup-plus-circle">
+                <svg
+                  width="12"
+                  height="12"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="3"
+                  stroke-linecap="round"
+                >
+                  <line x1="12" y1="5" x2="12" y2="19"></line>
+                  <line x1="5" y1="12" x2="19" y2="12"></line>
+                </svg>
+              </div>
+              <div class="stackup-plus-line"></div>
+            </div>
+          {% endif %}
+
+          <div
+            class="stackup-product-item stackup-sub-item"
+            data-quantity="1"
+            data-title="Classic Leather Belt (Sample Pair)"
+            data-price="2400"
+            data-available="true"
+          >
+            <label class="stackup-checkbox-wrap">
+              <input type="checkbox" class="stackup-item-check" data-role="sub" checked>
+              <span class="stackup-custom-check">
+                <svg
+                  width="11"
+                  height="9"
+                  viewBox="0 0 11 9"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2.2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <polyline points="1.5 4.5 4 7 9.5 1.5"></polyline>
+                </svg>
+              </span>
+            </label>
+
+            <div class="stackup-thumb">
+              <div class="stackup-no-img">🎁</div>
+            </div>
+
+            <div class="stackup-info">
+              <div class="stackup-sub-header">
+                <span class="stackup-item-title">Classic Leather Belt (Sample Pair)</span>
+              </div>
+              <input
+                type="hidden"
+                class="stackup-variant-select"
+                value="sample"
+                data-price="2400"
+                data-available="true"
+              >
+            </div>
+
+            <div class="stackup-price-wrap">
+              <span class="stackup-price stackup-sub-price">$24.00</span>
+            </div>
+          </div>
+        {% endif %}
+      </div>
+
+      <!-- Total Summary Box -->
+      {% if show_total %}
+        <div class="stackup-total-box">
+          <div class="stackup-total-left">
+            <div class="stackup-total-label">Bundle Subtotal</div>
+            <div class="stackup-prices">
+              <span class="stackup-final-price">{{ final_bundle_total | money }}</span>
+              <span class="stackup-original-price">{{ total_original_price | money }}</span>
+            </div>
+          </div>
+          {% if show_badge %}
+            <div class="stackup-savings-pill">
+              <span class="stackup-savings-bolt">⚡</span>
+              <span class="stackup-savings-text">{{ badge_label }}</span>
+            </div>
+          {% endif %}
+        </div>
+      {% endif %}
+
+      <!-- Red Out of Stock & Error Alert Banner -->
+      <div class="stackup-stock-alert" role="alert" style="display: none;">
+        <span class="stackup-alert-icon">
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2.2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <circle cx="12" cy="12" r="10"></circle>
+            <line x1="12" y1="8" x2="12" y2="12"></line>
+            <line x1="12" y1="16" x2="12.01" y2="16"></line>
+          </svg>
+        </span>
+        <span class="stackup-alert-text">This product is out of stock, not available</span>
+      </div>
+
+      <!-- 1-Click Action Button -->
+      <button
+        type="button"
+        class="stackup-add-button"
+        data-main-variant="{{ product.selected_or_first_available_variant.id | default: 'preview' }}"
+        data-main-quantity="{{ main_qty }}"
+      >
+        <span class="stackup-btn-icon">
+          <svg
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"></path>
+            <line x1="3" y1="6" x2="21" y2="6"></line>
+            <path d="M16 10a4 4 0 0 1-8 0"></path>
+          </svg>
+        </span>
+        <span class="stackup-btn-text">{{ button_text }}</span>
+        <span class="stackup-btn-spinner" style="display: none;">
+          <svg
+            class="stackup-spin"
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2.5"
+          >
+            <circle cx="12" cy="12" r="10" stroke-opacity="0.25"></circle>
+            <path d="M12 2a10 10 0 0 1 10 10" stroke-linecap="round"></path>
+          </svg>
+        </span>
+      </button>
+    </div>
+  {% endif %}
+{% endif %}
+
+{% schema %}
+{
+  "name": "StackUp Paired Bundle",
+  "target": "section",
+  "stylesheet": "stack-up.css",
+  "javascript": "stack-up.js",
+  "settings": [
+    {
+      "type": "paragraph",
+      "content": "StackUp automatically displays paired product bundles on matching product pages."
+    }
+  ]
+}
+{% endschema %}

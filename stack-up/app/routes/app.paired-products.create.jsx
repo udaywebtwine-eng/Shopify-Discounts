@@ -216,6 +216,10 @@ export const action = async ({ request }) => {
       console.error("-------------------> [CreateAction] Error saving to DB:", dbErr);
     }
 
+    // Sync all active bundle offers to Shop Metafield for instant storefront rendering
+    const { syncAllActiveOffersToShopMetafield } = await import("../utils/bundleMetafields.server");
+    await syncAllActiveOffersToShopMetafield(admin);
+
     console.log("-------------------> ====================================================");
 
     return redirect("/app/paired-products?created=true");
@@ -586,7 +590,7 @@ export default function CreatePairedProductsOffer() {
           <s-section heading="1. Select Main Product(s)">
             <s-stack gap="base">
               <s-paragraph tone="subdued">
-                Choose the primary product(s) that the customer must add to their cart.
+                Choose the primary product page(s) where this bundle will be displayed. When a customer views any of these product pages, the bundle widget will appear.
               </s-paragraph>
 
               <s-stack gap="base">
@@ -676,7 +680,7 @@ export default function CreatePairedProductsOffer() {
           <s-section heading="2. Select Sub / Add-on Product(s)">
             <s-stack gap="base">
               <s-paragraph tone="subdued">
-                Choose the companion/accessory product(s) that pair with the main product(s).
+                Choose the companion/accessory product(s) bundled with the main product. All selected companion products will be displayed together in the storefront bundle widget.
               </s-paragraph>
 
               <s-stack gap="base">
