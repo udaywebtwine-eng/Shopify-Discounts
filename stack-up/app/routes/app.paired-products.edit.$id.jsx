@@ -16,6 +16,7 @@ import {
     dateToShopISO,
 } from "../utils/timezone";
 import { syncRecentOrdersFromShopify } from "../utils/orders.server";
+import WidgetPreview from "./components/Preview/WidgetPreview";
 
 export const loader = async ({ request, params }) => {
     const { admin, session } = await authenticate.admin(request);
@@ -88,8 +89,8 @@ export const loader = async ({ request, params }) => {
 
         let parsedMain = [];
         let parsedSub = [];
-        try { parsedMain = JSON.parse(dbFallback.mainProducts || "[]"); } catch {}
-        try { parsedSub = JSON.parse(dbFallback.subProducts || "[]"); } catch {}
+        try { parsedMain = JSON.parse(dbFallback.mainProducts || "[]"); } catch { }
+        try { parsedSub = JSON.parse(dbFallback.subProducts || "[]"); } catch { }
 
         discountNode = {
             id: dbFallback.discountId || `gid://shopify/DiscountAutomaticNode/${numericId}`,
@@ -142,6 +143,7 @@ export const loader = async ({ request, params }) => {
             ... on Product {
               id
               title
+              handle
               featuredImage {
                 url
               }
@@ -165,6 +167,7 @@ export const loader = async ({ request, params }) => {
                         : "";
                     productsMap[n.id] = {
                         title: n.title,
+                        handle: n.handle || "",
                         image: n.featuredImage?.url || "",
                         price,
                     };
@@ -194,6 +197,7 @@ export const loader = async ({ request, params }) => {
         return {
             id,
             title: prod?.title || `Product (${id.split("/").pop()})`,
+            handle: prod?.handle || "",
             image: prod?.image || "",
             price: prod?.price || "",
             quantity: mainProductQtyMap[id] || 1,
@@ -205,6 +209,7 @@ export const loader = async ({ request, params }) => {
         return {
             id,
             title: prod?.title || `Product (${id.split("/").pop()})`,
+            handle: prod?.handle || "",
             image: prod?.image || "",
             price: prod?.price || "",
             quantity: subProductQtyMap[id] || 1,
@@ -239,7 +244,7 @@ export const loader = async ({ request, params }) => {
         console.warn("Could not query DB for offer analytics:", e);
     }
 
-    return {
+    const outputData = {
         numericId,
         discountNodeId: discountNode.id,
         shopifyStatus: disc.status || "ACTIVE",
@@ -262,7 +267,31 @@ export const loader = async ({ request, params }) => {
             totalDiscountAmount: dbOffer?.totalDiscountAmount || 0,
             recentOrders: dbOffer?.orders || [],
         },
+        shop: session?.shop || "",
+        widgetSettings: null,
     };
+
+    try {
+        const settingsResponse = await admin.graphql(
+            `#graphql
+            query GetWidgetSettings {
+              shop {
+                metafield(namespace: "stack_up", key: "paired_widget_settings") {
+                  value
+                }
+              }
+            }`
+        );
+        const settingsJson = await settingsResponse.json();
+        const rawMetafield = settingsJson.data?.shop?.metafield?.value;
+        if (rawMetafield) {
+            outputData.widgetSettings = JSON.parse(rawMetafield);
+        }
+    } catch (err) {
+        console.warn("Could not query widget settings:", err);
+    }
+
+    return outputData;
 };
 
 export const action = async ({ request, params }) => {
@@ -764,6 +793,7 @@ export default function PairedProductsEdit() {
                         return {
                             id: p.id,
                             title: p.title,
+                            handle: p.handle || existing?.handle || "",
                             image,
                             price,
                             quantity: existing?.quantity || 1,
@@ -808,6 +838,7 @@ export default function PairedProductsEdit() {
                         return {
                             id: p.id,
                             title: p.title,
+                            handle: p.handle || existing?.handle || "",
                             image,
                             price,
                             quantity: existing?.quantity || 1,
@@ -1526,6 +1557,8 @@ export default function PairedProductsEdit() {
                 </s-stack>
             </form>
 
+
+
             {/* Right side Sidebar: Summary in slot="aside" */}
             <s-section slot="aside" heading="Summary">
                 <s-badge slot="supplemental" tone={statusTone}>
@@ -1599,6 +1632,16 @@ export default function PairedProductsEdit() {
                     </s-stack>
                 </s-stack>
             </s-section>
+            
+            {/* Live Widget Preview */}
+            <WidgetPreview
+                title={title}
+                percentage={percentage}
+                mainProducts={mainProducts}
+                subProducts={subProducts}
+                shopDomain={data.shop}
+                widgetSettings={data.widgetSettings}
+            />
 
             {/* Performance & Usage Analytics */}
             <s-section slot="aside" heading="Performance">

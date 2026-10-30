@@ -10,9 +10,10 @@ import { useAppBridge, SaveBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import { getShopTimezone, getShopTodayDate, dateToShopISO } from "../utils/timezone";
+import WidgetPreview from "./components/Preview/WidgetPreview";
 
 export const loader = async ({ request }) => {
-  const { admin } = await authenticate.admin(request);
+  const { admin, session } = await authenticate.admin(request);
 
   let functionId = null;
   try {
@@ -42,8 +43,30 @@ export const loader = async ({ request }) => {
   }
 
   const shopTimezone = await getShopTimezone(admin);
+  const shop = session?.shop || "";
 
-  return { functionId, shopTimezone };
+  let widgetSettings = null;
+  try {
+    const settingsResponse = await admin.graphql(
+      `#graphql
+      query GetWidgetSettings {
+        shop {
+          metafield(namespace: "stack_up", key: "paired_widget_settings") {
+            value
+          }
+        }
+      }`
+    );
+    const settingsJson = await settingsResponse.json();
+    const rawMetafield = settingsJson.data?.shop?.metafield?.value;
+    if (rawMetafield) {
+      widgetSettings = JSON.parse(rawMetafield);
+    }
+  } catch (err) {
+    console.warn("Could not query widget settings:", err);
+  }
+
+  return { functionId, shopTimezone, shop, widgetSettings };
 };
 
 export const action = async ({ request }) => {
@@ -235,7 +258,7 @@ export const action = async ({ request }) => {
 };
 
 export default function CreatePairedProductsOffer() {
-  const { functionId, shopTimezone } = useLoaderData();
+  const { functionId, shopTimezone, shop, widgetSettings } = useLoaderData();
   const actionData = useActionData();
   const navigation = useNavigation();
   const submit = useSubmit();
@@ -295,6 +318,7 @@ export default function CreatePairedProductsOffer() {
             return {
               id: p.id,
               title: p.title,
+              handle: p.handle || existing?.handle || "",
               image,
               price,
               quantity: existing?.quantity || 1,
@@ -339,6 +363,7 @@ export default function CreatePairedProductsOffer() {
             return {
               id: p.id,
               title: p.title,
+              handle: p.handle || existing?.handle || "",
               image,
               price,
               quantity: existing?.quantity || 1,
@@ -898,6 +923,8 @@ export default function CreatePairedProductsOffer() {
         </s-stack>
       </form>
 
+
+
       {/* Right side Sidebar: Summary in slot="aside" */}
       <s-section slot="aside" heading="Summary">
         <s-stack gap="base">
@@ -968,6 +995,16 @@ export default function CreatePairedProductsOffer() {
           </s-stack>
         </s-stack>
       </s-section>
+
+      {/* Right side Sidebar: Live Widget Preview */}
+      <WidgetPreview
+        title={title}
+        percentage={percentage}
+        mainProducts={mainProducts}
+        subProducts={subProducts}
+        shopDomain={shop}
+        widgetSettings={widgetSettings}
+      />
     </s-page>
   );
 }
