@@ -369,9 +369,17 @@ export default function Analytics() {
 
             <s-stack gap="base">
                 <s-section padding="base">
+                    {/* KPI Tooltips outside the grid layout */}
+                    {kpiCards.map((card, i) => (
+                        <s-tooltip key={`tooltip-${i}`} id={`kpi-tooltip-${i}`}>
+                            {card.subtext}
+                        </s-tooltip>
+                    ))}
+
                     <s-grid
                         gridTemplateColumns="@container (inline-size <= 600px) 1fr, 1fr auto 1fr auto 1fr auto 1fr"
                         gap="small"
+                        alignItems="center"
                     >
                         {kpiCards.flatMap((card, i) => [
                             i > 0 ? (
@@ -387,7 +395,6 @@ export default function Analytics() {
                                 paddingBlock="small-400"
                                 paddingInline="small-100"
                                 borderRadius="base"
-                                disabled
                             >
                                 <s-stack
                                     direction="inline"
@@ -425,13 +432,6 @@ export default function Analytics() {
                                     </s-stack>
                                 </s-stack>
                             </s-clickable>,
-
-                            <s-tooltip
-                                key={`tooltip-${i}`}
-                                id={`kpi-tooltip-${i}`}
-                            >
-                                {card.subtext}
-                            </s-tooltip>,
                         ])}
                     </s-grid>
                 </s-section>

@@ -80,9 +80,8 @@ export const loader = async ({ request }) => {
   }
 
   const themeEditorUrl = activeThemeId
-    ? `https://admin.shopify.com/store/${shopName}/themes/${activeThemeId}/editor?context=apps${
-        clientId ? `&activateAppId=${encodeURIComponent(`${clientId}/app-embed`)}` : ""
-      }`
+    ? `https://admin.shopify.com/store/${shopName}/themes/${activeThemeId}/editor?context=apps${clientId ? `&activateAppId=${encodeURIComponent(`${clientId}/app-embed`)}` : ""
+    }`
     : `https://admin.shopify.com/store/${shopName}/themes/current/editor?context=apps`;
 
   return {
@@ -242,13 +241,14 @@ export default function PairedProductsCustomize() {
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "1fr 1.25fr",
+          gridTemplateColumns: "minmax(340px, 1fr) minmax(380px, 1.25fr)",
           gap: "24px",
           alignItems: "start",
+          width: "100%",
         }}
       >
         {/* ===================== LEFT COLUMN: CONTROLS ACCORDION ===================== */}
-        <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: "16px", minWidth: 0 }}>
           {/* Top Banner / Theme Integration Alert */}
           <s-banner tone="info" heading="Storefront Theme Block">
             <s-paragraph>
@@ -551,7 +551,7 @@ export default function PairedProductsCustomize() {
         </div>
 
         {/* ===================== RIGHT COLUMN: LIVE STOREFRONT PREVIEW ===================== */}
-        <div style={{ position: "sticky", top: "20px" }}>
+        <div style={{ position: "sticky", top: "20px", minWidth: 0 }}>
           <div
             style={{
               background: "#ffffff",

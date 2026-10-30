@@ -808,28 +808,25 @@ export default function PairedProducts() {
                                         </s-table-cell>
 
                                         <s-table-cell>
+                                            <s-tooltip id={`edit-tip-${offer.numericId}`}>Edit offer</s-tooltip>
+                                            <s-tooltip id={`delete-tip-${offer.numericId}`}>Delete offer</s-tooltip>
+
                                             <s-stack direction="inline" gap="small" alignItems="center">
-                                                <s-tooltip id={`edit-tooltip-${offer.numericId}`}>
-                                                    Edit offer
-                                                </s-tooltip>
                                                 <s-button
                                                     variant="primary"
                                                     href={`/app/paired-products/edit/${offer.numericId}`}
                                                     icon="edit"
-                                                    interestFor={`edit-tooltip-${offer.numericId}`}
+                                                    interestFor={`edit-tip-${offer.numericId}`}
                                                     accessibilityLabel="Edit offer"
                                                 />
 
-                                                <s-tooltip id={`delete-tooltip-${offer.numericId}`}>
-                                                    Delete offer
-                                                </s-tooltip>
                                                 <s-button
                                                     variant="primary"
                                                     tone="critical"
                                                     commandFor={`delete-modal-${offer.numericId}`}
                                                     command="--show"
                                                     icon="delete"
-                                                    interestFor={`delete-tooltip-${offer.numericId}`}
+                                                    interestFor={`delete-tip-${offer.numericId}`}
                                                     accessibilityLabel="Delete offer"
                                                 />
 
