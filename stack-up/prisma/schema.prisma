@@ -31,38 +31,62 @@ model Session {
 }
 
 model PairedOffer {
-  id                    String        @id @default(uuid())
-  shop                  String
-  discountId            String        @unique // e.g. gid://shopify/DiscountAutomaticNode/...
-  numericId             String
-  title                 String
-  percentage            Float
-  status                String        @default("ACTIVE") // ACTIVE / EXPIRED
-  combinesWithOrder     Boolean       @default(false)
-  combinesWithProduct   Boolean       @default(false)
-  combinesWithShipping  Boolean       @default(false)
-  startsAt              DateTime?
-  endsAt                DateTime?
-  mainProducts          String        // JSON array of { id, title, image, price, quantity }
-  subProducts           String        // JSON array of { id, title, image, price, quantity }
-  usageCount            Int           @default(0)   // Total times used / orders count
-  totalRevenue          Float         @default(0.0) // Total revenue generated
-  totalDiscountAmount   Float         @default(0.0) // Total discount given
-  orders                OrderUsage[]
-  createdAt             DateTime      @default(now())
-  updatedAt             DateTime      @updatedAt
+  id                   String       @id @default(uuid())
+  shop                 String
+  discountId           String       @unique // e.g. gid://shopify/DiscountAutomaticNode/...
+  numericId            String
+  title                String
+  percentage           Float
+  status               String       @default("ACTIVE") // ACTIVE / EXPIRED
+  combinesWithOrder    Boolean      @default(false)
+  combinesWithProduct  Boolean      @default(false)
+  combinesWithShipping Boolean      @default(false)
+  startsAt             DateTime?
+  endsAt               DateTime?
+  mainProducts         String // JSON array of { id, title, image, price, quantity }
+  subProducts          String // JSON array of { id, title, image, price, quantity }
+  usageCount           Int          @default(0) // Total times used / orders count
+  totalRevenue         Float        @default(0.0) // Total revenue generated
+  totalDiscountAmount  Float        @default(0.0) // Total discount given
+  orders               OrderUsage[]
+  createdAt            DateTime     @default(now())
+  updatedAt            DateTime     @updatedAt
+}
+
+model SelectedProductOffer {
+  id                   String       @id @default(uuid())
+  shop                 String
+  discountId           String       @unique // e.g. gid://shopify/DiscountAutomaticNode/...
+  numericId            String
+  title                String
+  percentage           Float
+  status               String       @default("ACTIVE") // ACTIVE / EXPIRED
+  combinesWithOrder    Boolean      @default(false)
+  combinesWithProduct  Boolean      @default(false)
+  combinesWithShipping Boolean      @default(false)
+  startsAt             DateTime?
+  endsAt               DateTime?
+  products             String // JSON array of { id, title, handle, image, price, quantity }
+  usageCount           Int          @default(0) // Total times used / orders count
+  totalRevenue         Float        @default(0.0) // Total revenue generated
+  totalDiscountAmount  Float        @default(0.0) // Total discount given
+  orders               OrderUsage[]
+  createdAt            DateTime     @default(now())
+  updatedAt            DateTime     @updatedAt
 }
 
 model OrderUsage {
-  id             String       @id @default(uuid())
-  shop           String
-  orderId        String       @unique
-  orderName      String?      // e.g. "#1001"
-  customerEmail  String?
-  totalPrice     Float
-  discountAmount Float
-  currency       String       @default("USD")
-  offerId        String?
-  offer          PairedOffer? @relation(fields: [offerId], references: [id], onDelete: Cascade)
-  createdAt      DateTime     @default(now())
+  id              String                @id @default(uuid())
+  shop            String
+  orderId         String                @unique
+  orderName       String? // e.g. "#1001"
+  customerEmail   String?
+  totalPrice      Float
+  discountAmount  Float
+  currency        String                @default("USD")
+  offerId         String?
+  offer           PairedOffer?          @relation(fields: [offerId], references: [id], onDelete: Cascade)
+  selectedOfferId String?
+  selectedOffer   SelectedProductOffer? @relation(fields: [selectedOfferId], references: [id], onDelete: Cascade)
+  createdAt       DateTime              @default(now())
 }
