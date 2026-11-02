@@ -1,6 +1,7 @@
 /* eslint-disable react/prop-types */
 import { useState, useEffect } from "react";
-import { useLoaderData, useSearchParams } from "react-router";
+import { useLoaderData, useSearchParams, useNavigation } from "react-router";
+import { useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import db from "../db.server";
 import { syncRecentOrdersFromShopify } from "../utils/orders.server";
@@ -9,14 +10,13 @@ import OffersComparisonChart from "./components/chart/offers-comparison-chart";
 import OffersTable from "./components/table/offers-table";
 import ProductsTable from "./components/table/products-table";
 
-export const loader = async ({ request }) => {
-    const { admin, session } = await authenticate.admin(request);
-    const url = new URL(request.url);
-    const range = url.searchParams.get("range") || "30d";
+// In-memory currency cache per shop domain to avoid redundant GraphQL roundtrips
+const currencyCache = new Map();
 
-    // 1. Fetch currency from Shopify
-    let currencyCode = "USD";
-    let currencySymbol = "$";
+async function getShopCurrencyDetails(admin, shopDomain) {
+    if (shopDomain && currencyCache.has(shopDomain)) {
+        return currencyCache.get(shopDomain);
+    }
     try {
         const shopRes = await admin.graphql(`#graphql
             query GetShopCurrency {
@@ -26,10 +26,9 @@ export const loader = async ({ request }) => {
             }
         `);
         const shopJson = await shopRes.json();
-        currencyCode = shopJson.data?.shop?.currencyCode || "USD";
+        const currencyCode = shopJson.data?.shop?.currencyCode || "USD";
 
-        // Dynamically resolve currency symbol for any worldwide currency
-        currencySymbol =
+        const currencySymbol =
             new Intl.NumberFormat("en-US", {
                 style: "currency",
                 currency: currencyCode,
@@ -37,11 +36,28 @@ export const loader = async ({ request }) => {
             })
                 .formatToParts(0)
                 .find((part) => part.type === "currency")?.value || currencyCode;
+
+        const result = { currencyCode, currencySymbol };
+        if (shopDomain) currencyCache.set(shopDomain, result);
+        return result;
     } catch (err) {
         console.warn("Could not query shop currency:", err);
+        return { currencyCode: "USD", currencySymbol: "$" };
     }
+}
 
-    // 2. Calculate date range boundaries
+// In-memory product details cache (5 minute TTL) to make range switching instant
+const productDetailsCache = new Map();
+const PRODUCT_CACHE_TTL_MS = 5 * 60 * 1000;
+
+export const loader = async ({ request }) => {
+    const t0 = performance.now();
+    const { admin, session } = await authenticate.admin(request);
+    const shop = session?.shop || "";
+    const url = new URL(request.url);
+    const range = url.searchParams.get("range") || "30d";
+
+    // 1. Calculate date range boundaries
     const now = new Date();
     const startDate = new Date();
     let daysCount = 30;
@@ -61,27 +77,35 @@ export const loader = async ({ request }) => {
         daysCount = 30;
     }
 
-    // Sync recent orders before running analytics
-    try {
-        await syncRecentOrdersFromShopify(admin, session.shop);
-    } catch (orderSyncErr) {
-        console.warn("Could not sync recent orders in analytics loader:", orderSyncErr);
-    }
+    // 2. Parallelize currency fetch and background order sync
+    const [currencyDetails] = await Promise.all([
+        getShopCurrencyDetails(admin, shop),
+        shop ? syncRecentOrdersFromShopify(admin, shop).catch((e) => {
+            console.warn("Could not sync recent orders in analytics loader:", e);
+            return 0;
+        }) : Promise.resolve(0),
+    ]);
+    const { currencyCode, currencySymbol } = currencyDetails;
 
-    // 3. Query DB offers (both Paired and Selected)
+    // 3. Parallelize database queries for Paired Offers, Selected Offers, and Order Usages
+    const shopName = shop.replace(".myshopify.com", "");
+    const shopConditions = [
+        { shop },
+        { shop: shopName },
+        { shop: `${shopName}.myshopify.com` },
+    ];
+
     let pairedOffers = [];
     let selectedOffers = [];
+    let ordersInRange = [];
+
     try {
-        const shopConditions = [
-            { shop: session.shop },
-            { shop: session.shop.replace(".myshopify.com", "") },
-            { shop: `${session.shop.replace(".myshopify.com", "")}.myshopify.com` },
-        ];
-        [pairedOffers, selectedOffers] = await Promise.all([
+        [pairedOffers, selectedOffers, ordersInRange] = await Promise.all([
             db.pairedOffer.findMany({
                 where: { OR: shopConditions },
                 include: {
                     orders: {
+                        where: { createdAt: { gte: startDate } },
                         orderBy: { createdAt: "desc" },
                     },
                 },
@@ -91,31 +115,25 @@ export const loader = async ({ request }) => {
                 where: { OR: shopConditions },
                 include: {
                     orders: {
+                        where: { createdAt: { gte: startDate } },
                         orderBy: { createdAt: "desc" },
                     },
                 },
                 orderBy: { createdAt: "desc" },
             }),
+            db.orderUsage.findMany({
+                where: {
+                    OR: shopConditions,
+                    createdAt: { gte: startDate },
+                },
+                orderBy: { createdAt: "asc" },
+            }),
         ]);
     } catch (err) {
-        console.warn("Could not query offers for analytics:", err);
+        console.warn("Could not query DB for analytics:", err);
     }
 
-    // 4. Query DB order usages within date range
-    let ordersInRange = [];
-    try {
-        ordersInRange = await db.orderUsage.findMany({
-            where: {
-                shop: session.shop,
-                createdAt: { gte: startDate },
-            },
-            orderBy: { createdAt: "asc" },
-        });
-    } catch (err) {
-        console.warn("Could not query orders in range:", err);
-    }
-
-    // 5. Aggregate KPI Summary
+    // 4. Aggregate KPI Summary
     const totalOrders = ordersInRange.length;
     const revenueGenerated = ordersInRange.reduce((acc, o) => acc + (o.totalPrice || 0), 0);
     const totalDiscountAmount = ordersInRange.reduce((acc, o) => acc + (o.discountAmount || 0), 0);
@@ -125,7 +143,7 @@ export const loader = async ({ request }) => {
             ? Math.round(((revenueGenerated - totalDiscountAmount) / totalDiscountAmount) * 100)
             : 0;
 
-    // 6. Build Daily Time Series for Chart 1
+    // 5. Build Daily Time Series for Chart 1
     const dailyBuckets = [];
     const bucketCount = Math.min(daysCount, 30);
     for (let i = bucketCount - 1; i >= 0; i--) {
@@ -160,9 +178,9 @@ export const loader = async ({ request }) => {
         b.aov = b.orders > 0 ? b.sales / b.orders : 0;
     });
 
-    // 7. Build Offers Comparison for Chart 2 & Table 1
+    // 6. Build Offers Comparison for Chart 2 & Table 1
     const pairedOffersData = pairedOffers.map((off) => {
-        const offOrders = off.orders.filter((o) => new Date(o.createdAt) >= startDate);
+        const offOrders = off.orders || [];
         const ordersCount = offOrders.length || off.usageCount || 0;
         const salesAmount = offOrders.reduce((sum, o) => sum + (o.totalPrice || 0), 0) || off.totalRevenue || 0;
 
@@ -183,7 +201,7 @@ export const loader = async ({ request }) => {
     });
 
     const selectedOffersData = selectedOffers.map((off) => {
-        const offOrders = off.orders.filter((o) => new Date(o.createdAt) >= startDate);
+        const offOrders = off.orders || [];
         const ordersCount = offOrders.length || off.usageCount || 0;
         const salesAmount = offOrders.reduce((sum, o) => sum + (o.totalPrice || 0), 0) || off.totalRevenue || 0;
 
@@ -205,7 +223,7 @@ export const loader = async ({ request }) => {
 
     const offersData = [...pairedOffersData, ...selectedOffersData];
 
-    // 8. Build Top Selling Products for Table 2 with real Shopify product details & inventory
+    // 7. Collect unique product GIDs across all active offers
     const allProdIdsSet = new Set();
     pairedOffers.forEach((off) => {
         let mProds = [];
@@ -252,7 +270,14 @@ export const loader = async ({ request }) => {
     const allProductIds = Array.from(allProdIdsSet);
     const shopifyProductDetails = {};
 
-    if (allProductIds.length > 0) {
+    // 8. Fetch product details with in-memory caching to prevent repeating GraphQL queries
+    const nowMs = Date.now();
+    const uncachedIds = allProductIds.filter((id) => {
+        const entry = productDetailsCache.get(id);
+        return !entry || nowMs - entry.timestamp > PRODUCT_CACHE_TTL_MS;
+    });
+
+    if (uncachedIds.length > 0) {
         try {
             const prodRes = await admin.graphql(
                 `#graphql
@@ -274,7 +299,7 @@ export const loader = async ({ request }) => {
                         }
                     }
                 }`,
-                { variables: { ids: allProductIds } }
+                { variables: { ids: uncachedIds } }
             );
             const prodJson = await prodRes.json();
             const nodes = prodJson.data?.nodes || [];
@@ -293,10 +318,11 @@ export const loader = async ({ request }) => {
                         price,
                         availableQuantity: Number(qty),
                     };
-                    shopifyProductDetails[n.id] = itemData;
+
+                    productDetailsCache.set(n.id, { data: itemData, timestamp: nowMs });
                     const numericId = n.id.split("/").pop();
                     if (numericId) {
-                        shopifyProductDetails[numericId] = itemData;
+                        productDetailsCache.set(numericId, { data: itemData, timestamp: nowMs });
                     }
                 }
             });
@@ -304,6 +330,16 @@ export const loader = async ({ request }) => {
             console.warn("Could not query Shopify product details for analytics:", err);
         }
     }
+
+    // Populate lookup from cache
+    allProductIds.forEach((id) => {
+        const cached = productDetailsCache.get(id);
+        if (cached?.data) {
+            shopifyProductDetails[id] = cached.data;
+            const numericId = id.split("/").pop();
+            if (numericId) shopifyProductDetails[numericId] = cached.data;
+        }
+    });
 
     const productMap = {};
 
@@ -339,7 +375,7 @@ export const loader = async ({ request }) => {
             sProds = [];
         }
 
-        const offOrders = off.orders.filter((o) => new Date(o.createdAt) >= startDate);
+        const offOrders = off.orders || [];
         const ordersCount = offOrders.length || off.usageCount || 0;
 
         [...mProds, ...sProds].forEach((p) => addProductToMap(p, ordersCount));
@@ -356,13 +392,15 @@ export const loader = async ({ request }) => {
             oProds = [];
         }
 
-        const offOrders = off.orders.filter((o) => new Date(o.createdAt) >= startDate);
+        const offOrders = off.orders || [];
         const ordersCount = offOrders.length || off.usageCount || 0;
 
         [...tProds, ...oProds].forEach((p) => addProductToMap(p, ordersCount));
     });
 
     const productsList = Object.values(productMap).sort((a, b) => b.totalOrders - a.totalOrders);
+    const tEnd = performance.now();
+    console.log(`⏱️ [AnalyticsLoader] Loaded in ${(tEnd - t0).toFixed(0)}ms (${offersData.length} offers, ${productsList.length} products, ${totalOrders} orders)`);
 
     return {
         range,
@@ -383,12 +421,24 @@ export const loader = async ({ request }) => {
 export default function Analytics() {
     const { range, currencySymbol, kpi, dailyBuckets, offersData, productsList } = useLoaderData();
     const [searchParams, setSearchParams] = useSearchParams();
+    const navigation = useNavigation();
+    const shopify = useAppBridge();
 
     // Client-side mount flag for Recharts
     const [isMounted, setIsMounted] = useState(false);
     useEffect(() => {
         setIsMounted(true);
     }, []);
+
+    // Show App Bridge loading spinner during date range transitions
+    const isNavigating = navigation.state === "loading";
+    useEffect(() => {
+        try {
+            shopify.loading(isNavigating);
+        } catch {
+            // ignore if outside embedded bridge
+        }
+    }, [isNavigating, shopify]);
 
     // Handle Range change
     const handleRangeChange = (newRange) => {
