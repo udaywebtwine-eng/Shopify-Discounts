@@ -15,8 +15,16 @@
   -webkit-font-smoothing: antialiased;
 }
 
+html.stackup-active .stackup-paired-widget,
+body.stackup-active .stackup-paired-widget,
 body:has([data-stackup-embed-active]) .stackup-paired-widget,
-body.stackup-active .stackup-paired-widget {
+html:has([data-stackup-embed-active]) .stackup-paired-widget,
+.stackup-paired-widget.stackup-visible,
+html.stackup-active .stackup-addons-widget,
+body.stackup-active .stackup-addons-widget,
+body:has([data-stackup-embed-active]) .stackup-addons-widget,
+html:has([data-stackup-embed-active]) .stackup-addons-widget,
+.stackup-addons-widget.stackup-visible {
   display: block !important;
 }
 
@@ -426,15 +434,6 @@ body.stackup-active .stackup-paired-widget {
   filter: grayscale(35%);
 }
 
-/* .stackup-product-item.is-unchecked {
-  opacity: 0.55;
-  background-color: #f8fafc;
-  border-color: #f1f5f9;
-} */
-
-.stackup-product-item.is-unchecked .stackup-thumb {
-  filter: grayscale(30%);
-}
 
 /* Red Out of Stock & Error Alert Banner */
 .stackup-stock-alert {
@@ -478,4 +477,269 @@ body.stackup-active .stackup-paired-widget {
     transform: translateY(0);
   }
 }
+
+/* ==========================================================================
+   StackUp - Special Add-Ons / Selected Products Widget Styles
+   ========================================================================== */
+
+.stackup-addons-widget {
+  display: none !important;
+  background-color: var(--stackup-addon-card-bg, #ffffff);
+  border: 1px solid var(--stackup-addon-border-color, #e2e8f0);
+  border-radius: var(--stackup-addon-radius, 12px);
+  padding: 18px;
+  margin: 22px 0;
+  box-sizing: border-box;
+  font-family: inherit;
+  box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.05), 0 2px 6px -1px rgba(0, 0, 0, 0.02);
+  -webkit-font-smoothing: antialiased;
+}
+
+.stackup-editor-notice {
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  color: #1e40af;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 12px;
+  margin-bottom: 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  line-height: 1.4;
+}
+
+.stackup-addons-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 4px;
+  flex-wrap: wrap;
+}
+
+.stackup-addons-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.stackup-addons-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: #0f172a;
+  margin: 0;
+  letter-spacing: -0.01em;
+  line-height: 1.3;
+}
+
+.stackup-addons-badge {
+  background: var(--stackup-addon-badge-bg, #ecfdf5);
+  color: var(--stackup-addon-badge-color, #065f46);
+  font-size: 11px;
+  font-weight: 700;
+  padding: 4px 10px;
+  border-radius: 20px;
+  border: 1px solid rgba(16, 185, 129, 0.25);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  box-shadow: 0 1px 2px rgba(16, 185, 129, 0.08);
+}
+
+.stackup-addons-subheading {
+  font-size: 13px;
+  color: #64748b;
+  margin-bottom: 14px;
+  line-height: 1.4;
+}
+
+.stackup-addons-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.stackup-addon-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  background: #ffffff;
+  border: 1px solid var(--stackup-addon-border-color, #e2e8f0);
+  border-radius: max(6px, calc(var(--stackup-addon-radius, 12px) - 4px));
+  box-sizing: border-box;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.stackup-addon-item:hover {
+  border-color: #cbd5e1;
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.04);
+}
+
+
+.stackup-addon-item.is-out-of-stock {
+  background-color: #fafaf9;
+  border-color: #fecaca;
+  opacity: 0.85;
+}
+
+.stackup-addon-item.is-out-of-stock .stackup-thumb {
+  filter: grayscale(35%);
+}
+
+.stackup-addon-variant-select {
+  margin-top: 6px;
+  padding: 5px 9px;
+  font-size: 12px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #334155;
+  cursor: pointer;
+  max-width: 100%;
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+
+.stackup-addon-variant-select:focus {
+  border-color: #6366f1;
+}
+
+.stackup-addon-price-wrap {
+  text-align: right;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+
+.stackup-addon-discounted-price {
+  font-size: 15px;
+  font-weight: 700;
+  color: #059669;
+  letter-spacing: -0.01em;
+}
+
+.stackup-addon-original-price {
+  font-size: 12px;
+  color: #94a3b8;
+  text-decoration: line-through;
+  font-weight: 500;
+  margin-top: 1px;
+}
+
+/* Add-Ons Total Box */
+.stackup-addons-total-box {
+  margin-top: 16px;
+  padding: 14px 16px;
+  background: #f8fafc;
+  border: 1px solid var(--stackup-addon-border-color, #e2e8f0);
+  border-radius: max(6px, calc(var(--stackup-addon-radius, 12px) - 4px));
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.stackup-addons-final-price {
+  font-size: 20px;
+  font-weight: 800;
+  color: #0f172a;
+  letter-spacing: -0.02em;
+}
+
+.stackup-addons-original-price {
+  font-size: 14px;
+  color: #94a3b8;
+  text-decoration: line-through;
+  font-weight: 500;
+}
+
+.stackup-addons-savings-pill {
+  background: var(--stackup-addon-badge-bg, #ecfdf5);
+  color: var(--stackup-addon-badge-color, #065f46);
+  border: 1px solid rgba(16, 185, 129, 0.25);
+  font-size: 12px;
+  font-weight: 700;
+  padding: 6px 12px;
+  border-radius: 20px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  box-shadow: 0 1px 2px rgba(16, 185, 129, 0.08);
+}
+
+/* Add-Ons Action Button */
+.stackup-addons-add-btn {
+  width: 100%;
+  margin-top: 14px;
+  padding: 14px 20px;
+  background-color: var(--stackup-addon-btn-bg, #0f172a);
+  color: var(--stackup-addon-btn-color, #ffffff);
+  border: none;
+  border-radius: var(--stackup-addon-radius, 12px);
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.15);
+  letter-spacing: -0.01em;
+}
+
+.stackup-addons-btn-icon,
+.stackup-addons-btn-spinner {
+  display: inline-flex;
+  align-items: center;
+}
+
+.stackup-addons-add-btn:hover {
+  opacity: 0.95;
+  transform: translateY(-1px);
+  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.22);
+}
+
+.stackup-addons-add-btn:active {
+  transform: scale(0.98);
+}
+
+.stackup-addons-add-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.stackup-addons-add-btn.is-out-of-stock-btn {
+  background-color: #94a3b8 !important;
+  color: #ffffff !important;
+  border-color: #94a3b8 !important;
+  cursor: not-allowed !important;
+  opacity: 0.7 !important;
+  transform: none !important;
+  box-shadow: none !important;
+}
+
+/* Stock Alert */
+.stackup-addons-stock-alert {
+  display: none;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 14px;
+  margin-top: 14px;
+  background-color: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: max(6px, calc(var(--stackup-addon-radius, 12px) - 4px));
+  color: #b91c1c;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.4;
+  box-sizing: border-box;
+  animation: stackup-slide-down 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
 

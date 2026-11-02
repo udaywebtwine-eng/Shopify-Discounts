@@ -3,6 +3,7 @@ import { useState, useEffect } from "react";
 import { useLoaderData, useSearchParams } from "react-router";
 import { authenticate } from "../shopify.server";
 import db from "../db.server";
+import { syncRecentOrdersFromShopify } from "../utils/orders.server";
 import DailyTrendChart from "./components/chart/daily-trend-chart";
 import OffersComparisonChart from "./components/chart/offers-comparison-chart";
 import OffersTable from "./components/table/offers-table";
@@ -60,20 +61,44 @@ export const loader = async ({ request }) => {
         daysCount = 30;
     }
 
-    // 3. Query DB offers
-    let offers = [];
+    // Sync recent orders before running analytics
     try {
-        offers = await db.pairedOffer.findMany({
-            where: { shop: session.shop },
-            include: {
-                orders: {
-                    orderBy: { createdAt: "desc" },
+        await syncRecentOrdersFromShopify(admin, session.shop);
+    } catch (orderSyncErr) {
+        console.warn("Could not sync recent orders in analytics loader:", orderSyncErr);
+    }
+
+    // 3. Query DB offers (both Paired and Selected)
+    let pairedOffers = [];
+    let selectedOffers = [];
+    try {
+        const shopConditions = [
+            { shop: session.shop },
+            { shop: session.shop.replace(".myshopify.com", "") },
+            { shop: `${session.shop.replace(".myshopify.com", "")}.myshopify.com` },
+        ];
+        [pairedOffers, selectedOffers] = await Promise.all([
+            db.pairedOffer.findMany({
+                where: { OR: shopConditions },
+                include: {
+                    orders: {
+                        orderBy: { createdAt: "desc" },
+                    },
                 },
-            },
-            orderBy: { createdAt: "desc" },
-        });
+                orderBy: { createdAt: "desc" },
+            }),
+            db.selectedProductOffer.findMany({
+                where: { OR: shopConditions },
+                include: {
+                    orders: {
+                        orderBy: { createdAt: "desc" },
+                    },
+                },
+                orderBy: { createdAt: "desc" },
+            }),
+        ]);
     } catch (err) {
-        console.warn("Could not query paired offers:", err);
+        console.warn("Could not query offers for analytics:", err);
     }
 
     // 4. Query DB order usages within date range
@@ -136,8 +161,7 @@ export const loader = async ({ request }) => {
     });
 
     // 7. Build Offers Comparison for Chart 2 & Table 1
-    const offersData = offers.map((off) => {
-        // Count orders in selected date range
+    const pairedOffersData = pairedOffers.map((off) => {
         const offOrders = off.orders.filter((o) => new Date(o.createdAt) >= startDate);
         const ordersCount = offOrders.length || off.usageCount || 0;
         const salesAmount = offOrders.reduce((sum, o) => sum + (o.totalPrice || 0), 0) || off.totalRevenue || 0;
@@ -158,9 +182,32 @@ export const loader = async ({ request }) => {
         };
     });
 
+    const selectedOffersData = selectedOffers.map((off) => {
+        const offOrders = off.orders.filter((o) => new Date(o.createdAt) >= startDate);
+        const ordersCount = offOrders.length || off.usageCount || 0;
+        const salesAmount = offOrders.reduce((sum, o) => sum + (o.totalPrice || 0), 0) || off.totalRevenue || 0;
+
+        return {
+            id: off.id,
+            numericId: off.numericId,
+            title: off.title,
+            discountType: "Selected Products",
+            percentage: off.percentage,
+            status: off.status,
+            totalOrders: ordersCount,
+            totalSale: salesAmount,
+            cartClicks: 0,
+            bundleViews: 0,
+            mainProducts: off.targetProducts || "[]",
+            subProducts: off.offeredProducts || off.products || "[]",
+        };
+    });
+
+    const offersData = [...pairedOffersData, ...selectedOffersData];
+
     // 8. Build Top Selling Products for Table 2 with real Shopify product details & inventory
     const allProdIdsSet = new Set();
-    offers.forEach((off) => {
+    pairedOffers.forEach((off) => {
         let mProds = [];
         let sProds = [];
         try {
@@ -172,6 +219,27 @@ export const loader = async ({ request }) => {
         }
 
         [...mProds, ...sProds].forEach((p) => {
+            if (p && p.id) {
+                const gid = String(p.id).startsWith("gid://shopify/Product/")
+                    ? String(p.id)
+                    : `gid://shopify/Product/${p.id}`;
+                allProdIdsSet.add(gid);
+            }
+        });
+    });
+
+    selectedOffers.forEach((off) => {
+        let tProds = [];
+        let oProds = [];
+        try {
+            tProds = JSON.parse(off.targetProducts || "[]");
+            oProds = JSON.parse(off.offeredProducts || off.products || "[]");
+        } catch {
+            tProds = [];
+            oProds = [];
+        }
+
+        [...tProds, ...oProds].forEach((p) => {
             if (p && p.id) {
                 const gid = String(p.id).startsWith("gid://shopify/Product/")
                     ? String(p.id)
@@ -238,7 +306,29 @@ export const loader = async ({ request }) => {
     }
 
     const productMap = {};
-    offers.forEach((off) => {
+
+    const addProductToMap = (p, ordersCount) => {
+        if (!p || !p.id) return;
+        const pid = String(p.id);
+        const numericId = pid.split("/").pop();
+        const details = shopifyProductDetails[pid] || shopifyProductDetails[numericId] || {};
+
+        if (!productMap[pid]) {
+            productMap[pid] = {
+                id: pid,
+                name: details.title || p.title || "Product",
+                image: details.image || p.image || "",
+                price: details.price || p.price || "",
+                bundleCount: 0,
+                totalOrders: 0,
+                availableQuantity: details.availableQuantity !== undefined ? details.availableQuantity : 0,
+            };
+        }
+        productMap[pid].bundleCount += 1;
+        productMap[pid].totalOrders += ordersCount;
+    };
+
+    pairedOffers.forEach((off) => {
         let mProds = [];
         let sProds = [];
         try {
@@ -252,26 +342,24 @@ export const loader = async ({ request }) => {
         const offOrders = off.orders.filter((o) => new Date(o.createdAt) >= startDate);
         const ordersCount = offOrders.length || off.usageCount || 0;
 
-        [...mProds, ...sProds].forEach((p) => {
-            if (!p || !p.id) return;
-            const pid = String(p.id);
-            const numericId = pid.split("/").pop();
-            const details = shopifyProductDetails[pid] || shopifyProductDetails[numericId] || {};
+        [...mProds, ...sProds].forEach((p) => addProductToMap(p, ordersCount));
+    });
 
-            if (!productMap[pid]) {
-                productMap[pid] = {
-                    id: pid,
-                    name: details.title || p.title || "Product",
-                    image: details.image || p.image || "",
-                    price: details.price || p.price || "",
-                    bundleCount: 0,
-                    totalOrders: 0,
-                    availableQuantity: details.availableQuantity !== undefined ? details.availableQuantity : 0,
-                };
-            }
-            productMap[pid].bundleCount += 1;
-            productMap[pid].totalOrders += ordersCount;
-        });
+    selectedOffers.forEach((off) => {
+        let tProds = [];
+        let oProds = [];
+        try {
+            tProds = JSON.parse(off.targetProducts || "[]");
+            oProds = JSON.parse(off.offeredProducts || off.products || "[]");
+        } catch {
+            tProds = [];
+            oProds = [];
+        }
+
+        const offOrders = off.orders.filter((o) => new Date(o.createdAt) >= startDate);
+        const ordersCount = offOrders.length || off.usageCount || 0;
+
+        [...tProds, ...oProds].forEach((p) => addProductToMap(p, ordersCount));
     });
 
     const productsList = Object.values(productMap).sort((a, b) => b.totalOrders - a.totalOrders);

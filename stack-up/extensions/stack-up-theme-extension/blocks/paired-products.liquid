@@ -3,9 +3,6 @@
   Target: section (Online Store 2.0 Product Template Block)
 {% endcomment %}
 
-{{ 'stack-up.css' | asset_url | stylesheet_tag }}
-{{ 'stack-up.js' | asset_url | script_tag }}
-
 {% assign app_status = shop.metafields.stack_up.stack_up_app_enabled.value %}
 {% assign is_app_enabled = false %}
 {% if app_status == 'true' or app_status == true or app_status == blank %}
@@ -13,6 +10,9 @@
 {% endif %}
 
 {% if is_app_enabled %}
+  {% render 'stack-up-styles' %}
+  {% render 'stack-up-scripts' %}
+
   {% assign custom_settings = shop.metafields.stack_up.paired_widget_settings.value %}
 
   {% comment %} Look up bundle offer for current product {% endcomment %}

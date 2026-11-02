@@ -1,0 +1,33 @@
+query CartInput {
+  shop {
+    appStatus: metafield(namespace: "stack_up", key: "stack_up_app_enabled") {
+      value
+    }
+  }
+  cart {
+    lines {
+      id
+      quantity
+      cost {
+        subtotalAmount {
+          amount
+        }
+      }
+      merchandise {
+        __typename
+        ... on ProductVariant {
+          id
+          product {
+            id
+          }
+        }
+      }
+    }
+  }
+  discount {
+    discountClasses
+    metafield(namespace: "$app:discount", key: "function_configuration") {
+      value
+    }
+  }
+}

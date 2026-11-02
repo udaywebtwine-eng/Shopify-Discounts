@@ -4,16 +4,23 @@
  */
 
 (function () {
-  function initStackUpWidgets() {
-    const isEmbedActive = !!document.querySelector('[data-stackup-embed-active]') || window.StackUpAppEmbedActive === true;
-    if (!isEmbedActive) {
-      document.querySelectorAll('.stackup-paired-widget').forEach((w) => {
-        w.style.setProperty('display', 'none', 'important');
-      });
-      return;
-    }
+  'use strict';
 
+  // Shared Currency & String Helpers
+  function formatMoney(cents) {
+    return '$' + (cents / 100).toFixed(2);
+  }
+
+  function cleanVariantId(id) {
+    if (!id) return '';
+    const str = String(id).trim();
+    if (str.startsWith('sample')) return str;
+    return str.replace(/\D/g, '');
+  }
+
+  function initStackUpPairedWidgets() {
     const widgets = document.querySelectorAll('.stackup-paired-widget');
+    if (!widgets || widgets.length === 0) return;
     widgets.forEach((widget) => {
       widget.style.removeProperty('display');
       if (widget.dataset.initialized) return;
@@ -35,10 +42,6 @@
 
       const discountPercentage = parseFloat(widget.dataset.discountPercentage) || 0;
       const customBtnText = widget.dataset.customBtnText?.trim() || '';
-
-      function formatMoney(cents) {
-        return '$' + (cents / 100).toFixed(2);
-      }
 
       function updatePrices() {
         const mainQty = parseInt(widget.dataset.mainQuantity) || 1;
@@ -74,12 +77,6 @@
 
           const isChecked = checkbox ? checkbox.checked : true;
 
-          // Toggle visual styling for unchecked state
-          if (isChecked) {
-            subItem.classList.remove('is-unchecked');
-          } else {
-            subItem.classList.add('is-unchecked');
-          }
 
           // Read variant details
           let subUnitPrice = 0;
@@ -437,11 +434,359 @@
     });
   }
 
+  // ==========================================================================
+  // StackUp - Special Add-Ons / Selected Products Widget Logic
+  // ==========================================================================
+
+  function initStackUpAddonsWidgets() {
+    const widgets = document.querySelectorAll('.stackup-addons-widget');
+    if (!widgets || widgets.length === 0) return;
+
+    widgets.forEach((widget) => {
+      widget.style.removeProperty('display');
+      if (widget.dataset.initialized === 'true') return;
+      widget.dataset.initialized = 'true';
+
+      const discountPercentage = parseFloat(widget.dataset.discountPercentage) || 0;
+      const items = widget.querySelectorAll('.stackup-addon-item');
+      const finalPriceElem = widget.querySelector('.stackup-addons-final-price');
+      const originalPriceElem = widget.querySelector('.stackup-addons-original-price');
+      const savingsPill = widget.querySelector('.stackup-addons-savings-pill');
+      const savingsTextElem = widget.querySelector('.stackup-addons-savings-text');
+      const addBtn = widget.querySelector('.stackup-addons-add-btn');
+      const btnText = widget.querySelector('.stackup-addons-btn-text');
+      const stockAlert = widget.querySelector('.stackup-addons-stock-alert');
+      const alertText = widget.querySelector('.stackup-addons-alert-text');
+      const customBtnText = widget.dataset.customBtnText?.trim() || '';
+
+      function updateAddonsSummary() {
+        let totalDiscountedCents = 0;
+        let totalOriginalCents = 0;
+        let checkedCount = 0;
+        const checkedAddonsForCart = [];
+        const outOfStockCheckedTitles = [];
+
+        items.forEach((item) => {
+          const checkbox = item.querySelector('.stackup-addon-checkbox');
+          const select = item.querySelector('.stackup-addon-variant-select');
+          const discountedPriceElem = item.querySelector('.stackup-addon-discounted-price');
+          const originalPriceElem = item.querySelector('.stackup-addon-original-price');
+          const unitPriceElem = item.querySelector('.stackup-unit-price');
+          const stockBadge = item.querySelector('.addon-stock-badge');
+          const qty = parseInt(item.dataset.quantity || '1', 10) || 1;
+          const title = item.dataset.title || 'Add-on';
+
+          const isChecked = checkbox ? checkbox.checked : true;
+
+
+          let unitOrigPrice = 0;
+          let unitDiscPrice = 0;
+          let variantId = null;
+          let isAvailable = true;
+
+          if (select) {
+            if (select.tagName === 'SELECT') {
+              const selectedOpt = select.options[select.selectedIndex];
+              unitOrigPrice = parseFloat(selectedOpt?.dataset?.price) || parseFloat(item.dataset.price) || 0;
+              unitDiscPrice = parseFloat(selectedOpt?.dataset?.discountedPrice) || parseFloat(item.dataset.discountedPrice) || Math.round(unitOrigPrice * (1 - discountPercentage / 100));
+              variantId = select.value || item.dataset.variantId;
+              if (selectedOpt && selectedOpt.dataset.available === 'false') {
+                isAvailable = false;
+              }
+            } else {
+              unitOrigPrice = parseFloat(select.dataset?.price) || parseFloat(item.dataset.price) || 0;
+              unitDiscPrice = parseFloat(select.dataset?.discountedPrice) || parseFloat(item.dataset.discountedPrice) || Math.round(unitOrigPrice * (1 - discountPercentage / 100));
+              variantId = select.value || item.dataset.variantId;
+              if (select.dataset?.available === 'false') {
+                isAvailable = false;
+              }
+            }
+          } else {
+            unitOrigPrice = parseFloat(item.dataset.price) || 0;
+            unitDiscPrice = parseFloat(item.dataset.discountedPrice) || Math.round(unitOrigPrice * (1 - discountPercentage / 100));
+            variantId = item.dataset.variantId;
+          }
+
+          const lineOrigCents = unitOrigPrice * qty;
+          const lineDiscCents = unitDiscPrice * qty;
+
+          if (discountedPriceElem) {
+            discountedPriceElem.textContent = formatMoney(lineDiscCents);
+          }
+          if (originalPriceElem) {
+            originalPriceElem.textContent = formatMoney(lineOrigCents);
+          }
+          if (unitPriceElem && qty > 1) {
+            unitPriceElem.textContent = '(' + formatMoney(unitDiscPrice) + ' each)';
+          }
+
+          if (!isAvailable) {
+            item.classList.add('is-out-of-stock');
+            if (stockBadge) stockBadge.style.display = 'inline-flex';
+          } else {
+            item.classList.remove('is-out-of-stock');
+            if (stockBadge) stockBadge.style.display = 'none';
+          }
+
+          if (isChecked) {
+            checkedCount++;
+            totalOriginalCents += lineOrigCents;
+            totalDiscountedCents += lineDiscCents;
+            checkedAddonsForCart.push({
+              id: variantId,
+              quantity: qty,
+              title: title,
+            });
+
+            if (!isAvailable) {
+              outOfStockCheckedTitles.push(title);
+            }
+          }
+        });
+
+        // Store checked add-ons on widget
+        widget._checkedItems = checkedAddonsForCart;
+        if (addBtn) {
+          addBtn._checkedItems = checkedAddonsForCart;
+        }
+
+        // Update price summary display
+        if (finalPriceElem) {
+          finalPriceElem.textContent = formatMoney(totalDiscountedCents);
+        }
+        if (originalPriceElem) {
+          originalPriceElem.textContent = formatMoney(totalOriginalCents);
+          originalPriceElem.style.display = totalOriginalCents > totalDiscountedCents ? 'inline' : 'none';
+        }
+
+        if (savingsPill && savingsTextElem) {
+          if (checkedCount > 0 && totalOriginalCents > totalDiscountedCents) {
+            const savings = totalOriginalCents - totalDiscountedCents;
+            savingsTextElem.textContent = `Save ${formatMoney(savings)} (${discountPercentage}% OFF)`;
+            savingsPill.style.display = 'inline-flex';
+          } else {
+            savingsPill.style.display = 'none';
+          }
+        }
+
+        // Availability check
+        if (outOfStockCheckedTitles.length > 0) {
+          if (addBtn) {
+            addBtn.disabled = true;
+            addBtn.classList.add('is-out-of-stock-btn');
+          }
+          if (btnText) {
+            btnText.textContent = 'Out of Stock';
+          }
+          if (stockAlert && alertText) {
+            alertText.textContent = `${outOfStockCheckedTitles.join(', ')} is out of stock. Uncheck to proceed.`;
+            stockAlert.style.display = 'flex';
+          }
+        } else {
+          if (addBtn) {
+            addBtn.disabled = false;
+            addBtn.classList.remove('is-out-of-stock-btn');
+          }
+          if (stockAlert) {
+            stockAlert.style.display = 'none';
+          }
+
+          // Dynamic Button text
+          let dynamicText = 'Add to Cart with Add-Ons';
+          if (checkedCount === 1) {
+            dynamicText = 'Add Both to Cart';
+          } else if (checkedCount > 1) {
+            dynamicText = `Add with ${checkedCount} Add-Ons`;
+          } else {
+            dynamicText = 'Select an Add-On';
+          }
+
+          if (customBtnText && !customBtnText.startsWith('Add with') && !customBtnText.startsWith('Add Both')) {
+            dynamicText = customBtnText;
+          }
+
+          if (btnText) {
+            btnText.textContent = dynamicText;
+          }
+        }
+      }
+
+      // Listeners for checkboxes and variant selects
+      items.forEach((item) => {
+        const checkbox = item.querySelector('.stackup-addon-checkbox');
+        const select = item.querySelector('.stackup-addon-variant-select');
+        if (checkbox) checkbox.addEventListener('change', updateAddonsSummary);
+        if (select) select.addEventListener('change', updateAddonsSummary);
+      });
+
+      // Run calculation immediately on widget discovery
+      updateAddonsSummary();
+
+      // Click handler for widget's Add to Cart button
+      if (addBtn) {
+        addBtn.addEventListener('click', async function (e) {
+          e.preventDefault();
+          e.stopPropagation();
+          if (addBtn.disabled) return;
+          await handleAddonsAddToCart(widget, addBtn);
+        });
+      }
+    });
+  }
+
+  async function handleAddonsAddToCart(widget, triggerBtn) {
+    const rootUrl = window.Shopify?.routes?.root || '/';
+
+    // 1. Gather checked add-on products directly from DOM
+    const checkedItems = [];
+    const itemRows = widget.querySelectorAll('.stackup-addon-item');
+    itemRows.forEach((row) => {
+      const checkbox = row.querySelector('.stackup-addon-checkbox');
+      if (checkbox && checkbox.checked) {
+        const select = row.querySelector('.stackup-addon-variant-select');
+        let rawVariantId = select ? select.value : row.dataset.variantId;
+        const qty = parseInt(row.dataset.quantity || '1', 10) || 1;
+        const title = row.dataset.title || 'Add-on';
+        const cleanedId = cleanVariantId(rawVariantId);
+
+        if (cleanedId) {
+          checkedItems.push({ id: cleanedId, quantity: qty, title });
+        }
+      }
+    });
+
+    // 2. Determine main product variant ID & quantity from product form
+    const mainForm = document.querySelector('form[action*="/cart/add"]');
+    const mainVariantInput = mainForm ? mainForm.querySelector('[name="id"]') : null;
+    let mainVariantId = mainVariantInput?.value || widget.dataset.mainVariantId;
+    mainVariantId = cleanVariantId(mainVariantId);
+
+    const mainQtyInput = mainForm ? mainForm.querySelector('[name="quantity"]') : null;
+    const mainQty = parseInt(mainQtyInput?.value || '1', 10) || 1;
+
+    // Guard against Theme Editor preview
+    const isSamplePreview = mainVariantId === 'preview' || checkedItems.some((it) => String(it.id).includes('sample'));
+    if (isSamplePreview) {
+      const stockAlert = widget.querySelector('.stackup-addons-stock-alert');
+      const alertText = widget.querySelector('.stackup-addons-alert-text');
+      if (stockAlert && alertText) {
+        alertText.textContent = 'Theme Editor Preview: Sample add-on products cannot be added to cart. Please test on an active live product.';
+        stockAlert.style.display = 'flex';
+      }
+      return;
+    }
+
+    const itemsToAdd = [];
+    if (mainVariantId && mainVariantId !== 'preview') {
+      itemsToAdd.push({ id: mainVariantId, quantity: mainQty });
+    }
+
+    for (const addon of checkedItems) {
+      if (addon.id && !String(addon.id).includes('sample')) {
+        itemsToAdd.push({ id: addon.id, quantity: addon.quantity || 1 });
+      }
+    }
+
+    if (itemsToAdd.length === 0) return;
+
+    // UI Loading state
+    const btnIcon = widget.querySelector('.stackup-addons-btn-icon');
+    const btnText = widget.querySelector('.stackup-addons-btn-text');
+    const btnSpinner = widget.querySelector('.stackup-addons-btn-spinner');
+    const stockAlert = widget.querySelector('.stackup-addons-stock-alert');
+    const alertText = widget.querySelector('.stackup-addons-alert-text');
+
+    if (triggerBtn) triggerBtn.disabled = true;
+    if (btnIcon) btnIcon.style.display = 'none';
+    if (btnText) btnText.style.display = 'none';
+    if (btnSpinner) btnSpinner.style.display = 'inline-flex';
+    if (stockAlert) stockAlert.style.display = 'none';
+
+    try {
+      const addResponse = await fetch(`${rootUrl}cart/add.js`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        body: JSON.stringify({
+          items: itemsToAdd,
+        }),
+      });
+
+      const responseData = await addResponse.json().catch(() => ({}));
+
+      if (!addResponse.ok) {
+        throw new Error(responseData.description || responseData.message || 'One or more items are out of stock.');
+      }
+
+      // Notify theme cart listeners
+      try {
+        document.dispatchEvent(new CustomEvent('cart:refresh', { bubbles: true }));
+        document.dispatchEvent(new CustomEvent('theme:cart:changed', { bubbles: true }));
+      } catch (e) {}
+
+      // Direct redirect to checkout so discount applies immediately
+      window.location.href = `${rootUrl}checkout`;
+    } catch (err) {
+      console.error('[StackUp] Add-ons add to cart error:', err);
+      if (stockAlert && alertText) {
+        alertText.textContent = err.message || 'Could not add items to cart. Please try again.';
+        stockAlert.style.display = 'flex';
+      }
+      if (triggerBtn) triggerBtn.disabled = false;
+    } finally {
+      if (btnSpinner) btnSpinner.style.display = 'none';
+      if (btnIcon) btnIcon.style.display = 'inline-flex';
+      if (btnText) btnText.style.display = '';
+    }
+  }
+
+  function checkIsAppEnabled() {
+    return !!(
+      document.querySelector('[data-stackup-embed-active]') ||
+      window.StackUpAppEmbedActive === true ||
+      document.documentElement.classList.contains('stackup-active') ||
+      (document.body && document.body.classList.contains('stackup-active'))
+    );
+  }
+
+  function initStackUpWidgets() {
+    const isEmbedActive = checkIsAppEnabled();
+    const widgets = document.querySelectorAll('.stackup-paired-widget, .stackup-addons-widget');
+
+    if (!isEmbedActive) {
+      widgets.forEach((w) => {
+        w.classList.remove('stackup-visible');
+        w.style.setProperty('display', 'none', 'important');
+      });
+      return;
+    }
+
+    widgets.forEach((w) => {
+      w.classList.add('stackup-visible');
+      w.style.removeProperty('display');
+    });
+
+    try {
+      initStackUpPairedWidgets();
+    } catch (e) {
+      console.warn('[StackUp] Paired widgets init warning:', e);
+    }
+    try {
+      initStackUpAddonsWidgets();
+    } catch (e) {
+      console.warn('[StackUp] Add-ons widget init warning:', e);
+    }
+  }
+
+  // Ensure init runs on DOMContentLoaded and immediately if already loaded
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', initStackUpWidgets);
   } else {
     initStackUpWidgets();
   }
+  window.addEventListener('load', initStackUpWidgets);
 
   // Shopify Theme Editor & Dynamic Section Reload support
   document.addEventListener('shopify:section:load', initStackUpWidgets);

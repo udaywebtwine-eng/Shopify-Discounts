@@ -66,7 +66,9 @@ model SelectedProductOffer {
   combinesWithShipping Boolean      @default(false)
   startsAt             DateTime?
   endsAt               DateTime?
-  products             String // JSON array of { id, title, handle, image, price, quantity }
+  targetProducts       String       @default("[]") // JSON array of Main/Display products { id, title, handle, image, price }
+  offeredProducts      String       @default("[]") // JSON array of Recommended Add-On products { id, title, handle, image, price, quantity }
+  products             String       @default("[]") // Kept for backwards compatibility
   usageCount           Int          @default(0) // Total times used / orders count
   totalRevenue         Float        @default(0.0) // Total revenue generated
   totalDiscountAmount  Float        @default(0.0) // Total discount given

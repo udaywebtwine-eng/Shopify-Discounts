@@ -1,0 +1,21 @@
+api_version = "2026-07"
+
+[[extensions]]
+name = "t:name"
+handle = "selected-products-discount"
+type = "function"
+uid = "3aac5897-466d-710b-b686-7368b76e7072bb41dd42"
+description = "t:description"
+
+  [[extensions.targeting]]
+  target = "cart.lines.discounts.generate.run"
+  input_query = "src/cart_lines_discounts_generate_run.graphql"
+  export = "cart-lines-discounts-generate-run"
+
+  [extensions.build]
+  command = ""
+  path = "dist/function.wasm"
+
+[[extensions.metafields]]
+namespace = "stack_up"
+key = "stack_up_app_enabled"

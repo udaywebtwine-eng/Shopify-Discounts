@@ -2,8 +2,7 @@ import db from "../db.server";
 
 /**
  * Syncs and backfills recent orders from Shopify Admin GraphQL into the PostgreSQL database.
- * This ensures that even existing orders placed before webhook setup have their Total Sales
- * and Total Discounts calculated and displayed accurately.
+ * Supports both PairedProduct offers and SelectedProduct (Add-on) offers.
  */
 export async function syncRecentOrdersFromShopify(admin, shop) {
   try {
@@ -26,10 +25,6 @@ export async function syncRecentOrdersFromShopify(admin, shop) {
                 amount
               }
             }
-            customer {
-              email
-              displayName
-            }
             discountApplications(first: 10) {
               nodes {
                 ... on AutomaticDiscountApplication {
@@ -50,8 +45,18 @@ export async function syncRecentOrdersFromShopify(admin, shop) {
 
     if (orders.length === 0) return 0;
 
-    const allOffers = await db.pairedOffer.findMany({ where: { shop } });
-    if (allOffers.length === 0) return 0;
+    const shopConditions = [
+      { shop },
+      { shop: shop.replace(".myshopify.com", "") },
+      { shop: `${shop.replace(".myshopify.com", "")}.myshopify.com` },
+    ];
+
+    const [allPairedOffers, allSelectedOffers] = await Promise.all([
+      db.pairedOffer.findMany({ where: { OR: shopConditions } }),
+      db.selectedProductOffer.findMany({ where: { OR: shopConditions } }),
+    ]);
+
+    if (allPairedOffers.length === 0 && allSelectedOffers.length === 0) return 0;
 
     let newlySyncedCount = 0;
 
@@ -72,15 +77,31 @@ export async function syncRecentOrdersFromShopify(admin, shop) {
 
       if (appliedTitles.length === 0) continue;
 
-      // Match with PairedOffer
-      let matchedOffer = allOffers.find((off) => {
+      // Match with SelectedProductOffer first, then PairedOffer
+      let matchedOffer = allSelectedOffers.find((off) => {
         const title = off.title?.toLowerCase().trim();
         return appliedTitles.includes(title);
       });
+      let offerType = "SELECTED";
 
-      // Fallback: If only 1 offer exists and order had a discount
-      if (!matchedOffer && allOffers.length === 1 && appliedTitles.length > 0) {
-        matchedOffer = allOffers[0];
+      if (!matchedOffer) {
+        matchedOffer = allPairedOffers.find((off) => {
+          const title = off.title?.toLowerCase().trim();
+          return appliedTitles.includes(title);
+        });
+        offerType = "PAIRED";
+      }
+
+      // Fallback: If only 1 total offer exists across both types
+      const totalOffers = allSelectedOffers.length + allPairedOffers.length;
+      if (!matchedOffer && totalOffers === 1 && appliedTitles.length > 0) {
+        if (allSelectedOffers.length === 1) {
+          matchedOffer = allSelectedOffers[0];
+          offerType = "SELECTED";
+        } else {
+          matchedOffer = allPairedOffers[0];
+          offerType = "PAIRED";
+        }
       }
 
       if (!matchedOffer) continue;
@@ -88,34 +109,59 @@ export async function syncRecentOrdersFromShopify(admin, shop) {
       const totalPrice = parseFloat(order.totalPriceSet?.shopMoney?.amount) || 0;
       const discountAmount = parseFloat(order.totalDiscountsSet?.shopMoney?.amount) || 0;
       const currency = order.totalPriceSet?.shopMoney?.currencyCode || "USD";
-      const customerEmail = order.customer?.email || order.customer?.displayName || "Customer";
+      const customerEmail = "Customer";
 
       try {
-        await db.orderUsage.create({
-          data: {
-            shop,
-            orderId: orderIdStr,
-            orderName: order.name,
-            customerEmail,
-            totalPrice,
-            discountAmount,
-            currency,
-            offerId: matchedOffer.id,
-            createdAt: order.createdAt ? new Date(order.createdAt) : new Date(),
-          },
-        });
+        if (offerType === "SELECTED") {
+          await db.orderUsage.create({
+            data: {
+              shop,
+              orderId: orderIdStr,
+              orderName: order.name,
+              customerEmail,
+              totalPrice,
+              discountAmount,
+              currency,
+              selectedOfferId: matchedOffer.id,
+              createdAt: order.createdAt ? new Date(order.createdAt) : new Date(),
+            },
+          });
 
-        await db.pairedOffer.update({
-          where: { id: matchedOffer.id },
-          data: {
-            usageCount: { increment: 1 },
-            totalRevenue: { increment: totalPrice },
-            totalDiscountAmount: { increment: discountAmount },
-          },
-        });
+          await db.selectedProductOffer.update({
+            where: { id: matchedOffer.id },
+            data: {
+              usageCount: { increment: 1 },
+              totalRevenue: { increment: totalPrice },
+              totalDiscountAmount: { increment: discountAmount },
+            },
+          });
+        } else {
+          await db.orderUsage.create({
+            data: {
+              shop,
+              orderId: orderIdStr,
+              orderName: order.name,
+              customerEmail,
+              totalPrice,
+              discountAmount,
+              currency,
+              offerId: matchedOffer.id,
+              createdAt: order.createdAt ? new Date(order.createdAt) : new Date(),
+            },
+          });
+
+          await db.pairedOffer.update({
+            where: { id: matchedOffer.id },
+            data: {
+              usageCount: { increment: 1 },
+              totalRevenue: { increment: totalPrice },
+              totalDiscountAmount: { increment: discountAmount },
+            },
+          });
+        }
 
         newlySyncedCount++;
-        console.log(`-------------------> 🔄 [OrderSync] Backfilled order ${order.name} ($${totalPrice}) for offer "${matchedOffer.title}"`);
+        console.log(`-------------------> 🔄 [OrderSync] Backfilled order ${order.name} ($${totalPrice}) for ${offerType} offer "${matchedOffer.title}"`);
       } catch (err) {
         console.warn("Could not backfill order:", order.name, err);
       }

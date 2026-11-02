@@ -1,0 +1,534 @@
+{% comment %}
+  StackUp - Special Add-Ons / Selected Products Widget
+  Target: section (Online Store 2.0 Product Template Block)
+{% endcomment %}
+
+{% assign app_status = shop.metafields.stack_up.stack_up_app_enabled.value %}
+{% assign is_app_enabled = false %}
+{% if app_status == 'true' or app_status == true or app_status == blank %}
+  {% assign is_app_enabled = true %}
+{% endif %}
+
+{% if is_app_enabled %}
+  {% render 'stack-up-styles' %}
+  {% render 'stack-up-scripts' %}
+
+  {% assign current_id = product.id | append: '' %}
+  {% assign prefixed_id = 'id_' | append: current_id %}
+  {% assign all_offers = shop.metafields.stack_up.selected_offers.value %}
+  {% assign selected_offer = all_offers[current_id] | default: all_offers[prefixed_id] %}
+
+  {% if selected_offer == blank and all_offers != blank %}
+    {% for item in all_offers %}
+      {% assign offer_key = item[0] | append: '' %}
+      {% if offer_key == current_id or offer_key == prefixed_id %}
+        {% assign selected_offer = item[1] %}
+        {% break %}
+      {% endif %}
+    {% endfor %}
+  {% endif %}
+
+  {% assign is_editor = request.design_mode %}
+  {% assign is_active_offer = false %}
+  {% if selected_offer != blank and selected_offer.offeredProducts.size > 0 %}
+    {% assign is_active_offer = true %}
+  {% endif %}
+
+  {% if is_active_offer or is_editor %}
+    {% if is_active_offer %}
+      {% assign discount_pct = selected_offer.percentage | default: 10 %}
+      {% assign heading_text = block.settings.heading %}
+      {% if heading_text == blank %}
+        {% assign heading_text = selected_offer.title | default: 'Special Add-Ons Just for You' %}
+      {% endif %}
+      {% assign add_ons_list = selected_offer.offeredProducts %}
+    {% else %}
+      {% comment %} Sample Data for Theme Editor Preview {% endcomment %}
+      {% assign discount_pct = 15 %}
+      {% assign heading_text = block.settings.heading | default: 'Special Add-Ons Just for You' %}
+      {% assign add_ons_list = blank %}
+    {% endif %}
+
+    {% assign card_bg = block.settings.card_bg | default: '#ffffff' %}
+    {% assign border_color = block.settings.border_color | default: '#e2e8f0' %}
+    {% assign border_radius = block.settings.border_radius | default: 12 %}
+    {% assign btn_bg = block.settings.btn_bg | default: '#0f172a' %}
+    {% assign btn_color = block.settings.btn_color | default: '#ffffff' %}
+    {% assign badge_bg = block.settings.badge_bg | default: '#ecfdf5' %}
+    {% assign badge_color = block.settings.badge_color | default: '#065f46' %}
+    {% assign check_default = block.settings.checked_by_default %}
+    {% if check_default == null %}
+      {% assign check_default = true %}
+    {% endif %}
+
+    {% assign main_variant = product.selected_or_first_available_variant | default: product.variants[0] %}
+    {% assign main_available = main_variant.available %}
+    {% if main_available == null %}
+      {% assign main_available = product.available %}
+    {% endif %}
+    {% if is_editor and is_active_offer == false %}
+      {% assign main_available = true %}
+    {% endif %}
+    {% assign main_price = main_variant.price | default: 4800 %}
+
+    {% assign initial_original_cents = 0 %}
+    {% assign initial_discounted_cents = 0 %}
+    {% assign initial_checked_count = 0 %}
+
+    {% if is_active_offer %}
+      {% for item in add_ons_list %}
+        {% assign item_qty = item.quantity | default: 1 %}
+        {% assign item_price = item.variants[0].price | default: item.price %}
+        {% assign item_discount_mult = 100 | minus: discount_pct %}
+        {% assign item_discounted_price = item.discountedPrice %}
+        {% if item_discounted_price == blank or item_discounted_price == 0 %}
+          {% assign item_discounted_price = item_price | times: item_discount_mult | divided_by: 100 %}
+        {% endif %}
+
+        {% if check_default and item.availableForSale != false %}
+          {% assign initial_checked_count = initial_checked_count | plus: 1 %}
+          {% assign line_orig = item_price | times: item_qty %}
+          {% assign line_disc = item_discounted_price | times: item_qty %}
+          {% assign initial_original_cents = initial_original_cents | plus: line_orig %}
+          {% assign initial_discounted_cents = initial_discounted_cents | plus: line_disc %}
+        {% endif %}
+      {% endfor %}
+    {% else %}
+      {% assign initial_original_cents = 6000 %}
+      {% assign initial_discounted_cents = 5100 %}
+      {% assign initial_checked_count = 2 %}
+    {% endif %}
+
+    <div
+      class="stackup-addons-widget"
+      id="stackup-addons-widget-{{ product.id | default: 'preview' }}"
+      data-offer-id="{{ selected_offer.offerId | default: 'sample-offer' }}"
+      data-discount-percentage="{{ discount_pct }}"
+      data-target-product-id="{{ product.id }}"
+      data-main-variant-id="{{ main_variant.id }}"
+      data-main-price="{{ main_price }}"
+      data-main-title="{{ product.title | escape }}"
+      data-main-available="{{ main_available }}"
+      data-custom-btn-text="{{ block.settings.button_text }}"
+      data-is-editor="{% if is_editor %}true{% else %}false{% endif %}"
+      style="
+        --stackup-addon-card-bg: {{ card_bg }};
+        --stackup-addon-border-color: {{ border_color }};
+        --stackup-addon-radius: {{ border_radius }}px;
+        --stackup-addon-btn-bg: {{ btn_bg }};
+        --stackup-addon-btn-color: {{ btn_color }};
+        --stackup-addon-badge-bg: {{ badge_bg }};
+        --stackup-addon-badge-color: {{ badge_color }};
+      "
+    >
+      {% if is_editor and is_active_offer == false %}
+        <div class="stackup-editor-notice">
+          <span>💡</span>
+          <span><strong>Theme Editor Preview:</strong> This product doesn't have an active Special Add-Ons offer yet. Showing sample add-ons for visual configuration.</span>
+        </div>
+      {% endif %}
+
+      <div class="stackup-addons-header">
+        <div class="stackup-addons-title-wrap">
+          <span class="stackup-sparkle-icon">✨</span>
+          <h3 class="stackup-addons-title">{{ heading_text }}</h3>
+        </div>
+        {% if discount_pct > 0 %}
+          <div class="stackup-addons-badge">
+            <span class="stackup-savings-bolt">⚡</span>
+            <span>Save {{ discount_pct }}% OFF Add-Ons</span>
+          </div>
+        {% endif %}
+      </div>
+
+      {% if block.settings.subheading != blank %}
+        <div class="stackup-addons-subheading">{{ block.settings.subheading }}</div>
+      {% endif %}
+
+      <div class="stackup-addons-list">
+        {% if is_active_offer %}
+          {% for item in add_ons_list %}
+            {% assign item_qty = item.quantity | default: 1 %}
+            {% assign item_title = item.title %}
+            {% assign item_img = item.image %}
+            {% assign item_handle = item.handle %}
+            {% assign item_prod = all_products[item_handle] %}
+            {% assign item_variants = item.variants %}
+            {% assign item_first_variant_id = item_prod.selected_or_first_available_variant.id | default: item.variants[0].id | default: item.variantId | default: item.numericId %}
+            {% assign item_price = item_prod.selected_or_first_available_variant.price | default: item.variants[0].price | default: item.price %}
+            {% assign item_discount_mult = 100 | minus: discount_pct %}
+            {% assign item_discounted_price = item.discountedPrice %}
+            {% if item_discounted_price == blank or item_discounted_price == 0 %}
+              {% assign item_discounted_price = item_price | times: item_discount_mult | divided_by: 100 %}
+            {% endif %}
+
+            {% assign item_available = true %}
+            {% if item_prod != blank %}
+              {% assign item_available = item_prod.selected_or_first_available_variant.available %}
+              {% if item_available == null %}
+                {% assign item_available = item_prod.available %}
+              {% endif %}
+            {% elsif item.availableForSale != blank %}
+              {% assign item_available = item.availableForSale %}
+            {% endif %}
+
+            <div
+              class="stackup-addon-item{% if item_available == false %} is-out-of-stock{% endif %}"
+              data-product-id="{{ item.numericId }}"
+              data-variant-id="{{ item_first_variant_id }}"
+              data-quantity="{{ item_qty }}"
+              data-title="{{ item_title | escape }}"
+              data-price="{{ item_price }}"
+              data-discounted-price="{{ item_discounted_price }}"
+              data-available="{{ item_available }}"
+            >
+              <label class="stackup-checkbox-wrap" aria-label="Include {{ item_title | escape }}">
+                <input
+                  type="checkbox"
+                  class="stackup-addon-checkbox"
+                  {% if check_default and item_available %}checked{% endif %}
+                  {% if item_available == false %}disabled{% endif %}
+                >
+                <span class="stackup-custom-check">
+                  <svg
+                    width="11"
+                    height="9"
+                    viewBox="0 0 11 9"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2.2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <polyline points="1.5 4.5 4 7 9.5 1.5"></polyline>
+                  </svg>
+                </span>
+              </label>
+
+              <div class="stackup-thumb">
+                {% if item_prod != blank and item_prod.featured_image != blank %}
+                  {{ item_prod.featured_image | image_url: width: 140 | image_tag: loading: 'lazy', alt: item_title }}
+                {% elsif item_img != blank %}
+                  <img src="{{ item_img }}" alt="{{ item_title | escape }}" loading="lazy" width="52" height="52">
+                {% else %}
+                  <div class="stackup-no-img">🎁</div>
+                {% endif %}
+              </div>
+
+              <div class="stackup-info">
+                <div class="stackup-sub-header">
+                  <span class="stackup-item-title">{{ item_title }}</span>
+                  <span
+                    class="stackup-stock-badge addon-stock-badge"
+                    style="{% if item_available %}display: none;{% endif %}"
+                  >
+                    Out of stock
+                  </span>
+                </div>
+
+                {% if item_variants.size > 1 %}
+                  <select class="stackup-addon-variant-select" aria-label="Select variant for {{ item_title | escape }}">
+                    {% for v in item_variants %}
+                      {% assign v_num_id = v.id | plus: 0 %}
+                      {% assign v_avail = true %}
+                      {% if item_prod != blank %}
+                        {% for sp_v in item_prod.variants %}
+                          {% if sp_v.id == v_num_id %}
+                            {% assign v_avail = sp_v.available %}
+                            {% break %}
+                          {% endif %}
+                        {% endfor %}
+                      {% elsif v.availableForSale != blank %}
+                        {% assign v_avail = v.availableForSale %}
+                      {% endif %}
+                      {% assign v_discounted = v.price | times: item_discount_mult | divided_by: 100 %}
+                      <option
+                        value="{{ v.id }}"
+                        data-price="{{ v.price }}"
+                        data-discounted-price="{{ v_discounted }}"
+                        data-available="{{ v_avail }}"
+                      >
+                        {{ v.title -}}
+                        {%- if v_avail == false %} (Out of stock){% endif %}
+                      </option>
+                    {% endfor %}
+                  </select>
+                {% else %}
+                  <input
+                    type="hidden"
+                    class="stackup-addon-variant-select"
+                    value="{{ item_first_variant_id }}"
+                    data-price="{{ item_price }}"
+                    data-discounted-price="{{ item_discounted_price }}"
+                    data-available="{{ item_available }}"
+                  >
+                {% endif %}
+
+                {% if item_qty > 1 %}
+                  <div class="stackup-item-qty-wrap">
+                    <span class="stackup-qty-pill">Min Qty: {{ item_qty }}</span>
+                  </div>
+                {% endif %}
+              </div>
+
+              <div class="stackup-addon-price-wrap">
+                <span class="stackup-addon-discounted-price">
+                  {{ item_discounted_price | times: item_qty | money }}
+                </span>
+                <span class="stackup-addon-original-price">
+                  {{ item_price | times: item_qty | money }}
+                </span>
+                {% if item_qty > 1 %}
+                  <span class="stackup-unit-price">
+                    ({{ item_discounted_price | money }} each)
+                  </span>
+                {% endif %}
+              </div>
+            </div>
+          {% endfor %}
+        {% else %}
+          {% comment %} Sample Add-On 1 for Theme Editor {% endcomment %}
+          <div
+            class="stackup-addon-item"
+            data-product-id="sample-1"
+            data-variant-id="sample-v1"
+            data-quantity="1"
+            data-title="Leather Protection Balm (Sample)"
+            data-price="2500"
+            data-discounted-price="2125"
+            data-available="true"
+          >
+            <label class="stackup-checkbox-wrap">
+              <input type="checkbox" class="stackup-addon-checkbox" checked>
+              <span class="stackup-custom-check">
+                <svg width="11" height="9" viewBox="0 0 11 9" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                  <polyline points="1.5 4.5 4 7 9.5 1.5"></polyline>
+                </svg>
+              </span>
+            </label>
+            <div class="stackup-thumb">
+              <div class="stackup-no-img">🧴</div>
+            </div>
+            <div class="stackup-info">
+              <div class="stackup-sub-header">
+                <span class="stackup-item-title">Leather Protection Balm (Sample)</span>
+              </div>
+              <input
+                type="hidden"
+                class="stackup-addon-variant-select"
+                value="sample-v1"
+                data-price="2500"
+                data-discounted-price="2125"
+                data-available="true"
+              >
+            </div>
+            <div class="stackup-addon-price-wrap">
+              <span class="stackup-addon-discounted-price">$21.25</span>
+              <span class="stackup-addon-original-price">$25.00</span>
+            </div>
+          </div>
+
+          {% comment %} Sample Add-On 2 for Theme Editor {% endcomment %}
+          <div
+            class="stackup-addon-item"
+            data-product-id="sample-2"
+            data-variant-id="sample-v2"
+            data-quantity="1"
+            data-title="Premium Cotton Garment Bag (Sample)"
+            data-price="3500"
+            data-discounted-price="2975"
+            data-available="true"
+          >
+            <label class="stackup-checkbox-wrap">
+              <input type="checkbox" class="stackup-addon-checkbox" checked>
+              <span class="stackup-custom-check">
+                <svg width="11" height="9" viewBox="0 0 11 9" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                  <polyline points="1.5 4.5 4 7 9.5 1.5"></polyline>
+                </svg>
+              </span>
+            </label>
+            <div class="stackup-thumb">
+              <div class="stackup-no-img">👜</div>
+            </div>
+            <div class="stackup-info">
+              <div class="stackup-sub-header">
+                <span class="stackup-item-title">Premium Cotton Garment Bag (Sample)</span>
+              </div>
+              <input
+                type="hidden"
+                class="stackup-addon-variant-select"
+                value="sample-v2"
+                data-price="3500"
+                data-discounted-price="2975"
+                data-available="true"
+              >
+            </div>
+            <div class="stackup-addon-price-wrap">
+              <span class="stackup-addon-discounted-price">$29.75</span>
+              <span class="stackup-addon-original-price">$35.00</span>
+            </div>
+          </div>
+        {% endif %}
+      </div>
+
+      <!-- Add-Ons Summary Box -->
+      <div class="stackup-addons-total-box">
+        <div class="stackup-total-left">
+          <div class="stackup-total-label">Total for Selected Items</div>
+          <div class="stackup-prices">
+            <span class="stackup-addons-final-price">{{ initial_discounted_cents | money }}</span>
+            <span class="stackup-addons-original-price"{% if initial_original_cents <= initial_discounted_cents %} style="display: none;"{% endif %}>{{ initial_original_cents | money }}</span>
+          </div>
+        </div>
+        {% assign initial_savings = initial_original_cents | minus: initial_discounted_cents %}
+        <div class="stackup-addons-savings-pill"{% if initial_savings <= 0 %} style="display: none;"{% endif %}>
+          <span class="stackup-savings-bolt">⚡</span>
+          <span class="stackup-addons-savings-text">Save {{ initial_savings | money }} ({{ discount_pct }}% OFF)</span>
+        </div>
+      </div>
+
+      <!-- Out of Stock Alert -->
+      <div class="stackup-addons-stock-alert" role="alert" style="display: none;">
+        <span class="stackup-alert-icon">
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2.2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <circle cx="12" cy="12" r="10"></circle>
+            <line x1="12" y1="8" x2="12" y2="12"></line>
+            <line x1="12" y1="16" x2="12.01" y2="16"></line>
+          </svg>
+        </span>
+        <span class="stackup-addons-alert-text">This product is out of stock, not available</span>
+      </div>
+
+      <!-- 1-Click Action Button -->
+      <button
+        type="button"
+        class="stackup-addons-add-btn"
+        data-main-variant="{{ main_variant.id | default: 'preview' }}"
+      >
+        <span class="stackup-addons-btn-icon">
+          <svg
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"></path>
+            <line x1="3" y1="6" x2="21" y2="6"></line>
+            <path d="M16 10a4 4 0 0 1-8 0"></path>
+          </svg>
+        </span>
+        <span class="stackup-addons-btn-text">
+          {{ block.settings.button_text | default: 'Add to Cart with Add-Ons' }}
+        </span>
+        <span class="stackup-addons-btn-spinner" style="display: none;">
+          <svg
+            class="stackup-spin"
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2.5"
+          >
+            <circle cx="12" cy="12" r="10" stroke-opacity="0.25"></circle>
+            <path d="M12 2a10 10 0 0 1 10 10" stroke-linecap="round"></path>
+          </svg>
+        </span>
+      </button>
+    </div>
+  {% endif %}
+{% endif %}
+
+{% schema %}
+{
+  "name": "StackUp Special Add-Ons",
+  "target": "section",
+  "stylesheet": "stack-up.css",
+  "javascript": "stack-up.js",
+  "settings": [
+    {
+      "type": "text",
+      "id": "heading",
+      "label": "Widget Heading",
+      "default": "Special Add-Ons Just for You",
+      "info": "Leave blank to use the offer title defined in StackUp admin."
+    },
+    {
+      "type": "text",
+      "id": "subheading",
+      "label": "Subheading Text",
+      "default": "Recommended companion items for this product"
+    },
+    {
+      "type": "text",
+      "id": "button_text",
+      "label": "Button Text",
+      "default": "Add to Cart with Add-Ons"
+    },
+    {
+      "type": "checkbox",
+      "id": "checked_by_default",
+      "label": "Check add-on items by default",
+      "default": true
+    },
+    {
+      "type": "color",
+      "id": "card_bg",
+      "label": "Card Background",
+      "default": "#ffffff"
+    },
+    {
+      "type": "color",
+      "id": "border_color",
+      "label": "Border Color",
+      "default": "#e2e8f0"
+    },
+    {
+      "type": "range",
+      "id": "border_radius",
+      "label": "Border Radius (px)",
+      "min": 0,
+      "max": 24,
+      "step": 2,
+      "default": 12
+    },
+    {
+      "type": "color",
+      "id": "btn_bg",
+      "label": "Button Background Color",
+      "default": "#0f172a"
+    },
+    {
+      "type": "color",
+      "id": "btn_color",
+      "label": "Button Text Color",
+      "default": "#ffffff"
+    },
+    {
+      "type": "color",
+      "id": "badge_bg",
+      "label": "Savings Badge Background",
+      "default": "#ecfdf5"
+    },
+    {
+      "type": "color",
+      "id": "badge_color",
+      "label": "Savings Badge Text Color",
+      "default": "#065f46"
+    }
+  ]
+}
+{% endschema %}

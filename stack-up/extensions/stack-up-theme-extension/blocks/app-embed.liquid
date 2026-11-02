@@ -1,13 +1,23 @@
-<!-- StackUp Theme App Embed -->
-{{ 'stack-up.css' | asset_url | stylesheet_tag }}
-{{ 'stack-up.js' | asset_url | script_tag }}
+{% render 'stack-up-styles' %}
+{% render 'stack-up-scripts' %}
 
-<span data-stackup-embed-active hidden style="display:none !important;"></span>
+<span data-stackup-embed-active id="stackup-embed-marker" hidden style="display:none !important;"></span>
 <script>
-  if (document.body) {
-    document.body.classList.add('stackup-active');
-  }
-  window.StackUpAppEmbedActive = true;
+  (function() {
+    function markActive() {
+      if (document.documentElement) {
+        document.documentElement.classList.add('stackup-active');
+      }
+      if (document.body) {
+        document.body.classList.add('stackup-active');
+      }
+      window.StackUpAppEmbedActive = true;
+    }
+    markActive();
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', markActive);
+    }
+  })();
 </script>
 
 {% schema %}
