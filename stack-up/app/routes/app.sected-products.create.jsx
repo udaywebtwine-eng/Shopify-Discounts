@@ -9,11 +9,12 @@ import {
 import { useAppBridge, SaveBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
-import { getShopTimezone, getShopTodayDate, dateToShopISO } from "../utils/timezone";
+import { getShopTimezone, getShopTodayDate, dateToShopISO, setShopTimezoneCache } from "../utils/timezone";
 import { syncAllActiveSelectedOffersToShopMetafield } from "../utils/selectedOffersMetafields.server";
 
 export const loader = async ({ request }) => {
   const { admin, session } = await authenticate.admin(request);
+  const shop = session?.shop || "";
 
   let functionId = null;
   try {
@@ -41,8 +42,10 @@ export const loader = async ({ request }) => {
     console.warn("Could not query shopifyFunctions:", err);
   }
 
-  const shopTimezone = await getShopTimezone(admin);
-  const shop = session?.shop || "";
+  const shopTimezone = await getShopTimezone(admin, shop);
+  if (shop && shopTimezone) {
+    setShopTimezoneCache(shop, shopTimezone);
+  }
 
   return { functionId, shopTimezone, shop };
 };
@@ -149,7 +152,7 @@ export const action = async ({ request }) => {
   const effectiveFunctionId =
     functionId || "gid://shopify/ShopifyFunction/selected-products-discount";
 
-  const shopTimezone = await getShopTimezone(admin);
+  const shopTimezone = await getShopTimezone(admin, session?.shop);
   const effectiveStartsAt = dateToShopISO(startsAt, "00:00:00", shopTimezone) || new Date().toISOString();
   const effectiveEndsAt = hasEndDate && endsAt ? dateToShopISO(endsAt, "23:59:59", shopTimezone) : undefined;
 
@@ -258,18 +261,31 @@ export default function CreateSelectedProductsOffer() {
   const [hasEndDate, setHasEndDate] = useState(false);
   const [endsAt, setEndsAt] = useState("");
 
-  const [isSaved, setIsSaved] = useState(false);
-  const isSubmitting = navigation.state === "submitting";
+  const [isSaving, setIsSaving] = useState(false);
+  const isRedirecting = navigation.state === "loading" && !navigation.location?.pathname?.includes("/create");
+  const isSubmitting = (isSaving || navigation.state === "submitting" || (navigation.state === "loading" && navigation.formMethod?.toLowerCase() === "post")) && !isRedirecting;
+
+  // Helper to format selection IDs and variants for Shopify App Bridge ResourcePicker
+  const buildResourceSelection = (products) =>
+    products.map((p) => {
+      const item = { id: p.id };
+      if (Array.isArray(p.variants) && p.variants.length > 0) {
+        item.variants = p.variants.map((v) => ({ id: typeof v === "string" ? v : v.id }));
+      }
+      return item;
+    });
 
   // Resource Picker for 1. Main / Target Products
   const handleOpenTargetPicker = async () => {
     try {
+      const selection = buildResourceSelection(targetProducts);
       const selected = await shopify.resourcePicker({
         type: "product",
         multiple: true,
         action: "select",
         filter: { archived: false, draft: false, query: "status:active" },
-        initialSelectionIds: targetProducts.map((p) => ({ id: p.id })),
+        selectionIds: selection,
+        initialSelectionIds: selection,
       });
 
       if (selected && Array.isArray(selected)) {
@@ -285,12 +301,16 @@ export default function CreateSelectedProductsOffer() {
             const price = rawPrice
               ? (String(rawPrice).startsWith("$") ? String(rawPrice) : `$${rawPrice}`)
               : "";
+            const existing = targetProducts.find((item) => item.id === p.id);
             return {
               id: p.id,
               title: p.title,
-              handle: p.handle || "",
+              handle: p.handle || existing?.handle || "",
               image,
               price,
+              variants: p.variants
+                ? p.variants.map((v) => ({ id: v.id }))
+                : existing?.variants || [],
             };
           })
         );
@@ -307,12 +327,14 @@ export default function CreateSelectedProductsOffer() {
   // Resource Picker for 2. Recommended / Add-On Products
   const handleOpenOfferedPicker = async () => {
     try {
+      const selection = buildResourceSelection(offeredProducts);
       const selected = await shopify.resourcePicker({
         type: "product",
         multiple: true,
         action: "select",
         filter: { archived: false, draft: false, query: "status:active" },
-        initialSelectionIds: offeredProducts.map((p) => ({ id: p.id })),
+        selectionIds: selection,
+        initialSelectionIds: selection,
       });
 
       if (selected && Array.isArray(selected)) {
@@ -332,10 +354,13 @@ export default function CreateSelectedProductsOffer() {
             return {
               id: p.id,
               title: p.title,
-              handle: p.handle || "",
+              handle: p.handle || existing?.handle || "",
               image,
               price,
               quantity: existing?.quantity || 1,
+              variants: p.variants
+                ? p.variants.map((v) => ({ id: v.id }))
+                : existing?.variants || [],
             };
           })
         );
@@ -382,7 +407,20 @@ export default function CreateSelectedProductsOffer() {
     endsAt !== ""
   );
 
-  const showSaveBar = isDirty && !isSaved;
+  const showSaveBar = (isDirty || isSubmitting) && !isRedirecting;
+
+  useEffect(() => {
+    if (isRedirecting) {
+      setIsSaving(false);
+      shopify.saveBar?.hide("create-selected-offer-save-bar");
+    }
+  }, [isRedirecting, shopify]);
+
+  useEffect(() => {
+    if (navigation.state === "idle") {
+      setIsSaving(false);
+    }
+  }, [navigation.state]);
 
   useEffect(() => {
     return () => {
@@ -403,13 +441,13 @@ export default function CreateSelectedProductsOffer() {
     setStartsAt(todayStr);
     setHasEndDate(false);
     setEndsAt("");
-    setIsSaved(false);
+    setIsSaving(false);
     shopify.saveBar?.hide("create-selected-offer-save-bar");
   };
 
   useEffect(() => {
     if (actionData?.error) {
-      setIsSaved(false);
+      setIsSaving(false);
       shopify.toast.show(actionData.error, { isError: true });
     }
   }, [actionData, shopify]);
@@ -441,8 +479,7 @@ export default function CreateSelectedProductsOffer() {
       return;
     }
 
-    setIsSaved(true);
-    shopify.saveBar?.hide("create-selected-offer-save-bar");
+    setIsSaving(true);
 
     const formData = new FormData();
     formData.append("title", title);
@@ -498,15 +535,15 @@ export default function CreateSelectedProductsOffer() {
           type="button"
           variant="primary"
           onClick={handleSubmit}
-          loading={isSubmitting ? "" : undefined}
-          disabled={isSubmitting ? "" : undefined}
+          loading={isSubmitting ? "true" : undefined}
+          disabled={isSubmitting ? "true" : undefined}
         >
           Save
         </button>
         <button
           type="button"
           onClick={handleDiscard}
-          disabled={isSubmitting ? "" : undefined}
+          disabled={isSubmitting ? "true" : undefined}
         >
           Discard
         </button>

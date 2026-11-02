@@ -58,6 +58,13 @@ export async function syncRecentOrdersFromShopify(admin, shop) {
 
     if (allPairedOffers.length === 0 && allSelectedOffers.length === 0) return 0;
 
+    const orderIdStrs = orders.map((o) => String(o.id.split("/").pop()));
+    const existingOrders = await db.orderUsage.findMany({
+      where: { orderId: { in: orderIdStrs } },
+      select: { orderId: true },
+    });
+    const existingSet = new Set(existingOrders.map((e) => e.orderId));
+
     let newlySyncedCount = 0;
 
     for (const order of orders) {
@@ -65,10 +72,7 @@ export async function syncRecentOrdersFromShopify(admin, shop) {
       const orderIdStr = String(orderNumericId);
 
       // Check if already in DB
-      const existing = await db.orderUsage.findUnique({
-        where: { orderId: orderIdStr },
-      });
-      if (existing) continue;
+      if (existingSet.has(orderIdStr)) continue;
 
       // Extract applied discount titles and codes
       const appliedTitles = (order.discountApplications?.nodes || [])

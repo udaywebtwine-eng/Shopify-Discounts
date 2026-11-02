@@ -9,17 +9,27 @@ import {
 import { useAppBridge, SaveBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
-import { getShopTimezone, getShopTodayDate, dateToShopISO } from "../utils/timezone";
+import { getShopTimezone, getShopTodayDate, dateToShopISO, setShopTimezoneCache } from "../utils/timezone";
+import { syncAllActiveOffersToShopMetafield } from "../utils/bundleMetafields.server";
 import WidgetPreview from "./components/Preview/WidgetPreview";
 
-export const loader = async ({ request }) => {
-  const { admin, session } = await authenticate.admin(request);
+// In-memory cache for functionId (Shopify Function IDs are static per app installation)
+let cachedFunctionId = null;
 
-  let functionId = null;
+export const loader = async ({ request }) => {
+  const t0 = performance.now();
+  const { admin, session } = await authenticate.admin(request);
+  const shop = session?.shop || "";
+
+  let functionId = cachedFunctionId;
+  let shopTimezone = "UTC";
+  let widgetSettings = null;
+
   try {
+    // Single batched GraphQL request for functions, timezone, and widget settings
     const response = await admin.graphql(
       `#graphql
-      query GetFunctionId {
+      query GetCreateOfferData {
         shopifyFunctions(first: 25) {
           nodes {
             id
@@ -27,46 +37,58 @@ export const loader = async ({ request }) => {
             apiType
           }
         }
-      }`
-    );
-    const json = await response.json();
-    const functions = json.data?.shopifyFunctions?.nodes || [];
-    const matched = functions.find(
-      (fn) =>
-        fn.title?.toLowerCase().includes("paired") ||
-        fn.apiType === "cart_lines_discounts_generate" ||
-        fn.apiType === "order_discounts"
-    );
-    functionId = matched?.id || functions[0]?.id || null;
-  } catch (err) {
-    console.warn("Could not query shopifyFunctions:", err);
-  }
-
-  const shopTimezone = await getShopTimezone(admin);
-  const shop = session?.shop || "";
-
-  let widgetSettings = null;
-  try {
-    const settingsResponse = await admin.graphql(
-      `#graphql
-      query GetWidgetSettings {
         shop {
+          ianaTimezone
           metafield(namespace: "stack_up", key: "paired_widget_settings") {
             value
           }
         }
       }`
     );
-    const settingsJson = await settingsResponse.json();
-    const rawMetafield = settingsJson.data?.shop?.metafield?.value;
+    const json = await response.json();
+    const data = json.data;
+
+    // 1. Resolve functionId
+    if (data?.shopifyFunctions?.nodes) {
+      const functions = data.shopifyFunctions.nodes || [];
+      const matched = functions.find(
+        (fn) =>
+          fn.title?.toLowerCase().includes("paired") ||
+          fn.apiType === "cart_lines_discounts_generate" ||
+          fn.apiType === "order_discounts"
+      );
+      functionId = matched?.id || functions[0]?.id || null;
+      if (functionId) {
+        cachedFunctionId = functionId;
+      }
+    }
+
+    // 2. Resolve shop timezone and prime the cache
+    if (data?.shop?.ianaTimezone) {
+      shopTimezone = data.shop.ianaTimezone;
+      setShopTimezoneCache(shop, shopTimezone);
+    } else {
+      shopTimezone = await getShopTimezone(admin, shop).catch(() => "UTC");
+    }
+
+    // 3. Resolve widget settings
+    const rawMetafield = data?.shop?.metafield?.value;
     if (rawMetafield) {
-      widgetSettings = JSON.parse(rawMetafield);
+      try {
+        widgetSettings = JSON.parse(rawMetafield);
+      } catch {
+        widgetSettings = null;
+      }
     }
   } catch (err) {
-    console.warn("Could not query widget settings:", err);
+    console.warn("Could not query create offer data in single GraphQL call:", err);
+    shopTimezone = await getShopTimezone(admin, shop).catch(() => "UTC");
   }
 
-  return { functionId, shopTimezone, shop, widgetSettings };
+  const tEnd = performance.now();
+  console.log(`⏱️ [PairedProducts: Create Loader] Loaded in ${(tEnd - t0).toFixed(0)}ms (Single batched GraphQL call)`);
+
+  return { functionId: functionId || cachedFunctionId, shopTimezone, shop, widgetSettings };
 };
 
 export const action = async ({ request }) => {
@@ -159,7 +181,7 @@ export const action = async ({ request }) => {
   const effectiveFunctionId =
     functionId || "gid://shopify/ShopifyFunction/paired-products-discount";
 
-  const shopTimezone = await getShopTimezone(admin);
+  const shopTimezone = await getShopTimezone(admin, session?.shop);
   const effectiveStartsAt = dateToShopISO(startsAt, "00:00:00", shopTimezone) || new Date().toISOString();
   const effectiveEndsAt = hasEndDate && endsAt ? dateToShopISO(endsAt, "23:59:59", shopTimezone) : undefined;
 
@@ -240,7 +262,6 @@ export const action = async ({ request }) => {
     }
 
     // Sync all active bundle offers to Shop Metafield for instant storefront rendering
-    const { syncAllActiveOffersToShopMetafield } = await import("../utils/bundleMetafields.server");
     await syncAllActiveOffersToShopMetafield(admin);
 
     console.log("-------------------> ====================================================");
@@ -286,9 +307,20 @@ export default function CreatePairedProductsOffer() {
   const [hasEndDate, setHasEndDate] = useState(false);
   const [endsAt, setEndsAt] = useState("");
 
+  // Helper to format selection IDs and variants for Shopify App Bridge ResourcePicker
+  const buildResourceSelection = (products) =>
+    products.map((p) => {
+      const item = { id: p.id };
+      if (Array.isArray(p.variants) && p.variants.length > 0) {
+        item.variants = p.variants.map((v) => ({ id: typeof v === "string" ? v : v.id }));
+      }
+      return item;
+    });
+
   // Resource Picker for Main Products
   const handleOpenMainProductPicker = async () => {
     try {
+      const selection = buildResourceSelection(mainProducts);
       const selected = await shopify.resourcePicker({
         type: "product",
         multiple: true,
@@ -298,7 +330,8 @@ export default function CreatePairedProductsOffer() {
           draft: false,
           query: "status:active",
         },
-        initialSelectionIds: mainProducts.map((p) => ({ id: p.id })),
+        selectionIds: selection,
+        initialSelectionIds: selection,
       });
 
       if (selected && Array.isArray(selected)) {
@@ -322,6 +355,9 @@ export default function CreatePairedProductsOffer() {
               image,
               price,
               quantity: existing?.quantity || 1,
+              variants: p.variants
+                ? p.variants.map((v) => ({ id: v.id }))
+                : existing?.variants || [],
             };
           })
         );
@@ -334,6 +370,7 @@ export default function CreatePairedProductsOffer() {
   // Resource Picker for Sub Products
   const handleOpenSubProductPicker = async () => {
     try {
+      const selection = buildResourceSelection(subProducts);
       const selected = await shopify.resourcePicker({
         type: "product",
         multiple: true,
@@ -343,7 +380,8 @@ export default function CreatePairedProductsOffer() {
           draft: false,
           query: "status:active",
         },
-        initialSelectionIds: subProducts.map((p) => ({ id: p.id })),
+        selectionIds: selection,
+        initialSelectionIds: selection,
       });
 
       if (selected && Array.isArray(selected)) {
@@ -367,6 +405,9 @@ export default function CreatePairedProductsOffer() {
               image,
               price,
               quantity: existing?.quantity || 1,
+              variants: p.variants
+                ? p.variants.map((v) => ({ id: v.id }))
+                : existing?.variants || [],
             };
           })
         );
@@ -424,8 +465,9 @@ export default function CreatePairedProductsOffer() {
     );
   };
 
-  const isSubmitting = navigation.state === "submitting";
-  const [isSaved, setIsSaved] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const isRedirecting = navigation.state === "loading" && navigation.location?.pathname !== "/app/paired-products/create";
+  const isSubmitting = (isSaving || navigation.state === "submitting" || (navigation.state === "loading" && navigation.formMethod?.toLowerCase() === "post")) && !isRedirecting;
 
   const isDirty = Boolean(
     title.trim() !== "" ||
@@ -440,7 +482,20 @@ export default function CreatePairedProductsOffer() {
     endsAt !== ""
   );
 
-  const showSaveBar = isDirty && !isSaved;
+  const showSaveBar = (isDirty || isSubmitting) && !isRedirecting;
+
+  useEffect(() => {
+    if (isRedirecting) {
+      setIsSaving(false);
+      shopify.saveBar?.hide("create-paired-offer-save-bar");
+    }
+  }, [isRedirecting, shopify]);
+
+  useEffect(() => {
+    if (navigation.state === "idle") {
+      setIsSaving(false);
+    }
+  }, [navigation.state]);
 
   useEffect(() => {
     return () => {
@@ -461,13 +516,13 @@ export default function CreatePairedProductsOffer() {
     setStartsAt(todayStr);
     setHasEndDate(false);
     setEndsAt("");
-    setIsSaved(false);
+    setIsSaving(false);
     shopify.saveBar?.hide("create-paired-offer-save-bar");
   };
 
   useEffect(() => {
     if (actionData?.error) {
-      setIsSaved(false);
+      setIsSaving(false);
       shopify.toast.show(actionData.error, { isError: true });
     }
   }, [actionData, shopify]);
@@ -499,8 +554,7 @@ export default function CreatePairedProductsOffer() {
       return;
     }
 
-    setIsSaved(true);
-    shopify.saveBar?.hide("create-paired-offer-save-bar");
+    setIsSaving(true);
 
     const formData = new FormData();
     formData.append("title", title);
@@ -557,15 +611,15 @@ export default function CreatePairedProductsOffer() {
           type="button"
           variant="primary"
           onClick={handleSubmit}
-          loading={isSubmitting ? "" : undefined}
-          disabled={isSubmitting ? "" : undefined}
+          loading={isSubmitting ? "true" : undefined}
+          disabled={isSubmitting ? "true" : undefined}
         >
           Save
         </button>
         <button
           type="button"
           onClick={handleDiscard}
-          disabled={isSubmitting ? "" : undefined}
+          disabled={isSubmitting ? "true" : undefined}
         >
           Discard
         </button>

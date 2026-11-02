@@ -1,384 +1,67 @@
-import { useState, useEffect } from "react";
-import { useLoaderData, useSubmit, useActionData, useSearchParams } from "react-router";
+import { useState, useEffect, useMemo } from "react";
+import { useLoaderData, useSubmit, useActionData, useSearchParams, useNavigation, useNavigate } from "react-router";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import { getShopTimezone, formatDateInShopTimezone } from "../utils/timezone";
-import { syncRecentOrdersFromShopify } from "../utils/orders.server";
-import { syncAllActiveOffersToShopMetafield } from "../utils/bundleMetafields.server";
 
 export const loader = async ({ request }) => {
+    const t0 = performance.now();
     const { admin, session } = await authenticate.admin(request);
+    const tAuth = performance.now();
     const shopName = session.shop.replace(".myshopify.com", "");
-    const shopTimezone = await getShopTimezone(admin);
 
-    console.log("-------------------> [PairedProductsIndex] Fetching paired product discounts for:", session.shop);
-
-    let liveOffers = [];
-    try {
-        const response = await admin.graphql(
-            `#graphql
-            query GetAutomaticDiscounts {
-                discountNodes(first: 50, query: "type:app") {
-                    nodes {
-                        id
-                        discount {
-                            __typename
-                            ... on DiscountAutomaticApp {
-                                title
-                                status
-                                startsAt
-                                endsAt
-                                combinesWith {
-                                    orderDiscounts
-                                    productDiscounts
-                                    shippingDiscounts
-                                }
-                            }
-                        }
-                        metafield(namespace: "$app:discount", key: "function_configuration") {
-                            value
-                        }
-                    }
-                }
-            }`
-        );
-        const json = await response.json();
-        const nodes = json.data?.discountNodes?.nodes || [];
-
-        // Auto-sync offers from Shopify to PostgreSQL DB so existing offers are recovered
-        try {
-            for (const node of nodes) {
-                const disc = node.discount;
-                if (!disc || disc.__typename !== "DiscountAutomaticApp" || !node.metafield?.value) continue;
-                let config = null;
-                try { config = JSON.parse(node.metafield.value); } catch { continue; }
-                if (!config || config.discountType !== "PAIRED_PRODUCTS") continue;
-
-                const numericId = node.id.split("/").pop();
-                await prisma.pairedOffer.upsert({
-                    where: { discountId: node.id },
-                    update: {
-                        title: disc.title || config.title || "Paired Products Discount",
-                        percentage: parseFloat(config.percentage) || 0,
-                        status: disc.status || "ACTIVE",
-                        startsAt: disc.startsAt ? new Date(disc.startsAt) : undefined,
-                        endsAt: disc.endsAt ? new Date(disc.endsAt) : null,
-                        mainProducts: JSON.stringify(config.mainProducts || []),
-                        subProducts: JSON.stringify(config.subProducts || []),
-                    },
-                    create: {
-                        shop: session.shop,
-                        discountId: node.id,
-                        numericId,
-                        title: disc.title || config.title || "Paired Products Discount",
-                        percentage: parseFloat(config.percentage) || 0,
-                        status: disc.status || "ACTIVE",
-                        combinesWithOrder: Boolean(disc.combinesWith?.orderDiscounts),
-                        combinesWithProduct: Boolean(disc.combinesWith?.productDiscounts),
-                        combinesWithShipping: Boolean(disc.combinesWith?.shippingDiscounts),
-                        startsAt: disc.startsAt ? new Date(disc.startsAt) : new Date(),
-                        endsAt: disc.endsAt ? new Date(disc.endsAt) : null,
-                        mainProducts: JSON.stringify(config.mainProducts || []),
-                        subProducts: JSON.stringify(config.subProducts || []),
-                    },
-                });
-            }
-            await syncAllActiveOffersToShopMetafield(admin);
-        } catch (syncErr) {
-            console.warn("Could not auto-sync offers to DB:", syncErr);
-        }
-
-        // Auto-sync recent orders to calculate Total Sales and Total Discounts
-        if (session?.shop) {
-            await syncRecentOrdersFromShopify(admin, session.shop);
-        }
-
-        // Fetch all DB offers for this shop (with shopName fallback)
-        let allDbOffers = [];
-        let dbOfferMap = {};
-        try {
-            allDbOffers = await prisma.pairedOffer.findMany({
-                where: {
-                    OR: [
-                        { shop: session.shop },
-                        { shop: shopName },
-                        { shop: { contains: shopName } },
-                    ],
-                },
-            });
-            for (const d of allDbOffers) {
-                dbOfferMap[d.discountId] = d;
-                dbOfferMap[d.numericId] = d;
-            }
-        } catch (e) {
+    // Parallelize DB fetch with cached shop timezone
+    const [shopTimezone, dbOffers] = await Promise.all([
+        getShopTimezone(admin, session.shop).catch(() => "UTC"),
+        prisma.pairedOffer.findMany({
+            where: {
+                OR: [
+                    { shop: session.shop },
+                    { shop: shopName },
+                ],
+            },
+            orderBy: { createdAt: "desc" },
+        }).catch((e) => {
             console.warn("Could not fetch DB offers:", e);
-        }
+            return [];
+        }),
+    ]);
+    const tAsync = performance.now();
 
-        liveOffers = nodes
-            .map((node) => {
-                const disc = node.discount;
-                if (!disc || disc.__typename !== "DiscountAutomaticApp") return null;
-
-                // Only include discounts created by our app with function_configuration
-                if (!node.metafield?.value) return null;
-
-                let config = null;
-                try {
-                    config = JSON.parse(node.metafield.value);
-                } catch {
-                    return null;
-                }
-
-                // Strictly filter for Paired Products offers
-                if (!config || config.discountType !== "PAIRED_PRODUCTS") {
-                    return null;
-                }
-
-                const numericId = node.id.split("/").pop();
-                const mainProductCount = Array.isArray(config.mainProductIds) ? config.mainProductIds.length : 0;
-                const subProductCount = Array.isArray(config.subProductIds) ? config.subProductIds.length : 0;
-
-                const combinesWith = {
-                    orderDiscounts: Boolean(disc.combinesWith?.orderDiscounts),
-                    productDiscounts: Boolean(disc.combinesWith?.productDiscounts),
-                    shippingDiscounts: Boolean(disc.combinesWith?.shippingDiscounts),
-                };
-
-                const dbItem = dbOfferMap[node.id] || dbOfferMap[numericId];
-                const usageCount = dbItem?.usageCount || 0;
-
-                return {
-                    id: node.id,
-                    numericId,
-                    title: disc.title || config.title || "Paired Products Discount",
-                    discountPercentage: config.percentage ? `${config.percentage}%` : "0%",
-                    mainProductCount,
-                    subProductCount,
-                    status: disc.status || "ACTIVE",
-                    combinesWith,
-                    usageCount,
-                    startDate: disc.startsAt ? formatDateInShopTimezone(disc.startsAt, shopTimezone) : "Immediate",
-                    endDate: disc.endsAt ? formatDateInShopTimezone(disc.endsAt, shopTimezone) : null,
-                };
-            })
-            .filter(Boolean);
-
-        // Auto-heal: If DB has active offers that were dropped by local dev restart, re-register them with the active function
-        const liveShopifyIds = new Set();
-        nodes.forEach((node) => {
-            liveShopifyIds.add(node.id);
-            liveShopifyIds.add(node.id.split("/").pop());
-        });
-
-        let activeFunctionId = null;
+    const formattedOffers = dbOffers.map((dbo) => {
+        let mainCount = 0;
+        let subCount = 0;
         try {
-            const fnRes = await admin.graphql(
-                `#graphql
-                query GetFunctionId {
-                    shopifyFunctions(first: 25) {
-                        nodes {
-                            id
-                            title
-                            apiType
-                        }
-                    }
-                }`
-            );
-            const fnJson = await fnRes.json();
-            const functions = fnJson.data?.shopifyFunctions?.nodes || [];
-            const matched = functions.find(
-                (fn) =>
-                    fn.title?.toLowerCase().includes("paired") ||
-                    fn.apiType === "cart_lines_discounts_generate" ||
-                    fn.apiType === "order_discounts"
-            );
-            activeFunctionId = matched?.id || functions[0]?.id || "gid://shopify/ShopifyFunction/paired-products-discount";
-        } catch (fnErr) {
-            console.warn("Could not query shopifyFunctions:", fnErr);
-            activeFunctionId = "gid://shopify/ShopifyFunction/paired-products-discount";
-        }
-
-        for (const dbOffer of allDbOffers) {
-            const isPresentInShopify = liveShopifyIds.has(dbOffer.discountId) || liveShopifyIds.has(dbOffer.numericId);
-            if (!isPresentInShopify && activeFunctionId && dbOffer.status === "ACTIVE") {
-                console.log(`-------------------> [AutoRestore] Re-registering missing offer in Shopify: "${dbOffer.title}" with function ${activeFunctionId}`);
-                try {
-                    let mainProducts = [];
-                    let subProducts = [];
-                    try {
-                        mainProducts = JSON.parse(dbOffer.mainProducts);
-                        subProducts = JSON.parse(dbOffer.subProducts);
-                    } catch {
-                        mainProducts = [];
-                        subProducts = [];
-                    }
-
-                    const configPayload = {
-                        discountType: "PAIRED_PRODUCTS",
-                        percentage: dbOffer.percentage,
-                        title: dbOffer.title,
-                        mainProductIds: mainProducts.map((p) => p.id),
-                        subProductIds: subProducts.map((p) => p.id),
-                        mainProducts,
-                        subProducts,
-                    };
-
-                    const createRes = await admin.graphql(
-                        `#graphql
-                        mutation RecreateAutomaticDiscount($automaticAppDiscount: DiscountAutomaticAppInput!) {
-                            discountAutomaticAppCreate(automaticAppDiscount: $automaticAppDiscount) {
-                                automaticAppDiscount {
-                                    discountId
-                                    title
-                                    status
-                                }
-                                userErrors {
-                                    field
-                                    message
-                                }
-                            }
-                        }`,
-                        {
-                            variables: {
-                                automaticAppDiscount: {
-                                    title: dbOffer.title,
-                                    functionId: activeFunctionId,
-                                    startsAt: dbOffer.startsAt ? dbOffer.startsAt.toISOString() : new Date().toISOString(),
-                                    ...(dbOffer.endsAt ? { endsAt: dbOffer.endsAt.toISOString() } : {}),
-                                    discountClasses: ["ORDER"],
-                                    combinesWith: {
-                                        orderDiscounts: dbOffer.combinesWithOrder,
-                                        productDiscounts: dbOffer.combinesWithProduct,
-                                        shippingDiscounts: dbOffer.combinesWithShipping,
-                                    },
-                                    metafields: [
-                                        {
-                                            namespace: "$app:discount",
-                                            key: "function_configuration",
-                                            type: "json",
-                                            value: JSON.stringify(configPayload),
-                                        },
-                                    ],
-                                },
-                            },
-                        }
-                    );
-                    const createJson = await createRes.json();
-                    const newDiscount = createJson.data?.discountAutomaticAppCreate?.automaticAppDiscount;
-                    if (newDiscount?.discountId) {
-                        const newNumericId = newDiscount.discountId.split("/").pop();
-                        await prisma.pairedOffer.update({
-                            where: { id: dbOffer.id },
-                            data: {
-                                discountId: newDiscount.discountId,
-                                numericId: newNumericId,
-                                status: newDiscount.status || "ACTIVE",
-                            },
-                        });
-                        console.log(`-------------------> [AutoRestore] Successfully re-registered "${dbOffer.title}" as ${newDiscount.discountId}`);
-                        dbOffer.discountId = newDiscount.discountId;
-                        dbOffer.numericId = newNumericId;
-                        dbOffer.status = newDiscount.status || "ACTIVE";
-                    }
-                } catch (recreateErr) {
-                    console.warn(`-------------------> [AutoRestore] Error re-registering "${dbOffer.title}":`, recreateErr);
-                }
-            }
-        }
-
-        // Build comprehensive offers list: live Shopify offers + all DB offers
-        const combinedOffers = [];
-        const seenNumericIds = new Set();
-
-        for (const o of liveOffers) {
-            combinedOffers.push(o);
-            seenNumericIds.add(String(o.numericId));
-        }
-
-        for (const dbo of allDbOffers) {
-            if (!seenNumericIds.has(String(dbo.numericId))) {
-                let mainCount = 0;
-                let subCount = 0;
-                try {
-                    mainCount = JSON.parse(dbo.mainProducts || "[]").length;
-                    subCount = JSON.parse(dbo.subProducts || "[]").length;
-                } catch {
-                    mainCount = 0;
-                    subCount = 0;
-                }
-
-                combinedOffers.push({
-                    id: dbo.discountId,
-                    numericId: dbo.numericId,
-                    title: dbo.title,
-                    discountPercentage: `${dbo.percentage}%`,
-                    mainProductCount: mainCount,
-                    subProductCount: subCount,
-                    status: dbo.status || "ACTIVE",
-                    combinesWith: {
-                        orderDiscounts: dbo.combinesWithOrder,
-                        productDiscounts: dbo.combinesWithProduct,
-                        shippingDiscounts: dbo.combinesWithShipping,
-                    },
-                    usageCount: dbo.usageCount || 0,
-                    startDate: dbo.startsAt ? formatDateInShopTimezone(dbo.startsAt, shopTimezone) : "Immediate",
-                    endDate: dbo.endsAt ? formatDateInShopTimezone(dbo.endsAt, shopTimezone) : null,
-                });
-                seenNumericIds.add(String(dbo.numericId));
-            }
-        }
-
-        console.log("-------------------> [Index: Table] Loaded " + combinedOffers.length + " Paired Products offers (Live + DB):");
-        console.log("-------------------> [Index: Table] Offers:", combinedOffers.map((o) => ({ id: o.numericId, title: o.title, discount: o.discountPercentage, status: o.status, usageCount: o.usageCount })));
-        await syncAllActiveOffersToShopMetafield(admin);
-        return { shopName, offers: combinedOffers };
-    } catch (err) {
-        console.error("-------------------> [Index: Table] Error in loader:", err);
-        // Fallback: If GraphQL queries fail completely, still load directly from DB
-        try {
-            const fallbackDbOffers = await prisma.pairedOffer.findMany({
-                where: {
-                    OR: [
-                        { shop: session?.shop || "" },
-                        { shop: shopName },
-                        { shop: { contains: shopName } },
-                    ],
-                },
-            });
-            const fallbackOffers = fallbackDbOffers.map((dbo) => {
-                let mainCount = 0;
-                let subCount = 0;
-                try {
-                    mainCount = JSON.parse(dbo.mainProducts || "[]").length;
-                    subCount = JSON.parse(dbo.subProducts || "[]").length;
-                } catch {
-                    mainCount = 0;
-                    subCount = 0;
-                }
-                return {
-                    id: dbo.discountId,
-                    numericId: dbo.numericId,
-                    title: dbo.title,
-                    discountPercentage: `${dbo.percentage}%`,
-                    mainProductCount: mainCount,
-                    subProductCount: subCount,
-                    status: dbo.status || "ACTIVE",
-                    combinesWith: {
-                        orderDiscounts: dbo.combinesWithOrder,
-                        productDiscounts: dbo.combinesWithProduct,
-                        shippingDiscounts: dbo.combinesWithShipping,
-                    },
-                    usageCount: dbo.usageCount || 0,
-                    startDate: dbo.startsAt ? formatDateInShopTimezone(dbo.startsAt, shopTimezone) : "Immediate",
-                    endDate: dbo.endsAt ? formatDateInShopTimezone(dbo.endsAt, shopTimezone) : null,
-                };
-            });
-            return { shopName, offers: fallbackOffers };
+            mainCount = JSON.parse(dbo.mainProducts || "[]").length;
+            subCount = JSON.parse(dbo.subProducts || "[]").length;
         } catch {
-            return { shopName, offers: [] };
+            mainCount = 0;
+            subCount = 0;
         }
-    }
+
+        return {
+            id: dbo.discountId,
+            numericId: dbo.numericId,
+            title: dbo.title,
+            discountPercentage: `${dbo.percentage}%`,
+            mainProductCount: mainCount,
+            subProductCount: subCount,
+            status: dbo.status || "ACTIVE",
+            combinesWith: {
+                orderDiscounts: dbo.combinesWithOrder,
+                productDiscounts: dbo.combinesWithProduct,
+                shippingDiscounts: dbo.combinesWithShipping,
+            },
+            usageCount: dbo.usageCount || 0,
+            startDate: dbo.startsAt ? formatDateInShopTimezone(dbo.startsAt, shopTimezone) : "Immediate",
+            endDate: dbo.endsAt ? formatDateInShopTimezone(dbo.endsAt, shopTimezone) : null,
+        };
+    });
+    const tEnd = performance.now();
+
+    console.log(`⏱️ [PairedProducts: Table] Total: ${(tEnd - t0).toFixed(0)}ms (Auth: ${(tAuth - t0).toFixed(0)}ms | DB+TZ: ${(tAsync - tAuth).toFixed(0)}ms | Format: ${(tEnd - tAsync).toFixed(0)}ms) - ${formattedOffers.length} offers`);
+    return { shopName, offers: formattedOffers };
 };
 
 export const action = async ({ request }) => {
@@ -489,20 +172,183 @@ export default function PairedProducts() {
     const { offers } = useLoaderData();
     const actionData = useActionData();
     const submit = useSubmit();
+    const navigation = useNavigation();
+    const navigate = useNavigate();
     const [searchParams, setSearchParams] = useSearchParams();
     const shopify = useAppBridge();
 
+    const isSubmitting = navigation.state === "submitting";
+    const deletingId = isSubmitting && navigation.formData?.get("intent") === "delete"
+        ? String(navigation.formData?.get("numericId") || navigation.formData?.get("id"))
+        : null;
+
+    // Create offer navigation loading state
+    const [isNavigatingCreate, setIsNavigatingCreate] = useState(false);
+    const isCreateLoading = isNavigatingCreate || (navigation.state === "loading" && navigation.location?.pathname?.includes("/create"));
+
+    const handleCreateOffer = (e) => {
+        if (e?.preventDefault) e.preventDefault();
+        try {
+            shopify.loading(true);
+        } catch {
+            // ignore if not in embedded bridge
+        }
+        setIsNavigatingCreate(true);
+        navigate("/app/paired-products/create");
+    };
+
+    // Customize widget navigation loading state
+    const [isNavigatingCustomize, setIsNavigatingCustomize] = useState(false);
+    const isCustomizeLoading = isNavigatingCustomize || (navigation.state === "loading" && navigation.location?.pathname?.includes("/customize"));
+
+    const handleCustomizeWidget = (e) => {
+        if (e?.preventDefault) e.preventDefault();
+        try {
+            shopify.loading(true);
+        } catch {
+            // ignore if not in embedded bridge
+        }
+        setIsNavigatingCustomize(true);
+        navigate("/app/paired-products/customize");
+    };
+
+    // Edit offer navigation loading state
+    const [editingId, setEditingId] = useState(null);
+    const isNavigatingEdit = Boolean(editingId) || (navigation.state === "loading" && navigation.location?.pathname?.includes("/edit/"));
+
+    const handleEditOffer = (numericId) => {
+        setEditingId(String(numericId));
+        try {
+            shopify.loading(true);
+        } catch {
+            // ignore if not in embedded bridge
+        }
+        navigate(`/app/paired-products/edit/${numericId}`);
+    };
+
+    useEffect(() => {
+        if (navigation.state === "idle") {
+            setIsNavigatingCreate(false);
+            setIsNavigatingCustomize(false);
+            setEditingId(null);
+        }
+    }, [navigation.state]);
+
+    // Read initial filters from URL params so reloads preserve all selections
+    const initialQuery = searchParams.get("q") || "";
+    const initialStatus = searchParams.get("status") || "ALL";
+    const initialSort = searchParams.get("sort") || "newest";
+    const initialPage = Math.max(1, parseInt(searchParams.get("page") || "1", 10));
+
+    const [searchQuery, setSearchQuery] = useState(initialQuery);
+    const [statusFilter, setStatusFilter] = useState(initialStatus);
+    const [sortBy, setSortBy] = useState(initialSort);
+    const [currentPage, setCurrentPage] = useState(initialPage);
+
+    // Sync from URL when browser back/forward or searchParams change
+    useEffect(() => {
+        const q = searchParams.get("q") || "";
+        const s = searchParams.get("status") || "ALL";
+        const sort = searchParams.get("sort") || "newest";
+        const p = Math.max(1, parseInt(searchParams.get("page") || "1", 10));
+
+        if (q !== searchQuery) setSearchQuery(q);
+        if (s !== statusFilter) setStatusFilter(s);
+        if (sort !== sortBy) setSortBy(sort);
+        if (p !== currentPage) setCurrentPage(p);
+    }, [searchParams]);
+
+    // Helper to persist filters, sort, and pagination into URL
+    const updateUrlParams = (newQuery, newStatus, newSort, newPage) => {
+        const params = new URLSearchParams(searchParams);
+        if (newQuery) params.set("q", newQuery);
+        else params.delete("q");
+
+        if (newStatus && newStatus !== "ALL") params.set("status", newStatus);
+        else params.delete("status");
+
+        if (newSort && newSort !== "newest") params.set("sort", newSort);
+        else params.delete("sort");
+
+        if (newPage && newPage > 1) params.set("page", String(newPage));
+        else params.delete("page");
+
+        setSearchParams(params, { replace: true });
+    };
+
+    const handleSearchChange = (val) => {
+        setSearchQuery(val);
+        setCurrentPage(1);
+        updateUrlParams(val, statusFilter, sortBy, 1);
+    };
+
+    const handleStatusChange = (val) => {
+        setStatusFilter(val);
+        setCurrentPage(1);
+        updateUrlParams(searchQuery, val, sortBy, 1);
+    };
+
+    const handleSortChange = (val) => {
+        setSortBy(val);
+        setCurrentPage(1);
+        updateUrlParams(searchQuery, statusFilter, val, 1);
+    };
+
+    const isFilteredOrSorted = Boolean(
+        searchQuery.trim() || statusFilter !== "ALL" || sortBy !== "newest"
+    );
+
+    const handleClearAllFilters = () => {
+        setSearchQuery("");
+        setStatusFilter("ALL");
+        setSortBy("newest");
+        setCurrentPage(1);
+        updateUrlParams("", "ALL", "newest", 1);
+    };
+
+
+    const handlePageChange = (val) => {
+        const targetPage = Math.min(Math.max(1, val), totalPages);
+        if (targetPage === safeCurrentPage) return;
+        setCurrentPage(targetPage);
+        updateUrlParams(searchQuery, statusFilter, sortBy, targetPage);
+    };
+
     useEffect(() => {
         if (searchParams.get("created") === "true") {
+            shopify.saveBar?.hide("create-paired-offer-save-bar");
+            shopify.saveBar?.hide("edit-paired-offer-save-bar");
             shopify.toast.show("Discount created");
             const newParams = new URLSearchParams(searchParams);
             newParams.delete("created");
+            setSearchParams(newParams, { replace: true });
+        } else if (searchParams.get("updated") === "true") {
+            shopify.saveBar?.hide("create-paired-offer-save-bar");
+            shopify.saveBar?.hide("edit-paired-offer-save-bar");
+            shopify.toast.show("Offer updated successfully");
+            const newParams = new URLSearchParams(searchParams);
+            newParams.delete("updated");
+            setSearchParams(newParams, { replace: true });
+        } else if (searchParams.get("deleted") === "true") {
+            shopify.saveBar?.hide("create-paired-offer-save-bar");
+            shopify.saveBar?.hide("edit-paired-offer-save-bar");
+            shopify.toast.show("Offer deleted");
+            const newParams = new URLSearchParams(searchParams);
+            newParams.delete("deleted");
             setSearchParams(newParams, { replace: true });
         }
     }, [searchParams, setSearchParams, shopify]);
 
     useEffect(() => {
+        try {
+            shopify.loading(false);
+        } catch {
+            // ignore if not in embedded bridge
+        }
+        setIsNavigatingCreate(false);
+        setIsNavigatingCustomize(false);
         shopify.saveBar?.hide("create-paired-offer-save-bar");
+        shopify.saveBar?.hide("edit-paired-offer-save-bar");
     }, [shopify]);
 
     useEffect(() => {
@@ -513,30 +359,74 @@ export default function PairedProducts() {
         }
     }, [actionData, shopify]);
 
-    const [searchQuery, setSearchQuery] = useState("");
-    const [statusFilter, setStatusFilter] = useState("ALL");
+    // Filter and Sort offers
+    const sortedAndFilteredOffers = useMemo(() => {
+        const query = searchQuery.trim().toLowerCase();
+        const result = offers.filter((offer) => {
+            const matchesSearch =
+                !query ||
+                offer.title.toLowerCase().includes(query) ||
+                String(offer.numericId).includes(query);
 
-    const filteredOffers = offers.filter((offer) => {
-        const matchesSearch =
-            offer.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-            offer.numericId.includes(searchQuery);
+            const matchesStatus =
+                statusFilter === "ALL" ||
+                offer.status === statusFilter ||
+                (statusFilter === "EXPIRED" &&
+                    (offer.status === "EXPIRED" || offer.status === "DEACTIVATED"));
 
-        const matchesStatus =
-            statusFilter === "ALL" ||
-            offer.status === statusFilter ||
-            (statusFilter === "EXPIRED" &&
-                (offer.status === "EXPIRED" || offer.status === "DEACTIVATED"));
+            return matchesSearch && matchesStatus;
+        });
 
-        return matchesSearch && matchesStatus;
-    });
+        result.sort((a, b) => {
+            switch (sortBy) {
+                case "oldest":
+                    return (Number(a.numericId) || 0) - (Number(b.numericId) || 0);
+                case "title_asc":
+                    return a.title.localeCompare(b.title);
+                case "title_desc":
+                    return b.title.localeCompare(a.title);
+                case "used_asc":
+                    return (a.usageCount || 0) - (b.usageCount || 0);
+                case "used_desc":
+                    return (b.usageCount || 0) - (a.usageCount || 0);
+                case "discount_asc": {
+                    const percA = parseFloat(a.discountPercentage) || 0;
+                    const percB = parseFloat(b.discountPercentage) || 0;
+                    return percA - percB;
+                }
+                case "discount_desc": {
+                    const percA = parseFloat(a.discountPercentage) || 0;
+                    const percB = parseFloat(b.discountPercentage) || 0;
+                    return percB - percA;
+                }
+                case "newest":
+                default:
+                    return (Number(b.numericId) || 0) - (Number(a.numericId) || 0);
+            }
+        });
 
-    const activeCount = offers.filter((o) => o.status === "ACTIVE").length;
-    const scheduledCount = offers.filter((o) => o.status === "SCHEDULED").length;
-    const deactivatedCount = offers.filter(
-        (o) => o.status === "EXPIRED" || o.status === "DEACTIVATED"
-    ).length;
+        return result;
+    }, [offers, searchQuery, statusFilter, sortBy]);
 
-    const metricCards = [
+    // Pagination calculations (10 offers per page)
+    const ITEMS_PER_PAGE = 10;
+    const totalFilteredOffers = sortedAndFilteredOffers.length;
+    const totalPages = Math.max(1, Math.ceil(totalFilteredOffers / ITEMS_PER_PAGE));
+    const safeCurrentPage = Math.min(Math.max(1, currentPage), totalPages);
+
+    const paginatedOffers = useMemo(() => {
+        const start = (safeCurrentPage - 1) * ITEMS_PER_PAGE;
+        return sortedAndFilteredOffers.slice(start, start + ITEMS_PER_PAGE);
+    }, [sortedAndFilteredOffers, safeCurrentPage]);
+
+    const activeCount = useMemo(() => offers.filter((o) => o.status === "ACTIVE").length, [offers]);
+    const scheduledCount = useMemo(() => offers.filter((o) => o.status === "SCHEDULED").length, [offers]);
+    const deactivatedCount = useMemo(
+        () => offers.filter((o) => o.status === "EXPIRED" || o.status === "DEACTIVATED").length,
+        [offers]
+    );
+
+    const metricCards = useMemo(() => [
         {
             id: "total",
             label: "Total Offers",
@@ -565,9 +455,10 @@ export default function PairedProducts() {
             iconType: "disabled",
             filterValue: "EXPIRED",
         },
-    ];
+    ], [offers.length, activeCount, scheduledCount, deactivatedCount]);
 
     const handleDelete = (id, numericId) => {
+        if (isSubmitting) return; // Prevent double submit
         const formData = new FormData();
         formData.append("intent", "delete");
         formData.append("id", id);
@@ -580,14 +471,23 @@ export default function PairedProducts() {
             <s-link slot="breadcrumb-actions" href="/app">
                 Home
             </s-link>
-            <s-button slot="secondary-actions" href="/app/paired-products/customize">
+            <s-button
+                slot="secondary-actions"
+                onClick={handleCustomizeWidget}
+                loading={isCustomizeLoading ? true : undefined}
+                disabled={(isCustomizeLoading || isCreateLoading || isSubmitting || isNavigatingEdit) ? true : undefined}
+            >
                 🎨 Customize Widget
             </s-button>
-            <s-button slot="primary-action" variant="primary" href="/app/paired-products/create">
+            <s-button
+                slot="primary-action"
+                variant="primary"
+                onClick={handleCreateOffer}
+                loading={isCreateLoading ? true : undefined}
+                disabled={(isCreateLoading || isCustomizeLoading || isSubmitting || isNavigatingEdit) ? true : undefined}
+            >
                 Create offer
             </s-button>
-
-
 
             {/* KPI Metric Cards */}
             <s-box border="small" borderRadius="base" padding="small">
@@ -604,11 +504,11 @@ export default function PairedProducts() {
                             label={card.label}
                             value={card.value}
                             iconType={card.iconType}
-                            onClick={() => setStatusFilter(card.filterValue)}
+                            onClick={() => handleStatusChange(card.filterValue)}
                         />,
                     ])}
                 </s-grid>
-            </s-box >
+            </s-box>
 
             {/* Filter and Table Section */}
             <s-box paddingBlockStart="large">
@@ -617,8 +517,8 @@ export default function PairedProducts() {
                         {/* Filters Toolbar Slot */}
                         <s-grid
                             slot="filters"
-                            gap="base"
-                            gridTemplateColumns="1fr 180px auto"
+                            gap="small-200"
+                            gridTemplateColumns="@container (inline-size <= 760px) 1fr, 1fr 140px auto auto"
                             alignItems="center"
                             padding="small-400"
                         >
@@ -627,14 +527,14 @@ export default function PairedProducts() {
                                 labelAccessibilityVisibility="exclusive"
                                 placeholder="Search offers by name or ID..."
                                 value={searchQuery}
-                                onInput={(e) => setSearchQuery(e.target.value)}
+                                onInput={(e) => handleSearchChange(e.target.value)}
                             ></s-search-field>
 
                             <s-select
                                 label="Status"
                                 labelAccessibilityVisibility="exclusive"
                                 value={statusFilter}
-                                onChange={(e) => setStatusFilter(e.target.value)}
+                                onChange={(e) => handleStatusChange(e.target.value)}
                             >
                                 <s-option value="ALL">All Statuses</s-option>
                                 <s-option value="ACTIVE">Active</s-option>
@@ -642,9 +542,93 @@ export default function PairedProducts() {
                                 <s-option value="EXPIRED">Deactivated</s-option>
                             </s-select>
 
-                            <s-button icon="plus" variant="primary" href="/app/paired-products/create">
+                            <s-box>
+                                <s-button
+                                    icon="sort"
+                                    variant="secondary"
+                                    accessibilityLabel="Sort"
+                                    interestFor="sort-tooltip"
+                                    commandFor="sort-actions"
+                                />
+                                <s-tooltip id="sort-tooltip">Sort</s-tooltip>
+                                <s-popover id="sort-actions">
+                                    <s-box padding="small">
+                                        <s-choice-list
+                                            label="Sort by"
+                                            name="sort-by"
+                                            onChange={(e) => {
+                                                const val = (e.target.values && e.target.values[0]) || e.target.value;
+                                                if (val) handleSortChange(val);
+                                            }}
+                                        >
+                                            <s-choice
+                                                value="newest"
+                                                selected={sortBy === "newest" ? true : undefined}
+                                                onClick={() => handleSortChange("newest")}
+                                            >
+                                                Newest first
+                                            </s-choice>
+                                            <s-choice
+                                                value="oldest"
+                                                selected={sortBy === "oldest" ? true : undefined}
+                                                onClick={() => handleSortChange("oldest")}
+                                            >
+                                                Oldest first
+                                            </s-choice>
+                                            <s-choice
+                                                value="title_asc"
+                                                selected={sortBy === "title_asc" ? true : undefined}
+                                                onClick={() => handleSortChange("title_asc")}
+                                            >
+                                                Title (A–Z)
+                                            </s-choice>
+                                            <s-choice
+                                                value="title_desc"
+                                                selected={sortBy === "title_desc" ? true : undefined}
+                                                onClick={() => handleSortChange("title_desc")}
+                                            >
+                                                Title (Z–A)
+                                            </s-choice>
+                                            <s-choice
+                                                value="used_desc"
+                                                selected={sortBy === "used_desc" ? true : undefined}
+                                                onClick={() => handleSortChange("used_desc")}
+                                            >
+                                                Most used
+                                            </s-choice>
+                                            <s-choice
+                                                value="discount_desc"
+                                                selected={sortBy === "discount_desc" ? true : undefined}
+                                                onClick={() => handleSortChange("discount_desc")}
+                                            >
+                                                Highest discount
+                                            </s-choice>
+                                        </s-choice-list>
+                                    </s-box>
+                                </s-popover>
+                            </s-box>
+
+                            <s-box>
+                                <s-button
+                                    variant="secondary"
+                                    disabled={!isFilteredOrSorted}
+                                    onClick={isFilteredOrSorted ? handleClearAllFilters : undefined}
+                                    icon="eraser"
+                                    accessibilityLabel="Clear filters"
+                                    interestFor="clear-tooltip"
+                                />
+                                <s-tooltip id="clear-tooltip">Clear filters</s-tooltip>
+                            </s-box>
+
+                            {/* <s-button
+                                icon={isCreateLoading ? undefined : "plus"}
+                                variant="primary"
+                                onClick={handleCreateOffer}
+                                loading={isCreateLoading ? true : undefined}
+                                disabled={(isCreateLoading || isSubmitting) ? true : undefined}
+                            >
                                 Create offer
-                            </s-button>
+                            </s-button> */}
                         </s-grid>
 
                         {/* Table Headers */}
@@ -664,12 +648,10 @@ export default function PairedProducts() {
 
                         {/* Table Body */}
                         <s-table-body>
-                            {filteredOffers.length === 0 ? (
-
+                            {paginatedOffers.length === 0 ? (
                                 <s-empty-state
-
                                     heading={
-                                        searchQuery || statusFilter !== "ALL"
+                                        isFilteredOrSorted
                                             ? "No offers found"
                                             : "No offers yet"
                                     }
@@ -682,26 +664,25 @@ export default function PairedProducts() {
                                         />
                                     </s-box>
                                     <s-text slot="subheading">
-                                        {searchQuery || statusFilter !== "ALL"
+                                        {isFilteredOrSorted
                                             ? "Try clearing your filters or search query to see more offers."
                                             : "Create paired product discounts to incentivize customers to purchase bundles together."}
                                     </s-text>
-                                    {(searchQuery || statusFilter !== "ALL") && (
+                                    {isFilteredOrSorted && (
                                         <s-button
                                             slot="secondary-actions"
-                                            href="/app/paired-products/create"
+                                            onClick={handleCreateOffer}
+                                            loading={isCreateLoading ? true : undefined}
+                                            disabled={(isCreateLoading || isCustomizeLoading || isSubmitting || isNavigatingEdit) ? true : undefined}
                                         >
                                             Create offer
                                         </s-button>
                                     )}
-                                    {searchQuery || statusFilter !== "ALL" ? (
+                                    {isFilteredOrSorted ? (
                                         <s-button
                                             slot="primary-action"
                                             variant="primary"
-                                            onClick={() => {
-                                                setSearchQuery("");
-                                                setStatusFilter("ALL");
-                                            }}
+                                            onClick={handleClearAllFilters}
                                         >
                                             Clear filters
                                         </s-button>
@@ -709,14 +690,16 @@ export default function PairedProducts() {
                                         <s-button
                                             slot="primary-action"
                                             variant="primary"
-                                            href="/app/paired-products/create"
+                                            onClick={handleCreateOffer}
+                                            loading={isCreateLoading ? true : undefined}
+                                            disabled={(isCreateLoading || isCustomizeLoading || isSubmitting || isNavigatingEdit) ? true : undefined}
                                         >
                                             Create offer
                                         </s-button>
                                     )}
                                 </s-empty-state>
                             ) : (
-                                filteredOffers.map((offer) => (
+                                paginatedOffers.map((offer) => (
                                     <s-table-row key={offer.id}>
                                         <s-table-cell>
                                             <s-link href={`/app/paired-products/edit/${offer.numericId}`}>
@@ -751,39 +734,37 @@ export default function PairedProducts() {
                                         </s-table-cell>
 
                                         <s-table-cell>
-                                            <s-stack direction="inline" gap="small-200" alignItems="center">
-                                                <s-tooltip id={`combo-prod-${offer.numericId}`}>
-                                                    {offer.combinesWith?.productDiscounts ? "Combines with product discounts" : "Can't combine with product discounts"}
-                                                </s-tooltip>
-                                                <span style={{ opacity: offer.combinesWith?.productDiscounts ? 1 : 0.28, display: "inline-flex" }}>
-                                                    <s-icon
-                                                        type="product-add"
-                                                        color={offer.combinesWith?.productDiscounts ? "base" : "subdued"}
-                                                        interestFor={`combo-prod-${offer.numericId}`}
-                                                    />
-                                                </span>
+                                            <s-tooltip id={`combo-prod-${offer.numericId}`}>
+                                                {offer.combinesWith?.productDiscounts ? "Combines with product discounts" : "Can't combine with product discounts"}
+                                            </s-tooltip>
+                                            <s-tooltip id={`combo-order-${offer.numericId}`}>
+                                                {offer.combinesWith?.orderDiscounts ? "Combines with order discounts" : "Can't combine with order discounts"}
+                                            </s-tooltip>
+                                            <s-tooltip id={`combo-ship-${offer.numericId}`}>
+                                                {offer.combinesWith?.shippingDiscounts ? "Combines with shipping discounts" : "Can't combine with shipping discounts"}
+                                            </s-tooltip>
 
-                                                <s-tooltip id={`combo-order-${offer.numericId}`}>
-                                                    {offer.combinesWith?.orderDiscounts ? "Combines with order discounts" : "Can't combine with order discounts"}
-                                                </s-tooltip>
-                                                <span style={{ opacity: offer.combinesWith?.orderDiscounts ? 1 : 0.28, display: "inline-flex" }}>
-                                                    <s-icon
-                                                        type="order"
-                                                        color={offer.combinesWith?.orderDiscounts ? "base" : "subdued"}
-                                                        interestFor={`combo-order-${offer.numericId}`}
-                                                    />
-                                                </span>
+                                            <s-stack direction="inline" gap="small-300">
+                                                <s-icon
+                                                    type="product-add"
+                                                    color={offer.combinesWith?.productDiscounts ? "base" : "subdued"}
+                                                    interestFor={`combo-prod-${offer.numericId}`}
+                                                    style={{ opacity: offer.combinesWith?.productDiscounts ? 1 : 0.28 }}
+                                                />
 
-                                                <s-tooltip id={`combo-ship-${offer.numericId}`}>
-                                                    {offer.combinesWith?.shippingDiscounts ? "Combines with shipping discounts" : "Can't combine with shipping discounts"}
-                                                </s-tooltip>
-                                                <span style={{ opacity: offer.combinesWith?.shippingDiscounts ? 1 : 0.28, display: "inline-flex" }}>
-                                                    <s-icon
-                                                        type="delivery"
-                                                        color={offer.combinesWith?.shippingDiscounts ? "base" : "subdued"}
-                                                        interestFor={`combo-ship-${offer.numericId}`}
-                                                    />
-                                                </span>
+                                                <s-icon
+                                                    type="order"
+                                                    color={offer.combinesWith?.orderDiscounts ? "base" : "subdued"}
+                                                    interestFor={`combo-order-${offer.numericId}`}
+                                                    style={{ opacity: offer.combinesWith?.orderDiscounts ? 1 : 0.28 }}
+                                                />
+
+                                                <s-icon
+                                                    type="delivery"
+                                                    color={offer.combinesWith?.shippingDiscounts ? "base" : "subdued"}
+                                                    interestFor={`combo-ship-${offer.numericId}`}
+                                                    style={{ opacity: offer.combinesWith?.shippingDiscounts ? 1 : 0.28 }}
+                                                />
                                             </s-stack>
                                         </s-table-cell>
 
@@ -795,16 +776,18 @@ export default function PairedProducts() {
                                         </s-table-cell>
 
                                         <s-table-cell>
-                                            <s-stack gap="small-400">
-                                                <s-chip>{offer.startDate}</s-chip>
-                                                {
-                                                    offer.endDate && offer.endDate !== "No end date" && (
-                                                        <s-chip>
-                                                            {offer.endDate}
-                                                        </s-chip>
-                                                    )
-                                                }
-                                            </s-stack>
+                                            <div style={{ height: "40px", display: "flex", flexDirection: "column", justifyContent: "center" }}>
+                                                <s-stack gap="small-400">
+                                                    <s-chip>{offer.startDate}</s-chip>
+                                                    {
+                                                        offer.endDate && offer.endDate !== "No end date" && (
+                                                            <s-chip>
+                                                                {offer.endDate}
+                                                            </s-chip>
+                                                        )
+                                                    }
+                                                </s-stack>
+                                            </div>
                                         </s-table-cell>
 
                                         <s-table-cell>
@@ -814,10 +797,12 @@ export default function PairedProducts() {
                                             <s-stack direction="inline" gap="small" alignItems="center">
                                                 <s-button
                                                     variant="primary"
-                                                    href={`/app/paired-products/edit/${offer.numericId}`}
-                                                    icon="edit"
+                                                    icon={editingId === String(offer.numericId) ? undefined : "edit"}
                                                     interestFor={`edit-tip-${offer.numericId}`}
                                                     accessibilityLabel="Edit offer"
+                                                    onClick={() => handleEditOffer(offer.numericId)}
+                                                    loading={editingId === String(offer.numericId) ? true : undefined}
+                                                    disabled={(isSubmitting || isCreateLoading || isCustomizeLoading || isNavigatingEdit) ? true : undefined}
                                                 />
 
                                                 <s-button
@@ -828,8 +813,9 @@ export default function PairedProducts() {
                                                     icon="delete"
                                                     interestFor={`delete-tip-${offer.numericId}`}
                                                     accessibilityLabel="Delete offer"
+                                                    loading={deletingId === String(offer.numericId) ? true : undefined}
+                                                    disabled={(isSubmitting || isCreateLoading || isCustomizeLoading || isNavigatingEdit) ? true : undefined}
                                                 />
-
 
                                                 <s-modal id={`delete-modal-${offer.numericId}`} heading="Delete offer?">
                                                     <s-stack gap="base">
@@ -844,6 +830,8 @@ export default function PairedProducts() {
                                                         commandFor={`delete-modal-${offer.numericId}`}
                                                         command="--hide"
                                                         onClick={() => handleDelete(offer.id, offer.numericId)}
+                                                        loading={deletingId === String(offer.numericId) ? true : undefined}
+                                                        disabled={(isSubmitting || isCreateLoading || isCustomizeLoading || isNavigatingEdit) ? true : undefined}
                                                     >
                                                         Delete offer
                                                     </s-button>
@@ -852,6 +840,7 @@ export default function PairedProducts() {
                                                         variant="secondary"
                                                         commandFor={`delete-modal-${offer.numericId}`}
                                                         command="--hide"
+                                                        disabled={(isSubmitting || isCreateLoading || isCustomizeLoading || isNavigatingEdit) ? true : undefined}
                                                     >
                                                         Cancel
                                                     </s-button>
@@ -863,6 +852,39 @@ export default function PairedProducts() {
                             )}
                         </s-table-body>
                     </s-table>
+
+                    {/* Pagination Controls */}
+                    {totalFilteredOffers > 0 && (
+                        <>
+                            <s-divider />
+                            <s-box paddingInline="base" paddingBlockEnd="small" >
+                                <s-stack direction="inline" justifyContent="space-between" alignItems="center">
+                                    <s-text tone="subdued" size="small">
+                                        Showing {(safeCurrentPage - 1) * ITEMS_PER_PAGE + 1} – {Math.min(safeCurrentPage * ITEMS_PER_PAGE, totalFilteredOffers)} of {totalFilteredOffers} offers
+                                    </s-text>
+                                    <s-stack direction="inline" gap="small" alignItems="center">
+                                        <s-button
+                                            variant="secondary"
+                                            icon="chevron-left"
+                                            disabled={safeCurrentPage <= 1 ? true : undefined}
+                                            onClick={safeCurrentPage > 1 ? () => handlePageChange(safeCurrentPage - 1) : undefined}
+                                            accessibilityLabel="Previous page"
+                                        />
+                                        <s-text weight="medium" size="small">
+                                            Page {safeCurrentPage} of {totalPages}
+                                        </s-text>
+                                        <s-button
+                                            variant="secondary"
+                                            icon="chevron-right"
+                                            disabled={safeCurrentPage >= totalPages ? true : undefined}
+                                            onClick={safeCurrentPage < totalPages ? () => handlePageChange(safeCurrentPage + 1) : undefined}
+                                            accessibilityLabel="Next page"
+                                        />
+                                    </s-stack>
+                                </s-stack>
+                            </s-box>
+                        </>
+                    )}
                 </s-section>
             </s-box>
         </s-page>

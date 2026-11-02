@@ -14,55 +14,83 @@ import {
     getShopTodayDate,
     formatDateInShopTimezone,
     dateToShopISO,
+    setShopTimezoneCache,
 } from "../utils/timezone";
+import { syncAllActiveOffersToShopMetafield } from "../utils/bundleMetafields.server";
 import { syncRecentOrdersFromShopify } from "../utils/orders.server";
 import WidgetPreview from "./components/Preview/WidgetPreview";
 
 export const loader = async ({ request, params }) => {
+    const t0 = performance.now();
     const { admin, session } = await authenticate.admin(request);
     const numericId = params.id;
+    const shop = session?.shop || "";
 
     console.log("-------------------> [EditLoader] Loading offer for numericId:", numericId);
 
-    // Try querying discountNode with standard GID formats
     let discountNode = null;
+    let shopTimezone = "UTC";
+    let widgetSettings = null;
+
     const possibleIds = [
         `gid://shopify/DiscountAutomaticNode/${numericId}`,
         `gid://shopify/DiscountAutomaticApp/${numericId}`,
     ];
 
+    // Single batched query for discountNode + shop timezone + widget settings
     for (const gid of possibleIds) {
         try {
             const response = await admin.graphql(
                 `#graphql
-        query GetDiscountDetails($id: ID!) {
-          discountNode(id: $id) {
-            id
-            discount {
-              __typename
-              ... on DiscountAutomaticApp {
-                title
-                status
-                startsAt
-                endsAt
-                combinesWith {
-                  orderDiscounts
-                  productDiscounts
-                  shippingDiscounts
-                }
-              }
-            }
-            metafield(namespace: "$app:discount", key: "function_configuration") {
-              id
-              value
-            }
-          }
-        }`,
+                query GetDiscountAndShopDetails($id: ID!) {
+                  discountNode(id: $id) {
+                    id
+                    discount {
+                      __typename
+                      ... on DiscountAutomaticApp {
+                        title
+                        status
+                        startsAt
+                        endsAt
+                        combinesWith {
+                          orderDiscounts
+                          productDiscounts
+                          shippingDiscounts
+                        }
+                      }
+                    }
+                    metafield(namespace: "$app:discount", key: "function_configuration") {
+                      id
+                      value
+                    }
+                  }
+                  shop {
+                    ianaTimezone
+                    metafield(namespace: "stack_up", key: "paired_widget_settings") {
+                      value
+                    }
+                  }
+                }`,
                 { variables: { id: gid } }
             );
             const json = await response.json();
-            if (json.data?.discountNode?.discount) {
-                discountNode = json.data.discountNode;
+            const data = json.data;
+
+            if (data?.shop?.ianaTimezone) {
+                shopTimezone = data.shop.ianaTimezone;
+                if (shop) setShopTimezoneCache(shop, shopTimezone);
+            }
+
+            if (data?.shop?.metafield?.value) {
+                try {
+                    widgetSettings = JSON.parse(data.shop.metafield.value);
+                } catch {
+                    widgetSettings = null;
+                }
+            }
+
+            if (data?.discountNode?.discount) {
+                discountNode = data.discountNode;
                 break;
             }
         } catch (e) {
@@ -132,51 +160,54 @@ export const loader = async ({ request, params }) => {
     const subProductIds = config.subProductIds || [];
     const allProductIds = [...new Set([...mainProductIds, ...subProductIds])];
 
-    // Fetch product titles, images, and prices for selected products
-    let productsMap = {};
-    if (allProductIds.length > 0) {
-        try {
-            const prodResponse = await admin.graphql(
+    // Parallelize: Product details fetch + order syncing
+    const [prodResponse] = await Promise.all([
+        allProductIds.length > 0
+            ? admin.graphql(
                 `#graphql
-        query GetProductDetails($ids: [ID!]!) {
-          nodes(ids: $ids) {
-            ... on Product {
-              id
-              title
-              handle
-              featuredImage {
-                url
-              }
-              variants(first: 1) {
-                nodes {
-                  price
-                }
-              }
-            }
-          }
-        }`,
+                query GetProductDetails($ids: [ID!]!) {
+                  nodes(ids: $ids) {
+                    ... on Product {
+                      id
+                      title
+                      handle
+                      featuredImage {
+                        url
+                      }
+                      variants(first: 50) {
+                        nodes {
+                          id
+                          price
+                        }
+                      }
+                    }
+                  }
+                }`,
                 { variables: { ids: allProductIds } }
-            );
-            const prodJson = await prodResponse.json();
-            const nodes = prodJson.data?.nodes || [];
-            nodes.forEach((n) => {
-                if (n && n.id) {
-                    const rawPrice = n.variants?.nodes?.[0]?.price;
-                    const price = rawPrice
-                        ? (String(rawPrice).startsWith("$") ? String(rawPrice) : `$${rawPrice}`)
-                        : "";
-                    productsMap[n.id] = {
-                        title: n.title,
-                        handle: n.handle || "",
-                        image: n.featuredImage?.url || "",
-                        price,
-                    };
-                }
-            });
-        } catch (err) {
-            console.warn("-------------------> [EditLoader] Could not fetch product details:", err);
+            ).then((res) => res.json()).catch(() => ({ data: { nodes: [] } }))
+            : Promise.resolve({ data: { nodes: [] } }),
+        session?.shop
+            ? syncRecentOrdersFromShopify(admin, session.shop).catch(() => 0)
+            : Promise.resolve(0),
+    ]);
+
+    let productsMap = {};
+    const nodes = prodResponse?.data?.nodes || [];
+    nodes.forEach((n) => {
+        if (n && n.id) {
+            const rawPrice = n.variants?.nodes?.[0]?.price;
+            const price = rawPrice
+                ? (String(rawPrice).startsWith("$") ? String(rawPrice) : `$${rawPrice}`)
+                : "";
+            productsMap[n.id] = {
+                title: n.title,
+                handle: n.handle || "",
+                image: n.featuredImage?.url || "",
+                price,
+                variants: n.variants?.nodes?.map((v) => ({ id: v.id })) || [],
+            };
         }
-    }
+    });
 
     const mainProductQtyMap = {};
     if (Array.isArray(config.mainProducts)) {
@@ -201,6 +232,7 @@ export const loader = async ({ request, params }) => {
             image: prod?.image || "",
             price: prod?.price || "",
             quantity: mainProductQtyMap[id] || 1,
+            variants: prod?.variants || [],
         };
     });
 
@@ -213,22 +245,11 @@ export const loader = async ({ request, params }) => {
             image: prod?.image || "",
             price: prod?.price || "",
             quantity: subProductQtyMap[id] || 1,
+            variants: prod?.variants || [],
         };
     });
 
-    const shopTimezone = await getShopTimezone(admin);
-
-    console.log("-------------------> [Open Edit Page] Offer ID:", numericId);
-    console.log("------------------->   Title:", disc.title);
-    console.log("------------------->   Discount:", (config.percentage || "20") + "%");
-    console.log("------------------->   Main Products (" + initialMainProducts.length + "):", initialMainProducts.map((p) => `${p.quantity}x ${p.title}`));
-    console.log("------------------->   Sub Products (" + initialSubProducts.length + "):", initialSubProducts.map((p) => `${p.quantity}x ${p.title}`));
-
-    // Auto-sync recent orders to calculate Total Sales and Total Discounts
-    if (session?.shop) {
-        await syncRecentOrdersFromShopify(admin, session.shop);
-    }
-
+    // Query DB analytics for this offer
     let dbOffer = null;
     try {
         dbOffer = await prisma.pairedOffer.findFirst({
@@ -244,7 +265,10 @@ export const loader = async ({ request, params }) => {
         console.warn("Could not query DB for offer analytics:", e);
     }
 
-    const outputData = {
+    const tEnd = performance.now();
+    console.log(`⏱️ [PairedProducts: Edit Loader] Loaded in ${(tEnd - t0).toFixed(0)}ms for numericId: ${numericId}`);
+
+    return {
         numericId,
         discountNodeId: discountNode.id,
         shopifyStatus: disc.status || "ACTIVE",
@@ -267,31 +291,9 @@ export const loader = async ({ request, params }) => {
             totalDiscountAmount: dbOffer?.totalDiscountAmount || 0,
             recentOrders: dbOffer?.orders || [],
         },
-        shop: session?.shop || "",
-        widgetSettings: null,
+        shop,
+        widgetSettings,
     };
-
-    try {
-        const settingsResponse = await admin.graphql(
-            `#graphql
-            query GetWidgetSettings {
-              shop {
-                metafield(namespace: "stack_up", key: "paired_widget_settings") {
-                  value
-                }
-              }
-            }`
-        );
-        const settingsJson = await settingsResponse.json();
-        const rawMetafield = settingsJson.data?.shop?.metafield?.value;
-        if (rawMetafield) {
-            outputData.widgetSettings = JSON.parse(rawMetafield);
-        }
-    } catch (err) {
-        console.warn("Could not query widget settings:", err);
-    }
-
-    return outputData;
 };
 
 export const action = async ({ request, params }) => {
@@ -333,7 +335,6 @@ export const action = async ({ request, params }) => {
                     data: { status: "EXPIRED" },
                 });
                 console.log("-------------------> 💾 [Deactivate] Synced EXPIRED status to DB for ID:", numericId);
-                const { syncAllActiveOffersToShopMetafield } = await import("../utils/bundleMetafields.server");
                 await syncAllActiveOffersToShopMetafield(admin);
             } catch (dbErr) {
                 console.warn("Could not sync deactivation to DB:", dbErr);
@@ -379,7 +380,6 @@ export const action = async ({ request, params }) => {
                     data: { status: "ACTIVE" },
                 });
                 console.log("-------------------> 💾 [Activate] Synced ACTIVE status to DB for ID:", numericId);
-                const { syncAllActiveOffersToShopMetafield } = await import("../utils/bundleMetafields.server");
                 await syncAllActiveOffersToShopMetafield(admin);
             } catch (dbErr) {
                 console.warn("Could not sync activation to DB:", dbErr);
@@ -424,14 +424,13 @@ export const action = async ({ request, params }) => {
                     where: { numericId },
                 });
                 console.log("-------------------> 💾 [Delete] Removed offer from DB for ID:", numericId);
-                const { syncAllActiveOffersToShopMetafield } = await import("../utils/bundleMetafields.server");
                 await syncAllActiveOffersToShopMetafield(admin);
             } catch (dbErr) {
                 console.warn("Could not delete offer from DB:", dbErr);
             }
 
             console.log("-------------------> 🎉 [EditAction] Offer deleted successfully!");
-            return redirect("/app/paired-products");
+            return redirect("/app/paired-products?deleted=true");
         } catch (err) {
             console.error("-------------------> [EditAction] Error deleting discount:", err);
             return { error: err instanceof Error ? err.message : "Failed to delete offer." };
@@ -506,7 +505,7 @@ export const action = async ({ request, params }) => {
 
     const updateGid = `gid://shopify/DiscountAutomaticApp/${numericId}`;
 
-    const shopTimezone = await getShopTimezone(admin);
+    const shopTimezone = await getShopTimezone(admin, session?.shop);
     const effectiveStartsAt = dateToShopISO(startsAt, "00:00:00", shopTimezone) || new Date().toISOString();
     const effectiveEndsAt = hasEndDate && endsAt ? dateToShopISO(endsAt, "23:59:59", shopTimezone) : null;
 
@@ -657,10 +656,9 @@ export const action = async ({ request, params }) => {
                         },
                     });
 
-                    const { syncAllActiveOffersToShopMetafield } = await import("../utils/bundleMetafields.server");
                     await syncAllActiveOffersToShopMetafield(admin);
                     console.log("-------------------> 🎉 [Save Edit] Successfully recreated discount in Shopify and updated DB!");
-                    return redirect("/app/paired-products");
+                    return redirect("/app/paired-products?updated=true");
                 }
             }
 
@@ -709,10 +707,9 @@ export const action = async ({ request, params }) => {
         }
 
         // Sync updated bundle data to Shop Metafield for instant storefront rendering
-        const { syncAllActiveOffersToShopMetafield } = await import("../utils/bundleMetafields.server");
         await syncAllActiveOffersToShopMetafield(admin);
 
-        return redirect("/app/paired-products");
+        return redirect("/app/paired-products?updated=true");
     } catch (err) {
         console.error("-------------------> [Save Edit Failed] Exception:", err);
         return {
@@ -758,12 +755,24 @@ export default function PairedProductsEdit() {
     const [hasEndDate, setHasEndDate] = useState(data.hasEndDate);
     const [endsAt, setEndsAt] = useState(data.endsAt || "");
 
-    const [isSaved, setIsSaved] = useState(false);
-    const isSubmitting = navigation.state === "submitting";
+    const [isSaving, setIsSaving] = useState(false);
+    const isRedirecting = navigation.state === "loading" && !navigation.location?.pathname?.includes("/edit/");
+    const isSubmitting = (isSaving || navigation.state === "submitting" || (navigation.state === "loading" && navigation.formMethod?.toLowerCase() === "post")) && !isRedirecting;
+
+    // Helper to format selection IDs and variants for Shopify App Bridge ResourcePicker
+    const buildResourceSelection = (products) =>
+        products.map((p) => {
+            const item = { id: p.id };
+            if (Array.isArray(p.variants) && p.variants.length > 0) {
+                item.variants = p.variants.map((v) => ({ id: typeof v === "string" ? v : v.id }));
+            }
+            return item;
+        });
 
     // Resource Picker for Main Products
     const handleOpenMainProductPicker = async () => {
         try {
+            const selection = buildResourceSelection(mainProducts);
             const selected = await shopify.resourcePicker({
                 type: "product",
                 multiple: true,
@@ -773,7 +782,8 @@ export default function PairedProductsEdit() {
                     draft: false,
                     query: "status:active",
                 },
-                initialSelectionIds: mainProducts.map((p) => ({ id: p.id })),
+                selectionIds: selection,
+                initialSelectionIds: selection,
             });
 
             if (selected && Array.isArray(selected)) {
@@ -797,6 +807,9 @@ export default function PairedProductsEdit() {
                             image,
                             price,
                             quantity: existing?.quantity || 1,
+                            variants: p.variants
+                                ? p.variants.map((v) => ({ id: v.id }))
+                                : existing?.variants || [],
                         };
                     })
                 );
@@ -809,6 +822,7 @@ export default function PairedProductsEdit() {
     // Resource Picker for Sub Products
     const handleOpenSubProductPicker = async () => {
         try {
+            const selection = buildResourceSelection(subProducts);
             const selected = await shopify.resourcePicker({
                 type: "product",
                 multiple: true,
@@ -818,7 +832,8 @@ export default function PairedProductsEdit() {
                     draft: false,
                     query: "status:active",
                 },
-                initialSelectionIds: subProducts.map((p) => ({ id: p.id })),
+                selectionIds: selection,
+                initialSelectionIds: selection,
             });
 
             if (selected && Array.isArray(selected)) {
@@ -842,6 +857,9 @@ export default function PairedProductsEdit() {
                             image,
                             price,
                             quantity: existing?.quantity || 1,
+                            variants: p.variants
+                                ? p.variants.map((v) => ({ id: v.id }))
+                                : existing?.variants || [],
                         };
                     })
                 );
@@ -915,7 +933,20 @@ export default function PairedProductsEdit() {
         JSON.stringify(data.initialSubProducts.map((p) => ({ id: p.id, quantity: Number(p.quantity) || 1 })))
     );
 
-    const showSaveBar = isDirty && !isSaved;
+    const showSaveBar = (isDirty || isSubmitting) && !isRedirecting;
+
+    useEffect(() => {
+        if (isRedirecting) {
+            setIsSaving(false);
+            shopify.saveBar?.hide("edit-paired-offer-save-bar");
+        }
+    }, [isRedirecting, shopify]);
+
+    useEffect(() => {
+        if (navigation.state === "idle") {
+            setIsSaving(false);
+        }
+    }, [navigation.state]);
 
     useEffect(() => {
         return () => {
@@ -936,13 +967,13 @@ export default function PairedProductsEdit() {
         setStartsAt(data.startsAt || todayStr);
         setHasEndDate(data.hasEndDate);
         setEndsAt(data.endsAt || "");
-        setIsSaved(false);
+        setIsSaving(false);
         shopify.saveBar?.hide("edit-paired-offer-save-bar");
     };
 
     useEffect(() => {
         if (actionData?.error) {
-            setIsSaved(false);
+            setIsSaving(false);
             shopify.toast.show(actionData.error, { isError: true });
         }
     }, [actionData, shopify]);
@@ -974,8 +1005,7 @@ export default function PairedProductsEdit() {
             return;
         }
 
-        setIsSaved(true);
-        shopify.saveBar?.hide("edit-paired-offer-save-bar");
+        setIsSaving(true);
 
         const formData = new FormData();
         formData.append("intent", "update");
@@ -1030,7 +1060,7 @@ export default function PairedProductsEdit() {
         setStartsAt(data.startsAt || todayStr);
         setHasEndDate(data.hasEndDate);
         setEndsAt(data.endsAt || "");
-        setIsSaved(false);
+        setIsSaving(false);
         shopify.saveBar?.hide("edit-paired-offer-save-bar");
     }, [data, todayStr, shopify]);
 
@@ -1039,7 +1069,7 @@ export default function PairedProductsEdit() {
         (hasEndDate && endsAt && endsAt < todayStr);
 
     const handleDeactivateOffer = () => {
-        setIsSaved(true);
+        setIsSaving(false);
         shopify.saveBar?.hide("edit-paired-offer-save-bar");
         const formData = new FormData();
         formData.append("intent", "deactivate");
@@ -1048,7 +1078,7 @@ export default function PairedProductsEdit() {
     };
 
     const handleActivateOffer = () => {
-        setIsSaved(true);
+        setIsSaving(false);
         shopify.saveBar?.hide("edit-paired-offer-save-bar");
         const formData = new FormData();
         formData.append("intent", "activate");
@@ -1057,7 +1087,7 @@ export default function PairedProductsEdit() {
     };
 
     const handleDeleteOffer = () => {
-        setIsSaved(true);
+        setIsSaving(false);
         shopify.saveBar?.hide("edit-paired-offer-save-bar");
         const formData = new FormData();
         formData.append("intent", "delete");
@@ -1192,15 +1222,15 @@ export default function PairedProductsEdit() {
                     type="button"
                     variant="primary"
                     onClick={handleSubmit}
-                    loading={isSubmitting ? "" : undefined}
-                    disabled={isSubmitting ? "" : undefined}
+                    loading={isSubmitting ? "true" : undefined}
+                    disabled={isSubmitting ? "true" : undefined}
                 >
                     Save
                 </button>
                 <button
                     type="button"
                     onClick={handleDiscard}
-                    disabled={isSubmitting ? "" : undefined}
+                    disabled={isSubmitting ? "true" : undefined}
                 >
                     Discard
                 </button>

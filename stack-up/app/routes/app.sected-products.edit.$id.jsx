@@ -14,27 +14,33 @@ import {
     getShopTodayDate,
     formatDateInShopTimezone,
     dateToShopISO,
+    setShopTimezoneCache,
 } from "../utils/timezone";
 import { syncAllActiveSelectedOffersToShopMetafield } from "../utils/selectedOffersMetafields.server";
 import { syncRecentOrdersFromShopify } from "../utils/orders.server";
 
 export const loader = async ({ request, params }) => {
+    const t0 = performance.now();
     const { admin, session } = await authenticate.admin(request);
     const numericId = params.id;
+    const shop = session?.shop || "";
 
     console.log("-------------------> [SelectedProducts: EditLoader] Loading offer for numericId:", numericId);
 
     let discountNode = null;
+    let shopTimezone = "UTC";
+
     const possibleIds = [
         `gid://shopify/DiscountAutomaticNode/${numericId}`,
         `gid://shopify/DiscountAutomaticApp/${numericId}`,
     ];
 
+    // Single batched query for discountNode + shop timezone
     for (const gid of possibleIds) {
         try {
             const response = await admin.graphql(
                 `#graphql
-                query GetDiscountDetails($id: ID!) {
+                query GetDiscountAndShopDetails($id: ID!) {
                     discountNode(id: $id) {
                         id
                         discount {
@@ -56,12 +62,22 @@ export const loader = async ({ request, params }) => {
                             value
                         }
                     }
+                    shop {
+                        ianaTimezone
+                    }
                 }`,
                 { variables: { id: gid } }
             );
             const json = await response.json();
-            if (json.data?.discountNode?.discount) {
-                discountNode = json.data.discountNode;
+            const data = json.data;
+
+            if (data?.shop?.ianaTimezone) {
+                shopTimezone = data.shop.ianaTimezone;
+                if (shop) setShopTimezoneCache(shop, shopTimezone);
+            }
+
+            if (data?.discountNode?.discount) {
+                discountNode = data.discountNode;
                 break;
             }
         } catch (e) {
@@ -69,15 +85,9 @@ export const loader = async ({ request, params }) => {
         }
     }
 
-    try {
-        await syncRecentOrdersFromShopify(admin, session.shop);
-    } catch (orderSyncErr) {
-        console.warn("Could not sync recent orders in edit loader:", orderSyncErr);
-    }
-
-    let dbFallback = null;
-    try {
-        dbFallback = await prisma.selectedProductOffer.findFirst({
+    // Parallel DB fallback and order sync
+    const [dbFallback] = await Promise.all([
+        prisma.selectedProductOffer.findFirst({
             where: {
                 OR: [
                     { numericId },
@@ -91,10 +101,17 @@ export const loader = async ({ request, params }) => {
                     orderBy: { createdAt: "desc" },
                 },
             },
-        });
-    } catch (e) {
-        console.warn("Could not query DB for offer:", e);
-    }
+        }).catch((e) => {
+            console.warn("Could not query DB for offer:", e);
+            return null;
+        }),
+        shop
+            ? syncRecentOrdersFromShopify(admin, shop).catch((e) => {
+                console.warn("Could not sync recent orders in edit loader:", e);
+                return 0;
+            })
+            : Promise.resolve(0),
+    ]);
 
     if (!discountNode) {
         if (!dbFallback) {
@@ -165,7 +182,7 @@ export const loader = async ({ request, params }) => {
         ]),
     ].filter(Boolean);
 
-    // Fetch live product details from Shopify GraphQL
+    // Fetch live product details including variants from Shopify GraphQL
     const productsMap = {};
     if (allProductIds.length > 0) {
         try {
@@ -180,8 +197,9 @@ export const loader = async ({ request, params }) => {
                             featuredImage {
                                 url
                             }
-                            variants(first: 1) {
+                            variants(first: 50) {
                                 nodes {
+                                    id
                                     price
                                 }
                             }
@@ -203,6 +221,7 @@ export const loader = async ({ request, params }) => {
                         handle: n.handle || "",
                         image: n.featuredImage?.url || "",
                         price,
+                        variants: n.variants?.nodes?.map((v) => ({ id: v.id })) || [],
                     };
                 }
             });
@@ -219,6 +238,7 @@ export const loader = async ({ request, params }) => {
             handle: live?.handle || p.handle || "",
             image: live?.image || p.image || "",
             price: live?.price || p.price || "",
+            variants: live?.variants || p.variants || [],
         };
     });
 
@@ -231,10 +251,12 @@ export const loader = async ({ request, params }) => {
             image: live?.image || p.image || "",
             price: live?.price || p.price || "",
             quantity: Math.max(1, parseInt(p.quantity, 10) || 1),
+            variants: live?.variants || p.variants || [],
         };
     });
 
-    const shopTimezone = await getShopTimezone(admin);
+    const tEnd = performance.now();
+    console.log(`⏱️ [SelectedProducts: EditLoader] Loaded offer ${numericId} in ${(tEnd - t0).toFixed(0)}ms`);
 
     return {
         numericId,
@@ -259,12 +281,12 @@ export const loader = async ({ request, params }) => {
             totalDiscountAmount: dbFallback?.totalDiscountAmount || 0,
             recentOrders: dbFallback?.orders || [],
         },
-        shop: session?.shop || "",
+        shop,
     };
 };
 
 export const action = async ({ request, params }) => {
-    const { admin } = await authenticate.admin(request);
+    const { admin, session } = await authenticate.admin(request);
     const numericId = params.id;
     const formData = await request.formData();
     const intent = formData.get("intent") || "update";
@@ -383,7 +405,7 @@ export const action = async ({ request, params }) => {
                 console.warn("Could not delete from DB:", dbErr);
             }
 
-            return redirect("/app/sected-products");
+            return redirect("/app/sected-products?deleted=true");
         } catch (err) {
             return { error: err instanceof Error ? err.message : "Failed to delete offer." };
         }
@@ -467,7 +489,7 @@ export const action = async ({ request, params }) => {
             products: sanitizedOfferedProducts,
         };
 
-        const shopTimezone = await getShopTimezone(admin);
+        const shopTimezone = await getShopTimezone(admin, session?.shop);
         const effectiveStartsAt = dateToShopISO(startsAt, "00:00:00", shopTimezone) || new Date().toISOString();
         const effectiveEndsAt = hasEndDate && endsAt ? dateToShopISO(endsAt, "23:59:59", shopTimezone) : null;
 
@@ -546,7 +568,7 @@ export const action = async ({ request, params }) => {
             // Sync Shop Metafield
             await syncAllActiveSelectedOffersToShopMetafield(admin);
 
-            return { success: true };
+            return redirect("/app/sected-products?updated=true");
         } catch (err) {
             return {
                 error: err instanceof Error ? err.message : "Failed to update offer.",
@@ -574,29 +596,53 @@ export default function EditSelectedProductOffer() {
     const [combinesWithProduct, setCombinesWithProduct] = useState(data.combinesWith?.productDiscounts || false);
     const [combinesWithShipping, setCombinesWithShipping] = useState(data.combinesWith?.shippingDiscounts || false);
 
-    const [startsAt, setStartsAt] = useState(data.startsAt);
+    const todayStr = getShopTodayDate(data.shopTimezone);
+    const [startsAt, setStartsAt] = useState(data.startsAt || todayStr);
     const [hasEndDate, setHasEndDate] = useState(data.hasEndDate);
-    const [endsAt, setEndsAt] = useState(data.endsAt);
+    const [endsAt, setEndsAt] = useState(data.endsAt || "");
 
-    const [isSaved, setIsSaved] = useState(false);
-    const isSubmitting = navigation.state === "submitting";
+    const [isSaving, setIsSaving] = useState(false);
+    const isRedirecting = navigation.state === "loading" && !navigation.location?.pathname?.includes("/edit/");
+    const isSubmitting = (isSaving || navigation.state === "submitting" || (navigation.state === "loading" && navigation.formMethod?.toLowerCase() === "post")) && !isRedirecting;
+
+    const buildResourceSelection = (products) =>
+        products.map((p) => {
+            const item = { id: p.id };
+            if (Array.isArray(p.variants) && p.variants.length > 0) {
+                item.variants = p.variants.map((v) => ({ id: typeof v === "string" ? v : v.id }));
+            }
+            return item;
+        });
 
     const isDirty = Boolean(
-        title !== data.title ||
+        title.trim() !== data.title ||
         percentage !== data.percentage ||
         combinesWithOrder !== (data.combinesWith?.orderDiscounts || false) ||
         combinesWithProduct !== (data.combinesWith?.productDiscounts || false) ||
         combinesWithShipping !== (data.combinesWith?.shippingDiscounts || false) ||
-        startsAt !== data.startsAt ||
+        startsAt !== (data.startsAt || todayStr) ||
         hasEndDate !== data.hasEndDate ||
-        endsAt !== data.endsAt ||
+        endsAt !== (data.endsAt || "") ||
         JSON.stringify(targetProducts.map((p) => p.id)) !==
         JSON.stringify((data.initialTargetProducts || []).map((p) => p.id)) ||
-        JSON.stringify(offeredProducts.map((p) => ({ id: p.id, qty: p.quantity }))) !==
-        JSON.stringify((data.initialOfferedProducts || []).map((p) => ({ id: p.id, qty: p.quantity })))
+        JSON.stringify(offeredProducts.map((p) => ({ id: p.id, qty: Number(p.quantity) || 1 }))) !==
+        JSON.stringify((data.initialOfferedProducts || []).map((p) => ({ id: p.id, qty: Number(p.quantity) || 1 })))
     );
 
-    const showSaveBar = isDirty && !isSaved;
+    const showSaveBar = (isDirty || isSubmitting) && !isRedirecting;
+
+    useEffect(() => {
+        if (isRedirecting) {
+            setIsSaving(false);
+            shopify.saveBar?.hide("edit-selected-offer-save-bar");
+        }
+    }, [isRedirecting, shopify]);
+
+    useEffect(() => {
+        if (navigation.state === "idle") {
+            setIsSaving(false);
+        }
+    }, [navigation.state]);
 
     useEffect(() => {
         return () => {
@@ -605,13 +651,9 @@ export default function EditSelectedProductOffer() {
     }, [shopify]);
 
     useEffect(() => {
-        if (actionData?.success) {
-            shopify.toast.show("Offer updated successfully");
-            setIsSaved(true);
-            shopify.saveBar?.hide("edit-selected-offer-save-bar");
-        } else if (actionData?.error) {
+        if (actionData?.error) {
+            setIsSaving(false);
             shopify.toast.show(actionData.error, { isError: true });
-            setIsSaved(false);
         }
     }, [actionData, shopify]);
 
@@ -624,22 +666,24 @@ export default function EditSelectedProductOffer() {
         setCombinesWithOrder(data.combinesWith?.orderDiscounts || false);
         setCombinesWithProduct(data.combinesWith?.productDiscounts || false);
         setCombinesWithShipping(data.combinesWith?.shippingDiscounts || false);
-        setStartsAt(data.startsAt);
+        setStartsAt(data.startsAt || todayStr);
         setHasEndDate(data.hasEndDate);
-        setEndsAt(data.endsAt);
-        setIsSaved(false);
+        setEndsAt(data.endsAt || "");
+        setIsSaving(false);
         shopify.saveBar?.hide("edit-selected-offer-save-bar");
     };
 
     // 1. Target Products Picker
     const handleOpenTargetPicker = async () => {
         try {
+            const selection = buildResourceSelection(targetProducts);
             const selected = await shopify.resourcePicker({
                 type: "product",
                 multiple: true,
                 action: "select",
                 filter: { archived: false, draft: false, query: "status:active" },
-                initialSelectionIds: targetProducts.map((p) => ({ id: p.id })),
+                selectionIds: selection,
+                initialSelectionIds: selection,
             });
 
             if (selected && Array.isArray(selected)) {
@@ -655,12 +699,16 @@ export default function EditSelectedProductOffer() {
                         const price = rawPrice
                             ? (String(rawPrice).startsWith("$") ? String(rawPrice) : `$${rawPrice}`)
                             : "";
+                        const existing = targetProducts.find((item) => item.id === p.id);
                         return {
                             id: p.id,
                             title: p.title,
-                            handle: p.handle || "",
+                            handle: p.handle || existing?.handle || "",
                             image,
                             price,
+                            variants: p.variants
+                                ? p.variants.map((v) => ({ id: v.id }))
+                                : existing?.variants || [],
                         };
                     })
                 );
@@ -677,12 +725,14 @@ export default function EditSelectedProductOffer() {
     // 2. Offered Products Picker
     const handleOpenOfferedPicker = async () => {
         try {
+            const selection = buildResourceSelection(offeredProducts);
             const selected = await shopify.resourcePicker({
                 type: "product",
                 multiple: true,
                 action: "select",
                 filter: { archived: false, draft: false, query: "status:active" },
-                initialSelectionIds: offeredProducts.map((p) => ({ id: p.id })),
+                selectionIds: selection,
+                initialSelectionIds: selection,
             });
 
             if (selected && Array.isArray(selected)) {
@@ -702,10 +752,13 @@ export default function EditSelectedProductOffer() {
                         return {
                             id: p.id,
                             title: p.title,
-                            handle: p.handle || "",
+                            handle: p.handle || existing?.handle || "",
                             image,
                             price,
                             quantity: existing?.quantity || 1,
+                            variants: p.variants
+                                ? p.variants.map((v) => ({ id: v.id }))
+                                : existing?.variants || [],
                         };
                     })
                 );
@@ -766,6 +819,8 @@ export default function EditSelectedProductOffer() {
             return;
         }
 
+        setIsSaving(true);
+
         const formData = new FormData();
         formData.append("intent", "update");
         formData.append("discountNodeId", data.discountNodeId);
@@ -809,6 +864,8 @@ export default function EditSelectedProductOffer() {
     };
 
     const handleToggleStatus = () => {
+        setIsSaving(false);
+        shopify.saveBar?.hide("edit-selected-offer-save-bar");
         const formData = new FormData();
         formData.append("intent", data.shopifyStatus === "ACTIVE" ? "deactivate" : "activate");
         formData.append("discountNodeId", data.discountNodeId);
@@ -816,13 +873,13 @@ export default function EditSelectedProductOffer() {
     };
 
     const handleDelete = () => {
+        setIsSaving(false);
+        shopify.saveBar?.hide("edit-selected-offer-save-bar");
         const formData = new FormData();
         formData.append("intent", "delete");
         formData.append("discountNodeId", data.discountNodeId);
         submit(formData, { method: "post" });
     };
-
-    const todayStr = getShopTodayDate(data.shopTimezone);
 
     return (
         <s-page heading={data.title || "Edit Selected Products Offer"}>
@@ -854,15 +911,15 @@ export default function EditSelectedProductOffer() {
                     type="button"
                     variant="primary"
                     onClick={handleSubmit}
-                    loading={isSubmitting ? "" : undefined}
-                    disabled={isSubmitting ? "" : undefined}
+                    loading={isSubmitting ? "true" : undefined}
+                    disabled={isSubmitting ? "true" : undefined}
                 >
                     Save
                 </button>
                 <button
                     type="button"
                     onClick={handleDiscard}
-                    disabled={isSubmitting ? "" : undefined}
+                    disabled={isSubmitting ? "true" : undefined}
                 >
                     Discard
                 </button>

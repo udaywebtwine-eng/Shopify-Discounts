@@ -2,12 +2,18 @@
  * Timezone helpers for Shopify store timezone conversions
  */
 
+const timezoneCache = new Map();
+
 /**
- * Fetch the store's IANA timezone from Shopify GraphQL
+ * Fetch the store's IANA timezone from Shopify GraphQL with memory caching
  * @param {object} admin - Shopify admin GraphQL client
+ * @param {string} [shopDomain] - Shop domain for caching
  * @returns {Promise<string>} e.g. "America/New_York", "Asia/Kolkata", "UTC"
  */
-export async function getShopTimezone(admin) {
+export async function getShopTimezone(admin, shopDomain = "default") {
+  if (shopDomain && timezoneCache.has(shopDomain)) {
+    return timezoneCache.get(shopDomain);
+  }
   try {
     const response = await admin.graphql(
       `#graphql
@@ -18,10 +24,25 @@ export async function getShopTimezone(admin) {
       }`
     );
     const json = await response.json();
-    return json.data?.shop?.ianaTimezone || "UTC";
+    const tz = json.data?.shop?.ianaTimezone || "UTC";
+    if (shopDomain) {
+      timezoneCache.set(shopDomain, tz);
+    }
+    return tz;
   } catch (err) {
     console.warn("Could not query shop ianaTimezone, defaulting to UTC:", err);
     return "UTC";
+  }
+}
+
+/**
+ * Manually set or prime the timezone cache for a shop
+ * @param {string} shopDomain
+ * @param {string} tz
+ */
+export function setShopTimezoneCache(shopDomain, tz) {
+  if (shopDomain && tz) {
+    timezoneCache.set(shopDomain, tz);
   }
 }
 
