@@ -16,24 +16,17 @@ const DEFAULT_SETTINGS = {
     borderColor: "#e5e7eb",
     borderWidth: 1,
     borderRadius: 12,
-    plusIconBg: "#f3f4f6",
-    plusIconColor: "#374151",
     totalBoxBg: "#f9fafb",
-    totalBoxBorderColor: "#e5e7eb",
     badgeBg: "#ede9fe",
     badgeTextColor: "#6d28d9",
     buttonBg: "#111827",
     buttonTextColor: "#ffffff",
-    buttonHoverBg: "#1f2937",
-    accentColor: "#4f46e5",
   },
   display: {
     showWidgetTitle: true,
-    linkProductTitles: true,
     showTotalBox: true,
     showPlusIcon: true,
     showSaleBadge: true,
-    showCheckboxes: true,
   },
 };
 
@@ -173,15 +166,11 @@ export default function PairedProductsCustomize() {
   const [display, setDisplay] = useState(initialSettings.display || DEFAULT_SETTINGS.display);
 
   // Accordion Section Expansion State
-  const [openSections, setOpenSections] = useState({
+  const [expanded, setExpanded] = useState({
     content: true,
     styles: true,
     display: true,
   });
-
-  const toggleSection = (section) => {
-    setOpenSections((prev) => ({ ...prev, [section]: !prev[section] }));
-  };
 
   // Track if changes have been made (Dirty check)
   const isDirty = useMemo(() => {
@@ -264,290 +253,234 @@ export default function PairedProductsCustomize() {
           </s-banner>
 
           {/* 1. CONTENT ACCORDION */}
-          <s-box background="subdued" border="small" borderRadius="base" padding="base">
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                cursor: "pointer",
-                userSelect: "none",
-              }}
-              onClick={() => toggleSection("content")}
+          <s-section>
+            <s-grid
+              gridTemplateColumns="1fr auto"
+              gap="base"
+              alignItems="center"
+              onClick={() => setExpanded((prev) => ({ ...prev, content: !prev.content }))}
+              style={{ cursor: "pointer", userSelect: "none" }}
             >
-              <s-stack direction="inline" gap="small" alignItems="center">
+              <s-stack direction="inline" gap="small-200" alignItems="center">
                 <s-icon type="note" size="small" />
                 <s-heading size="small">Content</s-heading>
               </s-stack>
-              <span style={{ fontSize: "14px", fontWeight: "bold", color: "#6b7280" }}>
-                {openSections.content ? "▲" : "▼"}
-              </span>
-            </div>
+              <s-button
+                accessibilityLabel="Toggle Content section"
+                variant="tertiary"
+                tone="neutral"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setExpanded((prev) => ({ ...prev, content: !prev.content }));
+                }}
+                icon={expanded.content ? "chevron-up" : "chevron-down"}
+              />
+            </s-grid>
 
-            {openSections.content && (
-              <div style={{ marginTop: "16px", display: "flex", flexDirection: "column", gap: "12px" }}>
-                <s-text-field
-                  label="Widget Title"
-                  value={content.heading}
-                  onChange={(e) => setContent({ ...content, heading: e.target.value })}
-                  placeholder="Frequently Bought Together"
-                />
-                <s-text-field
-                  label="Button Text"
-                  value={content.buttonText}
-                  onChange={(e) => setContent({ ...content, buttonText: e.target.value })}
-                  placeholder="Add Both to Cart"
-                />
-                <s-text-field
-                  label="Badge Label (Use {percentage} variable)"
-                  value={content.badgeText}
-                  onChange={(e) => setContent({ ...content, badgeText: e.target.value })}
-                  placeholder="Save {percentage}% OFF"
-                />
-                <s-text-field
-                  label="Sub-Product Prefix"
-                  value={content.subProductLabel}
-                  onChange={(e) => setContent({ ...content, subProductLabel: e.target.value })}
-                  placeholder="Pair with:"
-                />
-              </div>
+            {expanded.content && (
+              <>
+                <s-divider />
+                <s-grid gap="base">
+                  <s-text-field
+                    label="Widget Title"
+                    value={content.heading}
+                    onInput={(e) => setContent({ ...content, heading: e.target.value })}
+                    placeholder="Frequently Bought Together"
+                  ></s-text-field>
+                  <s-text-field
+                    label="Button Text"
+                    value={content.buttonText}
+                    onInput={(e) => setContent({ ...content, buttonText: e.target.value })}
+                    placeholder="Add Both to Cart"
+                  ></s-text-field>
+                  <s-text-field
+                    label="Badge Label (Use {percentage} variable)"
+                    value={content.badgeText}
+                    onInput={(e) => setContent({ ...content, badgeText: e.target.value })}
+                    placeholder="Save {percentage}% OFF"
+                  ></s-text-field>
+                  <s-text-field
+                    label="Sub-Product Prefix"
+                    value={content.subProductLabel}
+                    onInput={(e) => setContent({ ...content, subProductLabel: e.target.value })}
+                    placeholder="Pair with:"
+                  ></s-text-field>
+                </s-grid>
+              </>
             )}
-          </s-box>
+          </s-section>
 
           {/* 2. STYLES ACCORDION */}
-          <s-box background="subdued" border="small" borderRadius="base" padding="base">
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                cursor: "pointer",
-                userSelect: "none",
-              }}
-              onClick={() => toggleSection("styles")}
+          <s-section>
+            <s-grid
+              gridTemplateColumns="1fr auto"
+              gap="base"
+              alignItems="center"
+              onClick={() => setExpanded((prev) => ({ ...prev, styles: !prev.styles }))}
+              style={{ cursor: "pointer", userSelect: "none" }}
             >
-              <s-stack direction="inline" gap="small" alignItems="center">
-                <s-icon type="paint-brush" size="small" />
+              <s-stack direction="inline" gap="small-200" alignItems="center">
+                <s-icon type="color" size="small" />
                 <s-heading size="small">Styles & Colors</s-heading>
               </s-stack>
-              <span style={{ fontSize: "14px", fontWeight: "bold", color: "#6b7280" }}>
-                {openSections.styles ? "▲" : "▼"}
-              </span>
-            </div>
+              <s-button
+                accessibilityLabel="Toggle Styles section"
+                variant="tertiary"
+                tone="neutral"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setExpanded((prev) => ({ ...prev, styles: !prev.styles }));
+                }}
+                icon={expanded.styles ? "chevron-up" : "chevron-down"}
+              />
+            </s-grid>
 
-            {openSections.styles && (
-              <div style={{ marginTop: "16px", display: "flex", flexDirection: "column", gap: "14px" }}>
-                {/* Surface & Border */}
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
-                  <div>
-                    <label style={{ fontSize: "12px", fontWeight: 600, display: "block", marginBottom: "4px" }}>
-                      Card Background
-                    </label>
-                    <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                      <input
-                        type="color"
-                        value={styles.cardSurface}
-                        onChange={(e) => setStyles({ ...styles, cardSurface: e.target.value })}
-                        style={{ width: "36px", height: "36px", border: "none", borderRadius: "4px", cursor: "pointer" }}
-                      />
-                      <span style={{ fontSize: "13px", fontFamily: "monospace" }}>{styles.cardSurface}</span>
-                    </div>
-                  </div>
+            {expanded.styles && (
+              <>
+                <s-divider />
+                <s-grid gap="base">
+                  {/* Surface & Border Colors */}
+                  <s-grid gridTemplateColumns="1fr 1fr" gap="base">
+                    <s-color-field
+                      label="Card Background"
+                      value={styles.cardSurface}
+                      onInput={(e) => setStyles({ ...styles, cardSurface: e.target.value })}
+                      onChange={(e) => setStyles({ ...styles, cardSurface: e.target.value })}
+                    ></s-color-field>
 
-                  <div>
-                    <label style={{ fontSize: "12px", fontWeight: 600, display: "block", marginBottom: "4px" }}>
-                      Border Color
-                    </label>
-                    <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                      <input
-                        type="color"
-                        value={styles.borderColor}
-                        onChange={(e) => setStyles({ ...styles, borderColor: e.target.value })}
-                        style={{ width: "36px", height: "36px", border: "none", borderRadius: "4px", cursor: "pointer" }}
-                      />
-                      <span style={{ fontSize: "13px", fontFamily: "monospace" }}>{styles.borderColor}</span>
-                    </div>
-                  </div>
-                </div>
+                    <s-color-field
+                      label="Border Color"
+                      value={styles.borderColor}
+                      onInput={(e) => setStyles({ ...styles, borderColor: e.target.value })}
+                      onChange={(e) => setStyles({ ...styles, borderColor: e.target.value })}
+                    ></s-color-field>
+                  </s-grid>
 
-                {/* Border Radius & Width */}
-                <div>
-                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "4px" }}>
-                    <label style={{ fontSize: "12px", fontWeight: 600 }}>Corner Radius</label>
-                    <span style={{ fontSize: "12px", color: "#6b7280" }}>{styles.borderRadius}px</span>
-                  </div>
-                  <input
-                    type="range"
-                    min="0"
-                    max="50"
-                    value={styles.borderRadius}
-                    onChange={(e) => setStyles({ ...styles, borderRadius: Number(e.target.value) })}
-                    style={{ width: "100%", accentColor: styles.buttonBg }}
-                  />
-                </div>
+                  {/* Border Radius & Width */}
+                  <s-grid gridTemplateColumns="1fr 1fr" gap="base">
+                    <s-number-field
+                      label="Corner Radius (px)"
+                      value={String(styles.borderRadius)}
+                      min={0}
+                      max={50}
+                      onInput={(e) => setStyles({ ...styles, borderRadius: Number(e.target.value) })}
+                    ></s-number-field>
 
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
-                  <s-text-field
-                    label="Border Width (px)"
-                    type="number"
-                    value={String(styles.borderWidth)}
-                    onChange={(e) => setStyles({ ...styles, borderWidth: Number(e.target.value) })}
-                  />
-                  <div>
-                    <label style={{ fontSize: "12px", fontWeight: 600, display: "block", marginBottom: "4px" }}>
-                      Total Box Background
-                    </label>
-                    <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                      <input
-                        type="color"
-                        value={styles.totalBoxBg}
-                        onChange={(e) => setStyles({ ...styles, totalBoxBg: e.target.value })}
-                        style={{ width: "36px", height: "36px", border: "none", borderRadius: "4px", cursor: "pointer" }}
-                      />
-                      <span style={{ fontSize: "13px", fontFamily: "monospace" }}>{styles.totalBoxBg}</span>
-                    </div>
-                  </div>
-                </div>
+                    <s-number-field
+                      label="Border Width (px)"
+                      value={String(styles.borderWidth)}
+                      min={0}
+                      max={10}
+                      onInput={(e) => setStyles({ ...styles, borderWidth: Number(e.target.value) })}
+                    ></s-number-field>
+                  </s-grid>
 
-                {/* Badge Colors */}
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
-                  <div>
-                    <label style={{ fontSize: "12px", fontWeight: 600, display: "block", marginBottom: "4px" }}>
-                      Badge Background
-                    </label>
-                    <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                      <input
-                        type="color"
-                        value={styles.badgeBg}
-                        onChange={(e) => setStyles({ ...styles, badgeBg: e.target.value })}
-                        style={{ width: "36px", height: "36px", border: "none", borderRadius: "4px", cursor: "pointer" }}
-                      />
-                      <span style={{ fontSize: "13px", fontFamily: "monospace" }}>{styles.badgeBg}</span>
-                    </div>
-                  </div>
+                  {/* Total Box Background */}
+                  <s-color-field
+                    label="Total Box Background"
+                    value={styles.totalBoxBg}
+                    onInput={(e) => setStyles({ ...styles, totalBoxBg: e.target.value })}
+                    onChange={(e) => setStyles({ ...styles, totalBoxBg: e.target.value })}
+                  ></s-color-field>
 
-                  <div>
-                    <label style={{ fontSize: "12px", fontWeight: 600, display: "block", marginBottom: "4px" }}>
-                      Badge Text Color
-                    </label>
-                    <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                      <input
-                        type="color"
-                        value={styles.badgeTextColor}
-                        onChange={(e) => setStyles({ ...styles, badgeTextColor: e.target.value })}
-                        style={{ width: "36px", height: "36px", border: "none", borderRadius: "4px", cursor: "pointer" }}
-                      />
-                      <span style={{ fontSize: "13px", fontFamily: "monospace" }}>{styles.badgeTextColor}</span>
-                    </div>
-                  </div>
-                </div>
+                  <s-divider />
 
-                {/* Action Button Styling */}
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
-                  <div>
-                    <label style={{ fontSize: "12px", fontWeight: 600, display: "block", marginBottom: "4px" }}>
-                      Button Background
-                    </label>
-                    <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                      <input
-                        type="color"
-                        value={styles.buttonBg}
-                        onChange={(e) => setStyles({ ...styles, buttonBg: e.target.value })}
-                        style={{ width: "36px", height: "36px", border: "none", borderRadius: "4px", cursor: "pointer" }}
-                      />
-                      <span style={{ fontSize: "13px", fontFamily: "monospace" }}>{styles.buttonBg}</span>
-                    </div>
-                  </div>
+                  {/* Badge Colors */}
+                  <s-grid gridTemplateColumns="1fr 1fr" gap="base">
+                    <s-color-field
+                      label="Badge Background"
+                      value={styles.badgeBg}
+                      onInput={(e) => setStyles({ ...styles, badgeBg: e.target.value })}
+                      onChange={(e) => setStyles({ ...styles, badgeBg: e.target.value })}
+                    ></s-color-field>
 
-                  <div>
-                    <label style={{ fontSize: "12px", fontWeight: 600, display: "block", marginBottom: "4px" }}>
-                      Button Text Color
-                    </label>
-                    <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                      <input
-                        type="color"
-                        value={styles.buttonTextColor}
-                        onChange={(e) => setStyles({ ...styles, buttonTextColor: e.target.value })}
-                        style={{ width: "36px", height: "36px", border: "none", borderRadius: "4px", cursor: "pointer" }}
-                      />
-                      <span style={{ fontSize: "13px", fontFamily: "monospace" }}>{styles.buttonTextColor}</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
+                    <s-color-field
+                      label="Badge Text Color"
+                      value={styles.badgeTextColor}
+                      onInput={(e) => setStyles({ ...styles, badgeTextColor: e.target.value })}
+                      onChange={(e) => setStyles({ ...styles, badgeTextColor: e.target.value })}
+                    ></s-color-field>
+                  </s-grid>
+
+                  <s-divider />
+
+                  {/* Action Button Styling */}
+                  <s-grid gridTemplateColumns="1fr 1fr" gap="base">
+                    <s-color-field
+                      label="Button Background"
+                      value={styles.buttonBg}
+                      onInput={(e) => setStyles({ ...styles, buttonBg: e.target.value })}
+                      onChange={(e) => setStyles({ ...styles, buttonBg: e.target.value })}
+                    ></s-color-field>
+
+                    <s-color-field
+                      label="Button Text Color"
+                      value={styles.buttonTextColor}
+                      onInput={(e) => setStyles({ ...styles, buttonTextColor: e.target.value })}
+                      onChange={(e) => setStyles({ ...styles, buttonTextColor: e.target.value })}
+                    ></s-color-field>
+                  </s-grid>
+                </s-grid>
+              </>
             )}
-          </s-box>
+          </s-section>
 
           {/* 3. DISPLAY SETTINGS (VISIBILITY TOGGLES) */}
-          <s-box background="subdued" border="small" borderRadius="base" padding="base">
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                cursor: "pointer",
-                userSelect: "none",
-              }}
-              onClick={() => toggleSection("display")}
+          <s-section>
+            <s-grid
+              gridTemplateColumns="1fr auto"
+              gap="base"
+              alignItems="center"
+              onClick={() => setExpanded((prev) => ({ ...prev, display: !prev.display }))}
+              style={{ cursor: "pointer", userSelect: "none" }}
             >
-              <s-stack direction="inline" gap="small" alignItems="center">
-                <s-icon type="visibility" size="small" />
+              <s-stack direction="inline" gap="small-200" alignItems="center">
+                <s-icon type="dns-settings" size="small" />
                 <s-heading size="small">Display Settings</s-heading>
               </s-stack>
-              <span style={{ fontSize: "14px", fontWeight: "bold", color: "#6b7280" }}>
-                {openSections.display ? "▲" : "▼"}
-              </span>
-            </div>
+              <s-button
+                accessibilityLabel="Toggle Display section"
+                variant="tertiary"
+                tone="neutral"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setExpanded((prev) => ({ ...prev, display: !prev.display }));
+                }}
+                icon={expanded.display ? "chevron-up" : "chevron-down"}
+              />
+            </s-grid>
 
-            {openSections.display && (
-              <div style={{ marginTop: "16px", display: "flex", flexDirection: "column", gap: "10px" }}>
-                <label style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "13px", cursor: "pointer" }}>
-                  <input
-                    type="checkbox"
-                    checked={display.showWidgetTitle}
+            {expanded.display && (
+              <>
+                <s-divider />
+                <s-grid gap="base">
+                  <s-checkbox
+                    label="Show widget title"
+                    checked={Boolean(display.showWidgetTitle)}
                     onChange={(e) => setDisplay({ ...display, showWidgetTitle: e.target.checked })}
-                  />
-                  <span>Show widget title</span>
-                </label>
+                  ></s-checkbox>
 
-                <label style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "13px", cursor: "pointer" }}>
-                  <input
-                    type="checkbox"
-                    checked={display.linkProductTitles}
-                    onChange={(e) => setDisplay({ ...display, linkProductTitles: e.target.checked })}
-                  />
-                  <span>Link product titles to product page</span>
-                </label>
-
-                <label style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "13px", cursor: "pointer" }}>
-                  <input
-                    type="checkbox"
-                    checked={display.showTotalBox}
+                  <s-checkbox
+                    label="Show total & savings summary box"
+                    checked={Boolean(display.showTotalBox)}
                     onChange={(e) => setDisplay({ ...display, showTotalBox: e.target.checked })}
-                  />
-                  <span>Show total & savings summary box</span>
-                </label>
+                  ></s-checkbox>
 
-                <label style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "13px", cursor: "pointer" }}>
-                  <input
-                    type="checkbox"
-                    checked={display.showPlusIcon}
+                  <s-checkbox
+                    label="Show plus (+) separator icon"
+                    checked={Boolean(display.showPlusIcon)}
                     onChange={(e) => setDisplay({ ...display, showPlusIcon: e.target.checked })}
-                  />
-                  <span>Show plus (+) separator icon</span>
-                </label>
+                  ></s-checkbox>
 
-                <label style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "13px", cursor: "pointer" }}>
-                  <input
-                    type="checkbox"
-                    checked={display.showSaleBadge}
+                  <s-checkbox
+                    label="Show discount sale badge"
+                    checked={Boolean(display.showSaleBadge)}
                     onChange={(e) => setDisplay({ ...display, showSaleBadge: e.target.checked })}
-                  />
-                  <span>Show discount sale badge</span>
-                </label>
-              </div>
+                  ></s-checkbox>
+                </s-grid>
+              </>
             )}
-          </s-box>
+          </s-section>
         </div>
 
         {/* ===================== RIGHT COLUMN: LIVE STOREFRONT PREVIEW ===================== */}
@@ -826,26 +759,27 @@ export default function PairedProductsCustomize() {
                         <span style={{ fontSize: "13px", color: "#94a3b8", textDecoration: "line-through" }}>$72.00</span>
                       </div>
                     </div>
-                    <div style={{ textAlign: "right" }}>
-                      <span
-                        style={{
-                          background: "linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%)",
-                          color: "#065f46",
-                          border: "1px solid rgba(16, 185, 129, 0.25)",
-                          fontSize: "11px",
-                          fontWeight: 700,
-                          padding: "5px 10px",
-                          borderRadius: "20px",
-                          display: "inline-flex",
-                          alignItems: "center",
-                          gap: "4px",
-                          boxShadow: "0 1px 2px rgba(16, 185, 129, 0.08)",
-                        }}
-                      >
-                        <span>⚡</span>
-                        <span>Save $14.40 (20% OFF)</span>
-                      </span>
-                    </div>
+                    {display.showSaleBadge && (
+                      <div style={{ textAlign: "right" }}>
+                        <span
+                          style={{
+                            background: styles.badgeBg || "#ede9fe",
+                            color: styles.badgeTextColor || "#6d28d9",
+                            fontSize: "11px",
+                            fontWeight: 700,
+                            padding: "5px 10px",
+                            borderRadius: "20px",
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: "4px",
+                            boxShadow: "0 1px 2px rgba(0, 0, 0, 0.05)",
+                          }}
+                        >
+                          <span>⚡</span>
+                          <span>{content.badgeText ? content.badgeText.replace("{percentage}", "20") : "Save 20% OFF"}</span>
+                        </span>
+                      </div>
+                    )}
                   </div>
                 )}
 
