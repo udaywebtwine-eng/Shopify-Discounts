@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import {
   useLoaderData,
   useActionData,
@@ -9,7 +9,16 @@ import {
 import { useAppBridge, SaveBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
-import { getShopTimezone, getShopTodayDate, dateToShopISO, setShopTimezoneCache } from "../utils/timezone";
+import {
+  getShopTimezone,
+  getShopTodayDate,
+  getShopCurrentTime,
+  formatTime12h,
+  getTimezoneAbbr,
+  generateTimeOptions,
+  dateToShopISO,
+  setShopTimezoneCache,
+} from "../utils/timezone";
 import { syncAllActiveOffersToShopMetafield } from "../utils/bundleMetafields.server";
 import WidgetPreview from "./components/Preview/WidgetPreview";
 
@@ -88,7 +97,9 @@ export const loader = async ({ request }) => {
   const tEnd = performance.now();
   console.log(`⏱️ [PairedProducts: Create Loader] Loaded in ${(tEnd - t0).toFixed(0)}ms (Single batched GraphQL call)`);
 
-  return { functionId: functionId || cachedFunctionId, shopTimezone, shop, widgetSettings };
+  const timezoneAbbr = getTimezoneAbbr(shopTimezone);
+  const currentTime = getShopCurrentTime(shopTimezone);
+  return { functionId: functionId || cachedFunctionId, shopTimezone, timezoneAbbr, currentTime, shop, widgetSettings };
 };
 
 export const action = async ({ request }) => {
@@ -107,9 +118,11 @@ export const action = async ({ request }) => {
   const combinesWithOrder = formData.get("combinesWithOrder") === "true";
   const combinesWithProduct = formData.get("combinesWithProduct") === "true";
   const combinesWithShipping = formData.get("combinesWithShipping") === "true";
-  const startsAt = formData.get("startsAt") || new Date().toISOString();
+  const startsAtDate = (formData.get("startsAtDate") || formData.get("startsAt") || "").trim();
+  const startsAtTime = (formData.get("startsAtTime") || "00:00:00").trim();
   const hasEndDate = formData.get("hasEndDate") === "true";
-  const endsAt = hasEndDate && formData.get("endsAt") ? formData.get("endsAt") : null;
+  const endsAtDate = hasEndDate ? (formData.get("endsAtDate") || formData.get("endsAt") || "").trim() : null;
+  const endsAtTime = hasEndDate ? (formData.get("endsAtTime") || "23:59:59").trim() : null;
   const functionId = formData.get("functionId");
 
   if (!title) {
@@ -144,12 +157,21 @@ export const action = async ({ request }) => {
     return { error: "Please select at least one Sub / Add-on Product." };
   }
 
-  if (hasEndDate && (!endsAt || !endsAt.trim())) {
+  if (!startsAtDate) {
+    return { error: "Please enter a start date." };
+  }
+
+  if (hasEndDate && !endsAtDate) {
     return { error: "Please enter an end date." };
   }
 
-  if (hasEndDate && endsAt && startsAt && endsAt < startsAt) {
-    return { error: "End date must be on or after start date." };
+  if (hasEndDate && endsAtDate && startsAtDate) {
+    if (endsAtDate < startsAtDate) {
+      return { error: "End date must be on or after start date." };
+    }
+    if (endsAtDate === startsAtDate && endsAtTime <= startsAtTime) {
+      return { error: "End time must be after start time on the same day." };
+    }
   }
 
   const configPayload = {
@@ -182,8 +204,8 @@ export const action = async ({ request }) => {
     functionId || "gid://shopify/ShopifyFunction/paired-products-discount";
 
   const shopTimezone = await getShopTimezone(admin, session?.shop);
-  const effectiveStartsAt = dateToShopISO(startsAt, "00:00:00", shopTimezone) || new Date().toISOString();
-  const effectiveEndsAt = hasEndDate && endsAt ? dateToShopISO(endsAt, "23:59:59", shopTimezone) : undefined;
+  const effectiveStartsAt = dateToShopISO(startsAtDate, startsAtTime, shopTimezone) || new Date().toISOString();
+  const effectiveEndsAt = hasEndDate && endsAtDate ? dateToShopISO(endsAtDate, endsAtTime, shopTimezone) : undefined;
 
   const variables = {
     automaticAppDiscount: {
@@ -214,8 +236,8 @@ export const action = async ({ request }) => {
   console.log("------------------->   Percentage:", percentage);
   console.log("------------------->   Main Product IDs:", mainProductIds);
   console.log("------------------->   Sub Product IDs:", subProductIds);
-  console.log("------------------->   Starts At:", startsAt);
-  console.log("------------------->   Ends At:", endsAt);
+  console.log("------------------->   Starts At:", effectiveStartsAt);
+  console.log("------------------->   Ends At:", effectiveEndsAt);
   console.log("------------------->   Function ID:", effectiveFunctionId);
 
   try {
@@ -279,7 +301,7 @@ export const action = async ({ request }) => {
 };
 
 export default function CreatePairedProductsOffer() {
-  const { functionId, shopTimezone, shop, widgetSettings } = useLoaderData();
+  const { functionId, shopTimezone, timezoneAbbr, currentTime, shop, widgetSettings } = useLoaderData();
   const actionData = useActionData();
   const navigation = useNavigation();
   const submit = useSubmit();
@@ -303,9 +325,16 @@ export default function CreatePairedProductsOffer() {
 
   // Dates in shop's timezone
   const todayStr = getShopTodayDate(shopTimezone);
-  const [startsAt, setStartsAt] = useState(todayStr);
+  const defaultStartTime = currentTime || "00:00:00";
+  const [startsAtDate, setStartsAtDate] = useState(todayStr);
+  const [startsAtTime, setStartsAtTime] = useState(defaultStartTime);
   const [hasEndDate, setHasEndDate] = useState(false);
-  const [endsAt, setEndsAt] = useState("");
+  const [endsAtDate, setEndsAtDate] = useState("");
+  const [endsAtTime, setEndsAtTime] = useState("23:59:59");
+  const tzAbbr = timezoneAbbr || getTimezoneAbbr(shopTimezone);
+
+  const startTimeOptions = useMemo(() => generateTimeOptions(false, defaultStartTime), [defaultStartTime]);
+  const endTimeOptions = useMemo(() => generateTimeOptions(true), []);
 
   // Helper to format selection IDs and variants for Shopify App Bridge ResourcePicker
   const buildResourceSelection = (products) =>
@@ -477,9 +506,11 @@ export default function CreatePairedProductsOffer() {
     combinesWithOrder ||
     combinesWithProduct ||
     combinesWithShipping ||
-    startsAt !== todayStr ||
+    startsAtDate !== todayStr ||
+    startsAtTime !== defaultStartTime ||
     hasEndDate ||
-    endsAt !== ""
+    endsAtDate !== "" ||
+    endsAtTime !== "23:59:59"
   );
 
   const showSaveBar = (isDirty || isSubmitting) && !isRedirecting;
@@ -513,9 +544,11 @@ export default function CreatePairedProductsOffer() {
     setCombinesWithOrder(false);
     setCombinesWithProduct(false);
     setCombinesWithShipping(false);
-    setStartsAt(todayStr);
+    setStartsAtDate(todayStr);
+    setStartsAtTime(defaultStartTime);
     setHasEndDate(false);
-    setEndsAt("");
+    setEndsAtDate("");
+    setEndsAtTime("23:59:59");
     setIsSaving(false);
     shopify.saveBar?.hide("create-paired-offer-save-bar");
   };
@@ -545,13 +578,23 @@ export default function CreatePairedProductsOffer() {
       shopify.toast.show("Please select at least one Sub / Add-on Product", { isError: true });
       return;
     }
-    if (hasEndDate && (!endsAt || !endsAt.trim())) {
+    if (!startsAtDate || !startsAtDate.trim()) {
+      shopify.toast.show("Please enter a start date", { isError: true });
+      return;
+    }
+    if (hasEndDate && (!endsAtDate || !endsAtDate.trim())) {
       shopify.toast.show("Please enter an end date", { isError: true });
       return;
     }
-    if (hasEndDate && endsAt && startsAt && endsAt < startsAt) {
-      shopify.toast.show("End date must be on or after start date", { isError: true });
-      return;
+    if (hasEndDate && endsAtDate && startsAtDate) {
+      if (endsAtDate < startsAtDate) {
+        shopify.toast.show("End date must be on or after start date", { isError: true });
+        return;
+      }
+      if (endsAtDate === startsAtDate && endsAtTime <= startsAtTime) {
+        shopify.toast.show("End time must be after start time on the same day", { isError: true });
+        return;
+      }
     }
 
     setIsSaving(true);
@@ -588,10 +631,14 @@ export default function CreatePairedProductsOffer() {
     formData.append("combinesWithOrder", String(combinesWithOrder));
     formData.append("combinesWithProduct", String(combinesWithProduct));
     formData.append("combinesWithShipping", String(combinesWithShipping));
-    formData.append("startsAt", startsAt);
+    formData.append("startsAtDate", startsAtDate);
+    formData.append("startsAtTime", startsAtTime);
+    formData.append("startsAt", startsAtDate);
     formData.append("hasEndDate", String(hasEndDate));
-    if (hasEndDate && endsAt) {
-      formData.append("endsAt", endsAt);
+    if (hasEndDate && endsAtDate) {
+      formData.append("endsAtDate", endsAtDate);
+      formData.append("endsAtTime", endsAtTime);
+      formData.append("endsAt", endsAtDate);
     }
     if (functionId) {
       formData.append("functionId", functionId);
@@ -858,26 +905,28 @@ export default function CreatePairedProductsOffer() {
                 gridTemplateColumns="repeat(2, 1fr)"
                 gap="base"
               >
-                {/* <s-grid-item gridColumn={hasEndDate ? "span 1" : "span 2"}> */}
                 <s-grid-item gridColumn="span 1">
                   <s-date-field
                     label="Start date"
-                    value={startsAt || ""}
+                    value={startsAtDate || ""}
                     allow={`${todayStr}--`}
-                    onChange={(e) => setStartsAt(e.target.value)}
+                    onChange={(e) => setStartsAtDate(e.target.value)}
                   ></s-date-field>
                 </s-grid-item>
 
-                {hasEndDate && (
-                  <s-grid-item gridColumn="span 1">
-                    <s-date-field
-                      label="End date"
-                      value={endsAt || ""}
-                      allow={`${startsAt || todayStr}--`}
-                      onChange={(e) => setEndsAt(e.target.value)}
-                    ></s-date-field>
-                  </s-grid-item>
-                )}
+                <s-grid-item gridColumn="span 1">
+                  <s-select
+                    label={`Start time (${tzAbbr})`}
+                    value={startsAtTime}
+                    onChange={(e) => setStartsAtTime(e.target.value)}
+                  >
+                    {startTimeOptions.map((opt) => (
+                      <s-option key={opt.value} value={opt.value}>
+                        {opt.label}
+                      </s-option>
+                    ))}
+                  </s-select>
+                </s-grid-item>
 
                 <s-grid-item gridColumn="span 2">
                   <s-checkbox
@@ -887,11 +936,39 @@ export default function CreatePairedProductsOffer() {
                       const checked = e.currentTarget.checked;
                       setHasEndDate(checked);
                       if (!checked) {
-                        setEndsAt("");
+                        setEndsAtDate("");
+                        setEndsAtTime("23:59:59");
                       }
                     }}
                   ></s-checkbox>
                 </s-grid-item>
+
+                {hasEndDate && (
+                  <>
+                    <s-grid-item gridColumn="span 1">
+                      <s-date-field
+                        label="End date"
+                        value={endsAtDate || ""}
+                        allow={`${startsAtDate || todayStr}--`}
+                        onChange={(e) => setEndsAtDate(e.target.value)}
+                      ></s-date-field>
+                    </s-grid-item>
+
+                    <s-grid-item gridColumn="span 1">
+                      <s-select
+                        label={`End time (${tzAbbr})`}
+                        value={endsAtTime}
+                        onChange={(e) => setEndsAtTime(e.target.value)}
+                      >
+                        {endTimeOptions.map((opt) => (
+                          <s-option key={opt.value} value={opt.value}>
+                            {opt.label}
+                          </s-option>
+                        ))}
+                      </s-select>
+                    </s-grid-item>
+                  </>
+                )}
               </s-grid>
             </s-stack>
           </s-section>
@@ -1036,8 +1113,8 @@ export default function CreatePairedProductsOffer() {
           <s-stack gap="tight">
             <s-text weight="bold">Active dates</s-text>
             <s-paragraph tone="subdued">
-              • Starts {startsAt || todayStr}
-              {hasEndDate && endsAt ? ` • Ends ${endsAt}` : ""}
+              • Starts {startsAtDate || todayStr} at {formatTime12h(startsAtTime)} ({tzAbbr})
+              {hasEndDate && endsAtDate ? ` • Ends ${endsAtDate} at ${formatTime12h(endsAtTime)} (${tzAbbr})` : ""}
             </s-paragraph>
           </s-stack>
 

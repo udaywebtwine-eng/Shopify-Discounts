@@ -1,4 +1,5 @@
 import prisma from "../db.server.js";
+import { computeOfferStatus } from "./timezone.js";
 
 /**
  * Helper to sync active paired product bundle offers to a single Shop Metafield.
@@ -19,10 +20,19 @@ export async function syncAllActiveOffersToShopMetafield(admin) {
     const shopId = shopJson.data?.shop?.id;
     if (!shopId) return;
 
-    // Fetch all active paired offers from DB
-    const activeOffers = await prisma.pairedOffer.findMany({
-      where: { status: "ACTIVE" },
+    // Fetch all paired offers from DB that are not manually deactivated
+    const allOffers = await prisma.pairedOffer.findMany({
+      where: { status: { not: "EXPIRED" } },
     });
+    const activeOffers = allOffers.filter((o) => computeOfferStatus(o) === "ACTIVE");
+
+    // Background sync of DB status if real-time status changed
+    for (const o of allOffers) {
+      const realStatus = computeOfferStatus(o);
+      if (realStatus !== o.status && o.status !== "EXPIRED") {
+        prisma.pairedOffer.update({ where: { id: o.id }, data: { status: realStatus } }).catch(() => {});
+      }
+    }
 
     // Collect all sub-product IDs that need real variant IDs
     const subProductIdsToFetch = new Set();

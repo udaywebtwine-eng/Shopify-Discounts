@@ -3,7 +3,7 @@ import { useLoaderData, useSubmit, useActionData, useSearchParams, useNavigation
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
-import { getShopTimezone, formatDateInShopTimezone } from "../utils/timezone";
+import { getShopTimezone, formatDateInShopTimezone, computeOfferStatus } from "../utils/timezone";
 import { syncAllActiveSelectedOffersToShopMetafield } from "../utils/selectedOffersMetafields.server";
 
 export const loader = async ({ request }) => {
@@ -42,6 +42,20 @@ export const loader = async ({ request }) => {
             offeredCount = 0;
         }
 
+        const computedStatus = computeOfferStatus({
+            startsAt: dbo.startsAt,
+            endsAt: dbo.endsAt,
+            status: dbo.status,
+        });
+
+        // If status changed in real-time (e.g. SCHEDULED -> ACTIVE or ACTIVE -> EXPIRED), sync DB record
+        if (computedStatus !== dbo.status && dbo.status !== "EXPIRED") {
+            prisma.selectedProductOffer.update({
+                where: { id: dbo.id },
+                data: { status: computedStatus },
+            }).catch((err) => console.warn("Could not auto-update selected offer status in DB:", err));
+        }
+
         return {
             id: dbo.discountId,
             numericId: dbo.numericId,
@@ -50,7 +64,7 @@ export const loader = async ({ request }) => {
             targetCount,
             offeredCount,
             productCount: offeredCount,
-            status: dbo.status || "ACTIVE",
+            status: computedStatus,
             combinesWith: {
                 orderDiscounts: dbo.combinesWithOrder,
                 productDiscounts: dbo.combinesWithProduct,

@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import {
     useLoaderData,
     useActionData,
@@ -13,7 +13,12 @@ import {
     getShopTimezone,
     getShopTodayDate,
     formatDateInShopTimezone,
+    formatTimeInShopTimezone,
+    formatTime12h,
+    getTimezoneAbbr,
+    generateTimeOptions,
     dateToShopISO,
+    computeOfferStatus,
     setShopTimezoneCache,
 } from "../utils/timezone";
 import { syncAllActiveSelectedOffersToShopMetafield } from "../utils/selectedOffersMetafields.server";
@@ -269,10 +274,15 @@ export const loader = async ({ request, params }) => {
             productDiscounts: false,
             shippingDiscounts: false,
         },
+        startsAtDate: disc.startsAt ? formatDateInShopTimezone(disc.startsAt, shopTimezone) : "",
+        startsAtTime: disc.startsAt ? formatTimeInShopTimezone(disc.startsAt, shopTimezone, "00:00:00") : "00:00:00",
+        endsAtDate: disc.endsAt ? formatDateInShopTimezone(disc.endsAt, shopTimezone) : "",
+        endsAtTime: disc.endsAt ? formatTimeInShopTimezone(disc.endsAt, shopTimezone, "23:59:59") : "23:59:59",
         startsAt: disc.startsAt ? formatDateInShopTimezone(disc.startsAt, shopTimezone) : "",
         endsAt: disc.endsAt ? formatDateInShopTimezone(disc.endsAt, shopTimezone) : "",
         hasEndDate: Boolean(disc.endsAt),
         shopTimezone,
+        timezoneAbbr: getTimezoneAbbr(shopTimezone),
         initialTargetProducts,
         initialOfferedProducts,
         analytics: {
@@ -423,9 +433,11 @@ export const action = async ({ request, params }) => {
         const combinesWithOrder = formData.get("combinesWithOrder") === "true";
         const combinesWithProduct = formData.get("combinesWithProduct") === "true";
         const combinesWithShipping = formData.get("combinesWithShipping") === "true";
-        const startsAt = formData.get("startsAt");
+        const startsAtDate = (formData.get("startsAtDate") || formData.get("startsAt") || "").trim();
+        const startsAtTime = (formData.get("startsAtTime") || "00:00:00").trim();
         const hasEndDate = formData.get("hasEndDate") === "true";
-        const endsAt = hasEndDate && formData.get("endsAt") ? formData.get("endsAt") : null;
+        const endsAtDate = hasEndDate ? (formData.get("endsAtDate") || formData.get("endsAt") || "").trim() : null;
+        const endsAtTime = hasEndDate ? (formData.get("endsAtTime") || "23:59:59").trim() : null;
         const discountNodeId = formData.get("discountNodeId") || `gid://shopify/DiscountAutomaticNode/${numericId}`;
 
         if (!title) {
@@ -452,11 +464,19 @@ export const action = async ({ request, params }) => {
             return { error: "Please select at least one Recommended Add-On Product." };
         }
 
-        if (hasEndDate && (!endsAt || !endsAt.trim())) {
+        if (!startsAtDate) {
+            return { error: "Please enter a start date." };
+        }
+        if (hasEndDate && !endsAtDate) {
             return { error: "Please enter an end date." };
         }
-        if (hasEndDate && endsAt && startsAt && endsAt < startsAt) {
-            return { error: "End date must be on or after start date." };
+        if (hasEndDate && endsAtDate && startsAtDate) {
+            if (endsAtDate < startsAtDate) {
+                return { error: "End date must be on or after start date." };
+            }
+            if (endsAtDate === startsAtDate && endsAtTime <= startsAtTime) {
+                return { error: "End time must be after start time on the same day." };
+            }
         }
 
         const sanitizedTargetProducts = targetProducts.map((p) => ({
@@ -490,8 +510,8 @@ export const action = async ({ request, params }) => {
         };
 
         const shopTimezone = await getShopTimezone(admin, session?.shop);
-        const effectiveStartsAt = dateToShopISO(startsAt, "00:00:00", shopTimezone) || new Date().toISOString();
-        const effectiveEndsAt = hasEndDate && endsAt ? dateToShopISO(endsAt, "23:59:59", shopTimezone) : null;
+        const effectiveStartsAt = dateToShopISO(startsAtDate, startsAtTime, shopTimezone) || new Date().toISOString();
+        const effectiveEndsAt = hasEndDate && endsAtDate ? dateToShopISO(endsAtDate, endsAtTime, shopTimezone) : null;
 
         const updateVariables = {
             id: discountNodeId,
@@ -597,9 +617,23 @@ export default function EditSelectedProductOffer() {
     const [combinesWithShipping, setCombinesWithShipping] = useState(data.combinesWith?.shippingDiscounts || false);
 
     const todayStr = getShopTodayDate(data.shopTimezone);
-    const [startsAt, setStartsAt] = useState(data.startsAt || todayStr);
+    const initialStartDate = data.startsAtDate || data.startsAt || todayStr;
+    const minStartDate = initialStartDate && initialStartDate < todayStr ? initialStartDate : todayStr;
+    const [startsAtDate, setStartsAtDate] = useState(initialStartDate);
+    const [startsAtTime, setStartsAtTime] = useState(data.startsAtTime || "00:00:00");
     const [hasEndDate, setHasEndDate] = useState(data.hasEndDate);
-    const [endsAt, setEndsAt] = useState(data.endsAt || "");
+    const [endsAtDate, setEndsAtDate] = useState(data.endsAtDate || data.endsAt || "");
+    const [endsAtTime, setEndsAtTime] = useState(data.endsAtTime || "23:59:59");
+    const tzAbbr = data.timezoneAbbr || getTimezoneAbbr(data.shopTimezone);
+
+    const startTimeOptions = useMemo(
+        () => generateTimeOptions(false, data.startsAtTime),
+        [data.startsAtTime]
+    );
+    const endTimeOptions = useMemo(
+        () => generateTimeOptions(true, data.endsAtTime),
+        [data.endsAtTime]
+    );
 
     const [isSaving, setIsSaving] = useState(false);
     const isRedirecting = navigation.state === "loading" && !navigation.location?.pathname?.includes("/edit/");
@@ -620,9 +654,11 @@ export default function EditSelectedProductOffer() {
         combinesWithOrder !== (data.combinesWith?.orderDiscounts || false) ||
         combinesWithProduct !== (data.combinesWith?.productDiscounts || false) ||
         combinesWithShipping !== (data.combinesWith?.shippingDiscounts || false) ||
-        startsAt !== (data.startsAt || todayStr) ||
+        startsAtDate !== (data.startsAtDate || data.startsAt || todayStr) ||
+        startsAtTime !== (data.startsAtTime || "00:00:00") ||
         hasEndDate !== data.hasEndDate ||
-        endsAt !== (data.endsAt || "") ||
+        endsAtDate !== (data.endsAtDate || data.endsAt || "") ||
+        (hasEndDate && endsAtTime !== (data.endsAtTime || "23:59:59")) ||
         JSON.stringify(targetProducts.map((p) => p.id)) !==
         JSON.stringify((data.initialTargetProducts || []).map((p) => p.id)) ||
         JSON.stringify(offeredProducts.map((p) => ({ id: p.id, qty: Number(p.quantity) || 1 }))) !==
@@ -666,9 +702,11 @@ export default function EditSelectedProductOffer() {
         setCombinesWithOrder(data.combinesWith?.orderDiscounts || false);
         setCombinesWithProduct(data.combinesWith?.productDiscounts || false);
         setCombinesWithShipping(data.combinesWith?.shippingDiscounts || false);
-        setStartsAt(data.startsAt || todayStr);
+        setStartsAtDate(data.startsAtDate || data.startsAt || todayStr);
+        setStartsAtTime(data.startsAtTime || "00:00:00");
         setHasEndDate(data.hasEndDate);
-        setEndsAt(data.endsAt || "");
+        setEndsAtDate(data.endsAtDate || data.endsAt || "");
+        setEndsAtTime(data.endsAtTime || "23:59:59");
         setIsSaving(false);
         shopify.saveBar?.hide("edit-selected-offer-save-bar");
     };
@@ -810,13 +848,23 @@ export default function EditSelectedProductOffer() {
             shopify.toast.show("Please select at least one Recommended Add-On Product", { isError: true });
             return;
         }
-        if (hasEndDate && (!endsAt || !endsAt.trim())) {
+        if (!startsAtDate || !startsAtDate.trim()) {
+            shopify.toast.show("Please enter a start date", { isError: true });
+            return;
+        }
+        if (hasEndDate && (!endsAtDate || !endsAtDate.trim())) {
             shopify.toast.show("Please enter an end date", { isError: true });
             return;
         }
-        if (hasEndDate && endsAt && startsAt && endsAt < startsAt) {
-            shopify.toast.show("End date must be on or after start date", { isError: true });
-            return;
+        if (hasEndDate && endsAtDate && startsAtDate) {
+            if (endsAtDate < startsAtDate) {
+                shopify.toast.show("End date must be on or after start date", { isError: true });
+                return;
+            }
+            if (endsAtDate === startsAtDate && endsAtTime <= startsAtTime) {
+                shopify.toast.show("End time must be after start time on the same day", { isError: true });
+                return;
+            }
         }
 
         setIsSaving(true);
@@ -854,10 +902,14 @@ export default function EditSelectedProductOffer() {
         formData.append("combinesWithOrder", String(combinesWithOrder));
         formData.append("combinesWithProduct", String(combinesWithProduct));
         formData.append("combinesWithShipping", String(combinesWithShipping));
-        formData.append("startsAt", startsAt);
+        formData.append("startsAtDate", startsAtDate);
+        formData.append("startsAtTime", startsAtTime);
+        formData.append("startsAt", startsAtDate);
         formData.append("hasEndDate", String(hasEndDate));
-        if (hasEndDate && endsAt) {
-            formData.append("endsAt", endsAt);
+        if (hasEndDate && endsAtDate) {
+            formData.append("endsAtDate", endsAtDate);
+            formData.append("endsAtTime", endsAtTime);
+            formData.append("endsAt", endsAtDate);
         }
 
         submit(formData, { method: "post" });
@@ -880,6 +932,27 @@ export default function EditSelectedProductOffer() {
         formData.append("discountNodeId", data.discountNodeId);
         submit(formData, { method: "post" });
     };
+
+    const effectiveStartsAtISO = startsAtDate ? dateToShopISO(startsAtDate, startsAtTime, data.shopTimezone) : null;
+    const effectiveEndsAtISO = hasEndDate && endsAtDate ? dateToShopISO(endsAtDate, endsAtTime, data.shopTimezone) : null;
+
+    const currentStatus = computeOfferStatus({
+        startsAt: effectiveStartsAtISO,
+        endsAt: effectiveEndsAtISO,
+        status: data.shopifyStatus === "EXPIRED" ? "EXPIRED" : "ACTIVE",
+    });
+    const statusTone =
+        currentStatus === "ACTIVE"
+            ? "success"
+            : currentStatus === "SCHEDULED"
+                ? "warning"
+                : "neutral";
+    const statusLabel =
+        currentStatus === "ACTIVE"
+            ? "Active"
+            : currentStatus === "SCHEDULED"
+                ? "Scheduled"
+                : "Expired";
 
     return (
         <s-page heading={data.title || "Edit Selected Products Offer"}>
@@ -1205,22 +1278,25 @@ export default function EditSelectedProductOffer() {
                                 <s-grid-item gridColumn="span 1">
                                     <s-date-field
                                         label="Start date"
-                                        value={startsAt || ""}
-                                        allow={`${todayStr}--`}
-                                        onChange={(e) => setStartsAt(e.target.value)}
+                                        value={startsAtDate || ""}
+                                        allow={`${minStartDate}--`}
+                                        onChange={(e) => setStartsAtDate(e.target.value)}
                                     ></s-date-field>
                                 </s-grid-item>
 
-                                {hasEndDate && (
-                                    <s-grid-item gridColumn="span 1">
-                                        <s-date-field
-                                            label="End date"
-                                            value={endsAt || ""}
-                                            allow={`${startsAt || todayStr}--`}
-                                            onChange={(e) => setEndsAt(e.target.value)}
-                                        ></s-date-field>
-                                    </s-grid-item>
-                                )}
+                                <s-grid-item gridColumn="span 1">
+                                    <s-select
+                                        label={`Start time (${tzAbbr})`}
+                                        value={startsAtTime}
+                                        onChange={(e) => setStartsAtTime(e.target.value)}
+                                    >
+                                        {startTimeOptions.map((opt) => (
+                                            <s-option key={opt.value} value={opt.value}>
+                                                {opt.label}
+                                            </s-option>
+                                        ))}
+                                    </s-select>
+                                </s-grid-item>
 
                                 <s-grid-item gridColumn="span 2">
                                     <s-checkbox
@@ -1230,11 +1306,39 @@ export default function EditSelectedProductOffer() {
                                             const checked = e.currentTarget.checked;
                                             setHasEndDate(checked);
                                             if (!checked) {
-                                                setEndsAt("");
+                                                setEndsAtDate("");
+                                                setEndsAtTime("23:59:59");
                                             }
                                         }}
                                     ></s-checkbox>
                                 </s-grid-item>
+
+                                {hasEndDate && (
+                                    <>
+                                        <s-grid-item gridColumn="span 1">
+                                            <s-date-field
+                                                label="End date"
+                                                value={endsAtDate || ""}
+                                                allow={`${startsAtDate || minStartDate}--`}
+                                                onChange={(e) => setEndsAtDate(e.target.value)}
+                                            ></s-date-field>
+                                        </s-grid-item>
+
+                                        <s-grid-item gridColumn="span 1">
+                                            <s-select
+                                                label={`End time (${tzAbbr})`}
+                                                value={endsAtTime}
+                                                onChange={(e) => setEndsAtTime(e.target.value)}
+                                            >
+                                                {endTimeOptions.map((opt) => (
+                                                    <s-option key={opt.value} value={opt.value}>
+                                                        {opt.label}
+                                                    </s-option>
+                                                ))}
+                                            </s-select>
+                                        </s-grid-item>
+                                    </>
+                                )}
                             </s-grid>
                         </s-stack>
                     </s-section>
@@ -1319,16 +1423,8 @@ export default function EditSelectedProductOffer() {
                     <s-stack gap="tight">
                         <s-text weight="bold">Status</s-text>
                         <div>
-                            <s-badge
-                                tone={
-                                    data.shopifyStatus === "ACTIVE"
-                                        ? "success"
-                                        : data.shopifyStatus === "SCHEDULED"
-                                            ? "warning"
-                                            : "neutral"
-                                }
-                            >
-                                {data.shopifyStatus}
+                            <s-badge tone={statusTone}>
+                                {statusLabel}
                             </s-badge>
                         </div>
                     </s-stack>
@@ -1380,11 +1476,11 @@ export default function EditSelectedProductOffer() {
                     <s-stack gap="tight">
                         <s-text weight="bold">Active dates</s-text>
                         <s-paragraph tone="subdued">
-                            • Starts {startsAt || todayStr}
+                            • Starts {startsAtDate || todayStr} at {formatTime12h(startsAtTime)} ({tzAbbr})
                         </s-paragraph>
-                        {hasEndDate && endsAt && (
+                        {hasEndDate && endsAtDate && (
                             <s-paragraph tone="subdued">
-                                • Ends {endsAt}
+                                • Ends {endsAtDate} at {formatTime12h(endsAtTime)} ({tzAbbr})
                             </s-paragraph>
                         )}
                     </s-stack>

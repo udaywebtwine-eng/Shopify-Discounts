@@ -1,4 +1,5 @@
 import prisma from "../db.server.js";
+import { computeOfferStatus } from "./timezone.js";
 
 /**
  * Helper to sync active selected product offers to a single Shop Metafield.
@@ -19,10 +20,19 @@ export async function syncAllActiveSelectedOffersToShopMetafield(admin) {
     const shopId = shopJson.data?.shop?.id;
     if (!shopId) return;
 
-    // Fetch all active selected product offers from DB
-    const activeOffers = await prisma.selectedProductOffer.findMany({
-      where: { status: "ACTIVE" },
+    // Fetch all selected product offers from DB that are not manually deactivated
+    const allOffers = await prisma.selectedProductOffer.findMany({
+      where: { status: { not: "EXPIRED" } },
     });
+    const activeOffers = allOffers.filter((o) => computeOfferStatus(o) === "ACTIVE");
+
+    // Background sync of DB status if real-time status changed
+    for (const o of allOffers) {
+      const realStatus = computeOfferStatus(o);
+      if (realStatus !== o.status && o.status !== "EXPIRED") {
+        prisma.selectedProductOffer.update({ where: { id: o.id }, data: { status: realStatus } }).catch(() => {});
+      }
+    }
 
     // Collect all offered product IDs to fetch live variant details (variant IDs, prices, inventory)
     const offeredProductIdsToFetch = new Set();
