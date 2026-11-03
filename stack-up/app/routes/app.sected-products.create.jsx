@@ -20,6 +20,7 @@ import {
   setShopTimezoneCache,
 } from "../utils/timezone";
 import { syncAllActiveSelectedOffersToShopMetafield } from "../utils/selectedOffersMetafields.server";
+import { getActiveMainProductsMap, checkMainProductConflicts } from "../utils/productConflicts.server";
 
 export const loader = async ({ request }) => {
   const { admin, session } = await authenticate.admin(request);
@@ -58,7 +59,20 @@ export const loader = async ({ request }) => {
   const timezoneAbbr = getTimezoneAbbr(shopTimezone);
   const currentTime = getShopCurrentTime(shopTimezone);
 
-  return { functionId, shopTimezone, timezoneAbbr, currentTime, shop };
+  // Load products already used as Main/Target in other active offers
+  const usedMainMap = await getActiveMainProductsMap({ shop, offerType: "SELECTED" });
+  const usedMainProducts = Array.from(usedMainMap.entries()).map(([numericId, info]) => ({
+    numericId,
+    offerTitle: info.offerTitle,
+    offerType: info.offerType,
+    offerNumericId: info.numericId,
+    editUrl:
+      info.offerType === "PAIRED"
+        ? `/app/paired-products/edit/${info.numericId}`
+        : `/app/sected-products/edit/${info.numericId}`,
+  }));
+
+  return { functionId, shopTimezone, timezoneAbbr, currentTime, shop, usedMainProducts };
 };
 
 export const action = async ({ request }) => {
@@ -106,6 +120,21 @@ export const action = async ({ request }) => {
 
   if (!Array.isArray(offeredProducts) || offeredProducts.length === 0) {
     return { error: "Please select at least one Recommended Add-On Product to offer." };
+  }
+
+  // Conflict Guard: Ensure target products are not already used in active offers
+  const conflictCheck = await checkMainProductConflicts({
+    products: targetProducts,
+    shop: session?.shop,
+    offerType: "SELECTED",
+  });
+  if (conflictCheck.hasConflict) {
+    const names = conflictCheck.conflictingProducts
+      .map((cp) => `"${cp.title || cp.numericId}" (in offer: "${cp.offerTitle}")`)
+      .join(", ");
+    return {
+      error: `${names} already has an active offer. To use it in this offer, please deactivate or remove it from the existing offer first.`,
+    };
   }
 
   if (!startsAtDate) {
@@ -255,7 +284,7 @@ export const action = async ({ request }) => {
 };
 
 export default function CreateSelectedProductsOffer() {
-  const { functionId, shopTimezone, timezoneAbbr, currentTime } = useLoaderData();
+  const { functionId, shopTimezone, timezoneAbbr, currentTime, usedMainProducts = [] } = useLoaderData();
   const actionData = useActionData();
   const navigation = useNavigation();
   const submit = useSubmit();
@@ -286,6 +315,9 @@ export default function CreateSelectedProductsOffer() {
   const [endsAtDate, setEndsAtDate] = useState("");
   const [endsAtTime, setEndsAtTime] = useState("23:59:59");
   const tzAbbr = timezoneAbbr || getTimezoneAbbr(shopTimezone);
+
+  // Conflict banner state
+  const [conflictBanner, setConflictBanner] = useState(null);
 
   const startTimeOptions = useMemo(() => generateTimeOptions(false, defaultStartTime), [defaultStartTime]);
   const endTimeOptions = useMemo(() => generateTimeOptions(true), []);
@@ -318,8 +350,36 @@ export default function CreateSelectedProductsOffer() {
       });
 
       if (selected && Array.isArray(selected)) {
+        // Filter out any products already used in active offers
+        const usedIdMap = new Map((usedMainProducts || []).map((u) => [u.numericId, u]));
+        const conflictingItems = [];
+        const validSelected = [];
+        let firstConflictLink = null;
+
+        selected.forEach((p) => {
+          const numId = String(p.id).split("/").pop();
+          if (usedIdMap.has(numId)) {
+            const conflict = usedIdMap.get(numId);
+            conflictingItems.push(`"${p.title}" (in offer: "${conflict.offerTitle}")`);
+            if (!firstConflictLink && conflict.editUrl) {
+              firstConflictLink = conflict.editUrl;
+            }
+          } else {
+            validSelected.push(p);
+          }
+        });
+
+        if (conflictingItems.length > 0) {
+          setConflictBanner({
+            message: `${conflictingItems.join(", ")} already has an active offer. A product can only have one active offer at a time. To use it here, please remove or deactivate it from the other offer first.`,
+            url: firstConflictLink,
+          });
+        } else {
+          setConflictBanner(null);
+        }
+
         setTargetProducts(
-          selected.map((p) => {
+          validSelected.map((p) => {
             const image =
               p.images?.[0]?.originalSrc ||
               p.images?.[0]?.src ||
@@ -603,6 +663,24 @@ export default function CreateSelectedProductsOffer() {
         }}
       >
         <s-stack gap="base">
+          {conflictBanner && (
+            <s-banner
+              tone="critical"
+              heading="Product already has an active offer"
+              dismissible
+              onDismiss={() => setConflictBanner(null)}
+            >
+              <s-paragraph>
+                {typeof conflictBanner === "object" ? conflictBanner.message : conflictBanner}
+              </s-paragraph>
+              {typeof conflictBanner === "object" && conflictBanner.url && (
+                <s-button slot="secondary-actions" href={conflictBanner.url}>
+                  View conflicting offer
+                </s-button>
+              )}
+            </s-banner>
+          )}
+
           {/* Offer Details */}
           <s-section heading="Offer details">
             <s-grid

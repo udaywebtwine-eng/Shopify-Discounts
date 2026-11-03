@@ -20,6 +20,7 @@ import {
   setShopTimezoneCache,
 } from "../utils/timezone";
 import { syncAllActiveOffersToShopMetafield } from "../utils/bundleMetafields.server";
+import { getActiveMainProductsMap, checkMainProductConflicts } from "../utils/productConflicts.server";
 import WidgetPreview from "./components/Preview/WidgetPreview";
 
 // In-memory cache for functionId (Shopify Function IDs are static per app installation)
@@ -99,7 +100,21 @@ export const loader = async ({ request }) => {
 
   const timezoneAbbr = getTimezoneAbbr(shopTimezone);
   const currentTime = getShopCurrentTime(shopTimezone);
-  return { functionId: functionId || cachedFunctionId, shopTimezone, timezoneAbbr, currentTime, shop, widgetSettings };
+
+  // Load products already used as Main/Target in other active offers
+  const usedMainMap = await getActiveMainProductsMap({ shop, offerType: "PAIRED" });
+  const usedMainProducts = Array.from(usedMainMap.entries()).map(([numericId, info]) => ({
+    numericId,
+    offerTitle: info.offerTitle,
+    offerType: info.offerType,
+    offerNumericId: info.numericId,
+    editUrl:
+      info.offerType === "PAIRED"
+        ? `/app/paired-products/edit/${info.numericId}`
+        : `/app/sected-products/edit/${info.numericId}`,
+  }));
+
+  return { functionId: functionId || cachedFunctionId, shopTimezone, timezoneAbbr, currentTime, shop, widgetSettings, usedMainProducts };
 };
 
 export const action = async ({ request }) => {
@@ -155,6 +170,21 @@ export const action = async ({ request }) => {
 
   if (subProductIds.length === 0) {
     return { error: "Please select at least one Sub / Add-on Product." };
+  }
+
+  // Conflict Guard: Ensure main products are not already used in active offers
+  const conflictCheck = await checkMainProductConflicts({
+    products: mainProducts,
+    shop: session?.shop,
+    offerType: "PAIRED",
+  });
+  if (conflictCheck.hasConflict) {
+    const names = conflictCheck.conflictingProducts
+      .map((cp) => `"${cp.title || cp.numericId}" (in offer: "${cp.offerTitle}")`)
+      .join(", ");
+    return {
+      error: `${names} already has an active bundle offer. To use it in this offer, please deactivate or remove it from the existing offer first.`,
+    };
   }
 
   if (!startsAtDate) {
@@ -301,7 +331,7 @@ export const action = async ({ request }) => {
 };
 
 export default function CreatePairedProductsOffer() {
-  const { functionId, shopTimezone, timezoneAbbr, currentTime, shop, widgetSettings } = useLoaderData();
+  const { functionId, shopTimezone, timezoneAbbr, currentTime, shop, widgetSettings, usedMainProducts = [] } = useLoaderData();
   const actionData = useActionData();
   const navigation = useNavigation();
   const submit = useSubmit();
@@ -336,6 +366,9 @@ export default function CreatePairedProductsOffer() {
   const startTimeOptions = useMemo(() => generateTimeOptions(false, defaultStartTime), [defaultStartTime]);
   const endTimeOptions = useMemo(() => generateTimeOptions(true), []);
 
+  // Conflict banner state
+  const [conflictBanner, setConflictBanner] = useState(null);
+
   // Helper to format selection IDs and variants for Shopify App Bridge ResourcePicker
   const buildResourceSelection = (products) =>
     products.map((p) => {
@@ -364,8 +397,36 @@ export default function CreatePairedProductsOffer() {
       });
 
       if (selected && Array.isArray(selected)) {
+        // Filter out any products already used in active offers
+        const usedIdMap = new Map((usedMainProducts || []).map((u) => [u.numericId, u]));
+        const conflictingItems = [];
+        const validSelected = [];
+        let firstConflictLink = null;
+
+        selected.forEach((p) => {
+          const numId = String(p.id).split("/").pop();
+          if (usedIdMap.has(numId)) {
+            const conflict = usedIdMap.get(numId);
+            conflictingItems.push(`"${p.title}" (in offer: "${conflict.offerTitle}")`);
+            if (!firstConflictLink && conflict.editUrl) {
+              firstConflictLink = conflict.editUrl;
+            }
+          } else {
+            validSelected.push(p);
+          }
+        });
+
+        if (conflictingItems.length > 0) {
+          setConflictBanner({
+            message: `${conflictingItems.join(", ")} already has an active bundle offer. A product can only have one active bundle at a time. To use it here, please remove or deactivate it from the other offer first.`,
+            url: firstConflictLink,
+          });
+        } else {
+          setConflictBanner(null);
+        }
+
         setMainProducts(
-          selected.map((p) => {
+          validSelected.map((p) => {
             const image =
               p.images?.[0]?.originalSrc ||
               p.images?.[0]?.src ||
@@ -679,6 +740,24 @@ export default function CreatePairedProductsOffer() {
         }}
       >
         <s-stack gap="base">
+          {conflictBanner && (
+            <s-banner
+              tone="critical"
+              heading="Product already has an active offer"
+              dismissible
+              onDismiss={() => setConflictBanner(null)}
+            >
+              <s-paragraph>
+                {typeof conflictBanner === "object" ? conflictBanner.message : conflictBanner}
+              </s-paragraph>
+              {typeof conflictBanner === "object" && conflictBanner.url && (
+                <s-button slot="secondary-actions" href={conflictBanner.url}>
+                  View conflicting offer
+                </s-button>
+              )}
+            </s-banner>
+          )}
+
           {/* Offer Details */}
           <s-section heading="Offer details">
             <s-grid

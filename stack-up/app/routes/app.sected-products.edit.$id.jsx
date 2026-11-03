@@ -22,6 +22,7 @@ import {
     setShopTimezoneCache,
 } from "../utils/timezone";
 import { syncAllActiveSelectedOffersToShopMetafield } from "../utils/selectedOffersMetafields.server";
+import { getActiveMainProductsMap, checkMainProductConflicts } from "../utils/productConflicts.server";
 import { syncRecentOrdersFromShopify } from "../utils/orders.server";
 
 export const loader = async ({ request, params }) => {
@@ -263,6 +264,24 @@ export const loader = async ({ request, params }) => {
     const tEnd = performance.now();
     console.log(`⏱️ [SelectedProducts: EditLoader] Loaded offer ${numericId} in ${(tEnd - t0).toFixed(0)}ms`);
 
+    // Load products already used as Main/Target in OTHER active offers
+    const usedMainMap = await getActiveMainProductsMap({
+        shop,
+        offerType: "SELECTED",
+        excludeDiscountId: discountNode.id,
+        excludeNumericId: numericId,
+    });
+    const usedMainProducts = Array.from(usedMainMap.entries()).map(([numId, info]) => ({
+        numericId: numId,
+        offerTitle: info.offerTitle,
+        offerType: info.offerType,
+        offerNumericId: info.numericId,
+        editUrl:
+            info.offerType === "PAIRED"
+                ? `/app/paired-products/edit/${info.numericId}`
+                : `/app/sected-products/edit/${info.numericId}`,
+    }));
+
     return {
         numericId,
         discountNodeId: discountNode.id,
@@ -285,6 +304,7 @@ export const loader = async ({ request, params }) => {
         timezoneAbbr: getTimezoneAbbr(shopTimezone),
         initialTargetProducts,
         initialOfferedProducts,
+        usedMainProducts,
         analytics: {
             usageCount: dbFallback?.usageCount || 0,
             totalRevenue: dbFallback?.totalRevenue || 0,
@@ -464,6 +484,23 @@ export const action = async ({ request, params }) => {
             return { error: "Please select at least one Recommended Add-On Product." };
         }
 
+        // Conflict Guard: Ensure target products are not already used in other active offers
+        const conflictCheck = await checkMainProductConflicts({
+            products: targetProducts,
+            shop: session?.shop,
+            offerType: "SELECTED",
+            excludeDiscountId: `gid://shopify/DiscountAutomaticNode/${numericId}`,
+            excludeNumericId: numericId,
+        });
+        if (conflictCheck.hasConflict) {
+            const names = conflictCheck.conflictingProducts
+                .map((cp) => `"${cp.title || cp.numericId}" (in offer: "${cp.offerTitle}")`)
+                .join(", ");
+            return {
+                error: `${names} already has an active offer. To use it in this offer, please deactivate or remove it from the existing offer first.`,
+            };
+        }
+
         if (!startsAtDate) {
             return { error: "Please enter a start date." };
         }
@@ -626,6 +663,9 @@ export default function EditSelectedProductOffer() {
     const [endsAtTime, setEndsAtTime] = useState(data.endsAtTime || "23:59:59");
     const tzAbbr = data.timezoneAbbr || getTimezoneAbbr(data.shopTimezone);
 
+    // Conflict banner state
+    const [conflictBanner, setConflictBanner] = useState(null);
+
     const startTimeOptions = useMemo(
         () => generateTimeOptions(false, data.startsAtTime),
         [data.startsAtTime]
@@ -725,8 +765,36 @@ export default function EditSelectedProductOffer() {
             });
 
             if (selected && Array.isArray(selected)) {
+                // Filter out any products already used in other active offers
+                const usedIdMap = new Map((data.usedMainProducts || []).map((u) => [u.numericId, u]));
+                const conflictingItems = [];
+                const validSelected = [];
+                let firstConflictLink = null;
+
+                selected.forEach((p) => {
+                    const numId = String(p.id).split("/").pop();
+                    if (usedIdMap.has(numId)) {
+                        const conflict = usedIdMap.get(numId);
+                        conflictingItems.push(`"${p.title}" (in offer: "${conflict.offerTitle}")`);
+                        if (!firstConflictLink && conflict.editUrl) {
+                            firstConflictLink = conflict.editUrl;
+                        }
+                    } else {
+                        validSelected.push(p);
+                    }
+                });
+
+                if (conflictingItems.length > 0) {
+                    setConflictBanner({
+                        message: `${conflictingItems.join(", ")} already has an active offer. A product can only have one active offer at a time. To use it here, please remove or deactivate it from the other offer first.`,
+                        url: firstConflictLink,
+                    });
+                } else {
+                    setConflictBanner(null);
+                }
+
                 setTargetProducts(
-                    selected.map((p) => {
+                    validSelected.map((p) => {
                         const image =
                             p.images?.[0]?.originalSrc ||
                             p.images?.[0]?.src ||
@@ -1056,6 +1124,24 @@ export default function EditSelectedProductOffer() {
                 }}
             >
                 <s-stack gap="base">
+                    {conflictBanner && (
+                        <s-banner
+                            tone="critical"
+                            heading="Product already has an active offer"
+                            dismissible
+                            onDismiss={() => setConflictBanner(null)}
+                        >
+                            <s-paragraph>
+                                {typeof conflictBanner === "object" ? conflictBanner.message : conflictBanner}
+                            </s-paragraph>
+                            {typeof conflictBanner === "object" && conflictBanner.url && (
+                                <s-button slot="secondary-actions" href={conflictBanner.url}>
+                                    View conflicting offer
+                                </s-button>
+                            )}
+                        </s-banner>
+                    )}
+
                     {/* Offer Details */}
                     <s-section heading="Offer details">
                         <s-grid
