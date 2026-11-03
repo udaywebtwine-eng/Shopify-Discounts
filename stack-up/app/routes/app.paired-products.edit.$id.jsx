@@ -233,8 +233,30 @@ export const loader = async ({ request, params }) => {
         });
     }
 
+    const mainProductVariantMap = {};
+    if (Array.isArray(config.mainProducts)) {
+        config.mainProducts.forEach((item) => {
+            if (item?.id && Array.isArray(item.variants) && item.variants.length > 0) {
+                mainProductVariantMap[item.id] = new Set(item.variants.map((v) => String(typeof v === "object" ? v.id : v)));
+            }
+        });
+    }
+
+    const subProductVariantMap = {};
+    if (Array.isArray(config.subProducts)) {
+        config.subProducts.forEach((item) => {
+            if (item?.id && Array.isArray(item.variants) && item.variants.length > 0) {
+                subProductVariantMap[item.id] = new Set(item.variants.map((v) => String(typeof v === "object" ? v.id : v)));
+            }
+        });
+    }
+
     const initialMainProducts = mainProductIds.map((id) => {
         const prod = productsMap[id];
+        const savedVariantIds = mainProductVariantMap[id];
+        const filteredVariants = savedVariantIds && prod?.variants
+            ? prod.variants.filter((v) => savedVariantIds.has(String(v.id)))
+            : (prod?.variants || []);
         return {
             id,
             title: prod?.title || `Product (${id.split("/").pop()})`,
@@ -242,12 +264,16 @@ export const loader = async ({ request, params }) => {
             image: prod?.image || "",
             price: prod?.price || "",
             quantity: mainProductQtyMap[id] || 1,
-            variants: prod?.variants || [],
+            variants: filteredVariants,
         };
     });
 
     const initialSubProducts = subProductIds.map((id) => {
         const prod = productsMap[id];
+        const savedVariantIds = subProductVariantMap[id];
+        const filteredVariants = savedVariantIds && prod?.variants
+            ? prod.variants.filter((v) => savedVariantIds.has(String(v.id)))
+            : (prod?.variants || []);
         return {
             id,
             title: prod?.title || `Product (${id.split("/").pop()})`,
@@ -255,7 +281,7 @@ export const loader = async ({ request, params }) => {
             image: prod?.image || "",
             price: prod?.price || "",
             quantity: subProductQtyMap[id] || 1,
-            variants: prod?.variants || [],
+            variants: filteredVariants,
         };
     });
 
@@ -555,14 +581,30 @@ export const action = async ({ request, params }) => {
         }
     }
 
+    const sanitizedMainProducts = mainProducts.map((p) => ({
+        id: p.id,
+        quantity: Math.max(1, parseInt(p.quantity, 10) || 1),
+        variants: Array.isArray(p.variants)
+            ? p.variants.map((v) => ({ id: typeof v === "object" ? v.id : v }))
+            : [],
+    }));
+
+    const sanitizedSubProducts = subProducts.map((p) => ({
+        id: p.id,
+        quantity: Math.max(1, parseInt(p.quantity, 10) || 1),
+        variants: Array.isArray(p.variants)
+            ? p.variants.map((v) => ({ id: typeof v === "object" ? v.id : v }))
+            : [],
+    }));
+
     const configPayload = {
         discountType: "PAIRED_PRODUCTS",
         percentage,
         title,
         mainProductIds,
         subProductIds,
-        mainProducts,
-        subProducts,
+        mainProducts: sanitizedMainProducts,
+        subProducts: sanitizedSubProducts,
     };
 
     const updateGid = `gid://shopify/DiscountAutomaticApp/${numericId}`;
@@ -713,8 +755,8 @@ export const action = async ({ request, params }) => {
                             combinesWithShipping,
                             startsAt: effectiveStartsAt ? new Date(effectiveStartsAt) : undefined,
                             endsAt: effectiveEndsAt ? new Date(effectiveEndsAt) : null,
-                            mainProducts: JSON.stringify(mainProducts),
-                            subProducts: JSON.stringify(subProducts),
+                            mainProducts: JSON.stringify(sanitizedMainProducts),
+                            subProducts: JSON.stringify(sanitizedSubProducts),
                         },
                     });
 
@@ -744,8 +786,8 @@ export const action = async ({ request, params }) => {
                     combinesWithShipping,
                     startsAt: effectiveStartsAt ? new Date(effectiveStartsAt) : undefined,
                     endsAt: effectiveEndsAt ? new Date(effectiveEndsAt) : null,
-                    mainProducts: JSON.stringify(mainProducts),
-                    subProducts: JSON.stringify(subProducts),
+                    mainProducts: JSON.stringify(sanitizedMainProducts),
+                    subProducts: JSON.stringify(sanitizedSubProducts),
                 },
                 create: {
                     shop: session?.shop || "",
@@ -759,8 +801,8 @@ export const action = async ({ request, params }) => {
                     combinesWithShipping,
                     startsAt: effectiveStartsAt ? new Date(effectiveStartsAt) : new Date(),
                     endsAt: effectiveEndsAt ? new Date(effectiveEndsAt) : null,
-                    mainProducts: JSON.stringify(mainProducts),
-                    subProducts: JSON.stringify(subProducts),
+                    mainProducts: JSON.stringify(sanitizedMainProducts),
+                    subProducts: JSON.stringify(sanitizedSubProducts),
                 },
             });
             console.log("-------------------> 💾 [EditAction] Successfully synced offer to PostgreSQL DB! ID:", numericId);
@@ -1028,10 +1070,26 @@ export default function PairedProductsEdit() {
         hasEndDate !== data.hasEndDate ||
         (hasEndDate && endsAtDate !== (data.endsAtDate || data.endsAt || "")) ||
         (hasEndDate && endsAtTime !== (data.endsAtTime || "23:59:59")) ||
-        JSON.stringify(mainProducts.map((p) => ({ id: p.id, quantity: Number(p.quantity) || 1 }))) !==
-        JSON.stringify(data.initialMainProducts.map((p) => ({ id: p.id, quantity: Number(p.quantity) || 1 }))) ||
-        JSON.stringify(subProducts.map((p) => ({ id: p.id, quantity: Number(p.quantity) || 1 }))) !==
-        JSON.stringify(data.initialSubProducts.map((p) => ({ id: p.id, quantity: Number(p.quantity) || 1 })))
+        JSON.stringify(mainProducts.map((p) => ({
+            id: p.id,
+            quantity: Number(p.quantity) || 1,
+            variants: (p.variants || []).map((v) => String(typeof v === "object" ? v.id : v)).sort(),
+        }))) !==
+        JSON.stringify(data.initialMainProducts.map((p) => ({
+            id: p.id,
+            quantity: Number(p.quantity) || 1,
+            variants: (p.variants || []).map((v) => String(typeof v === "object" ? v.id : v)).sort(),
+        }))) ||
+        JSON.stringify(subProducts.map((p) => ({
+            id: p.id,
+            quantity: Number(p.quantity) || 1,
+            variants: (p.variants || []).map((v) => String(typeof v === "object" ? v.id : v)).sort(),
+        }))) !==
+        JSON.stringify(data.initialSubProducts.map((p) => ({
+            id: p.id,
+            quantity: Number(p.quantity) || 1,
+            variants: (p.variants || []).map((v) => String(typeof v === "object" ? v.id : v)).sort(),
+        })))
     );
 
     const showSaveBar = (isDirty || isSubmitting) && !isRedirecting;
@@ -1139,6 +1197,7 @@ export default function PairedProductsEdit() {
                 mainProducts.map((p) => ({
                     id: p.id,
                     quantity: Math.max(1, parseInt(p.quantity, 10) || 1),
+                    variants: (p.variants || []).map((v) => ({ id: typeof v === "object" ? v.id : v })),
                 }))
             )
         );
@@ -1148,6 +1207,7 @@ export default function PairedProductsEdit() {
                 subProducts.map((p) => ({
                     id: p.id,
                     quantity: Math.max(1, parseInt(p.quantity, 10) || 1),
+                    variants: (p.variants || []).map((v) => ({ id: typeof v === "object" ? v.id : v })),
                 }))
             )
         );

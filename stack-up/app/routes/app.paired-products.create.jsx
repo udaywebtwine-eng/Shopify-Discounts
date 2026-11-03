@@ -204,14 +204,30 @@ export const action = async ({ request }) => {
     }
   }
 
+  const sanitizedMainProducts = mainProducts.map((p) => ({
+    id: p.id,
+    quantity: Math.max(1, parseInt(p.quantity, 10) || 1),
+    variants: Array.isArray(p.variants)
+      ? p.variants.map((v) => ({ id: typeof v === "object" ? v.id : v }))
+      : [],
+  }));
+
+  const sanitizedSubProducts = subProducts.map((p) => ({
+    id: p.id,
+    quantity: Math.max(1, parseInt(p.quantity, 10) || 1),
+    variants: Array.isArray(p.variants)
+      ? p.variants.map((v) => ({ id: typeof v === "object" ? v.id : v }))
+      : [],
+  }));
+
   const configPayload = {
     discountType: "PAIRED_PRODUCTS",
     percentage,
     title,
     mainProductIds,
     subProductIds,
-    mainProducts,
-    subProducts,
+    mainProducts: sanitizedMainProducts,
+    subProducts: sanitizedSubProducts,
   };
 
   const mutation = `#graphql
@@ -304,8 +320,8 @@ export const action = async ({ request }) => {
           combinesWithShipping,
           startsAt: effectiveStartsAt ? new Date(effectiveStartsAt) : new Date(),
           endsAt: effectiveEndsAt ? new Date(effectiveEndsAt) : null,
-          mainProducts: JSON.stringify(mainProducts),
-          subProducts: JSON.stringify(subProducts),
+          mainProducts: JSON.stringify(sanitizedMainProducts),
+          subProducts: JSON.stringify(sanitizedSubProducts),
         },
       });
       console.log("-------------------> 💾 [CreateAction] Successfully saved offer to PostgreSQL DB! ID:", numericId);
@@ -677,6 +693,7 @@ export default function CreatePairedProductsOffer() {
         mainProducts.map((p) => ({
           id: p.id,
           quantity: Math.max(1, parseInt(p.quantity, 10) || 1),
+          variants: (p.variants || []).map((v) => ({ id: typeof v === "object" ? v.id : v })),
         }))
       )
     );
@@ -686,6 +703,7 @@ export default function CreatePairedProductsOffer() {
         subProducts.map((p) => ({
           id: p.id,
           quantity: Math.max(1, parseInt(p.quantity, 10) || 1),
+          variants: (p.variants || []).map((v) => ({ id: typeof v === "object" ? v.id : v })),
         }))
       )
     );

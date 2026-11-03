@@ -251,18 +251,30 @@ export const loader = async ({ request, params }) => {
 
     const initialTargetProducts = rawTargets.map((p) => {
         const live = productsMap[p.id];
+        const savedVariantIds = Array.isArray(p.variants) && p.variants.length > 0
+            ? new Set(p.variants.map((v) => String(typeof v === "object" ? v.id : v)))
+            : null;
+        const filteredVariants = savedVariantIds && live?.variants
+            ? live.variants.filter((v) => savedVariantIds.has(String(v.id)))
+            : (live?.variants || p.variants || []);
         return {
             id: p.id,
             title: live?.title || p.title || `Product (${String(p.id).split("/").pop()})`,
             handle: live?.handle || p.handle || "",
             image: live?.image || p.image || "",
             price: live?.price || p.price || "",
-            variants: live?.variants || p.variants || [],
+            variants: filteredVariants,
         };
     });
 
     const initialOfferedProducts = rawOffered.map((p) => {
         const live = productsMap[p.id];
+        const savedVariantIds = Array.isArray(p.variants) && p.variants.length > 0
+            ? new Set(p.variants.map((v) => String(typeof v === "object" ? v.id : v)))
+            : null;
+        const filteredVariants = savedVariantIds && live?.variants
+            ? live.variants.filter((v) => savedVariantIds.has(String(v.id)))
+            : (live?.variants || p.variants || []);
         return {
             id: p.id,
             title: live?.title || p.title || `Product (${String(p.id).split("/").pop()})`,
@@ -270,7 +282,7 @@ export const loader = async ({ request, params }) => {
             image: live?.image || p.image || "",
             price: live?.price || p.price || "",
             quantity: Math.max(1, parseInt(p.quantity, 10) || 1),
-            variants: live?.variants || p.variants || [],
+            variants: filteredVariants,
         };
     });
 
@@ -536,6 +548,9 @@ export const action = async ({ request, params }) => {
             handle: p.handle || "",
             image: p.image || "",
             price: p.price || "",
+            variants: Array.isArray(p.variants)
+                ? p.variants.map((v) => ({ id: typeof v === "object" ? v.id : v }))
+                : [],
         }));
 
         const sanitizedOfferedProducts = offeredProducts.map((p) => ({
@@ -545,6 +560,9 @@ export const action = async ({ request, params }) => {
             image: p.image || "",
             price: p.price || "",
             quantity: Math.max(1, parseInt(p.quantity, 10) || 1),
+            variants: Array.isArray(p.variants)
+                ? p.variants.map((v) => ({ id: typeof v === "object" ? v.id : v }))
+                : [],
         }));
 
         const configPayload = {
@@ -713,10 +731,24 @@ export default function EditSelectedProductOffer() {
         hasEndDate !== data.hasEndDate ||
         endsAtDate !== (data.endsAtDate || data.endsAt || "") ||
         (hasEndDate && endsAtTime !== (data.endsAtTime || "23:59:59")) ||
-        JSON.stringify(targetProducts.map((p) => p.id)) !==
-        JSON.stringify((data.initialTargetProducts || []).map((p) => p.id)) ||
-        JSON.stringify(offeredProducts.map((p) => ({ id: p.id, qty: Number(p.quantity) || 1 }))) !==
-        JSON.stringify((data.initialOfferedProducts || []).map((p) => ({ id: p.id, qty: Number(p.quantity) || 1 })))
+        JSON.stringify(targetProducts.map((p) => ({
+            id: p.id,
+            variants: (p.variants || []).map((v) => String(typeof v === "object" ? v.id : v)).sort(),
+        }))) !==
+        JSON.stringify((data.initialTargetProducts || []).map((p) => ({
+            id: p.id,
+            variants: (p.variants || []).map((v) => String(typeof v === "object" ? v.id : v)).sort(),
+        }))) ||
+        JSON.stringify(offeredProducts.map((p) => ({
+            id: p.id,
+            qty: Number(p.quantity) || 1,
+            variants: (p.variants || []).map((v) => String(typeof v === "object" ? v.id : v)).sort(),
+        }))) !==
+        JSON.stringify((data.initialOfferedProducts || []).map((p) => ({
+            id: p.id,
+            qty: Number(p.quantity) || 1,
+            variants: (p.variants || []).map((v) => String(typeof v === "object" ? v.id : v)).sort(),
+        })))
     );
 
     const showSaveBar = (isDirty || isSubmitting) && !isRedirecting;
@@ -965,6 +997,7 @@ export default function EditSelectedProductOffer() {
                     handle: p.handle || "",
                     image: p.image || "",
                     price: p.price || "",
+                    variants: (p.variants || []).map((v) => ({ id: typeof v === "object" ? v.id : v })),
                 }))
             )
         );
@@ -978,6 +1011,7 @@ export default function EditSelectedProductOffer() {
                     image: p.image || "",
                     price: p.price || "",
                     quantity: Math.max(1, parseInt(p.quantity, 10) || 1),
+                    variants: (p.variants || []).map((v) => ({ id: typeof v === "object" ? v.id : v })),
                 }))
             )
         );

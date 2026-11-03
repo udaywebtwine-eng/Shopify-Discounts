@@ -119,12 +119,21 @@ export async function syncAllActiveSelectedOffersToShopMetafield(admin) {
       // Enrich offered products with live variant IDs and prices
       const enrichedOfferedProducts = offeredProducts.map((p) => {
         const realProd = productInfoMap[p.id];
-        const variants = (realProd?.variants?.nodes || []).map((v) => ({
+        const selectedVariantIds = Array.isArray(p.variants) && p.variants.length > 0
+          ? new Set(p.variants.map((v) => String(typeof v === "object" ? v.id : v).split("/").pop()))
+          : null;
+
+        const allVariants = (realProd?.variants?.nodes || []).map((v) => ({
           id: String(v.id).split("/").pop(),
           title: v.title,
           price: Math.round(parseFloat(v.price) * 100),
           availableForSale: v.availableForSale !== undefined ? Boolean(v.availableForSale) : true,
         }));
+
+        // Filter variants down to only merchant-selected variants if specific variants were chosen
+        const variants = selectedVariantIds && selectedVariantIds.size > 0
+          ? allVariants.filter((v) => selectedVariantIds.has(v.id))
+          : allVariants;
 
         const rawPriceStr = String(p.price || "");
         const fallbackPrice = rawPriceStr

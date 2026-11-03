@@ -176,6 +176,9 @@ export const action = async ({ request }) => {
     handle: p.handle || "",
     image: p.image || "",
     price: p.price || "",
+    variants: Array.isArray(p.variants)
+      ? p.variants.map((v) => ({ id: typeof v === "object" ? v.id : v }))
+      : [],
   }));
 
   const sanitizedOfferedProducts = offeredProducts.map((p) => ({
@@ -185,6 +188,9 @@ export const action = async ({ request }) => {
     image: p.image || "",
     price: p.price || "",
     quantity: Math.max(1, parseInt(p.quantity, 10) || 1),
+    variants: Array.isArray(p.variants)
+      ? p.variants.map((v) => ({ id: typeof v === "object" ? v.id : v }))
+      : [],
   }));
 
   const configPayload = {
@@ -612,6 +618,7 @@ export default function CreateSelectedProductsOffer() {
           handle: p.handle || "",
           image: p.image || "",
           price: p.price || "",
+          variants: (p.variants || []).map((v) => ({ id: typeof v === "object" ? v.id : v })),
         }))
       )
     );
@@ -625,6 +632,7 @@ export default function CreateSelectedProductsOffer() {
           image: p.image || "",
           price: p.price || "",
           quantity: Math.max(1, parseInt(p.quantity, 10) || 1),
+          variants: (p.variants || []).map((v) => ({ id: typeof v === "object" ? v.id : v })),
         }))
       )
     );

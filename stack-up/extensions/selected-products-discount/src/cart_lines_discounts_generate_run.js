@@ -83,6 +83,9 @@ export function cartLinesDiscountsGenerateRun(input) {
   // 5. Map Recommended / Offered Add-On products & their required minimum quantities
   const offeredQuantities = new Map();
   const offeredProductIds = new Set();
+  const offeredVariantIds = new Set();
+  let hasSpecificOfferedVariants = false;
+
   const rawOffered = Array.isArray(config.offeredProducts)
     ? config.offeredProducts
     : Array.isArray(config.products)
@@ -99,6 +102,15 @@ export function cartLinesDiscountsGenerateRun(input) {
       offeredQuantities.set(numId, reqQty);
       offeredProductIds.add(fullId);
       offeredProductIds.add(numId);
+
+      if (Array.isArray(item.variants) && item.variants.length > 0) {
+        hasSpecificOfferedVariants = true;
+        item.variants.forEach((v) => {
+          const vId = String(typeof v === 'object' ? v.id : v).trim();
+          offeredVariantIds.add(vId);
+          offeredVariantIds.add(getNumericId(vId));
+        });
+      }
     }
   });
 
@@ -142,17 +154,26 @@ export function cartLinesDiscountsGenerateRun(input) {
 
     if (line.merchandise?.__typename === 'ProductVariant') {
       const prod = line.merchandise.product;
+      const variantId = line.merchandise.id ? String(line.merchandise.id).trim() : null;
+      const variantNumId = variantId ? getNumericId(variantId) : null;
+
       if (prod?.id) {
         const fullId = String(prod.id).trim();
         const numId = getNumericId(fullId);
 
         // Check if this line is one of the recommended add-on products
         if (offeredProductIds.has(fullId) || offeredProductIds.has(numId)) {
-          const reqQty = offeredQuantities.get(fullId) || offeredQuantities.get(numId) || 1;
-          const totalInCart = cartProductQuantities.get(fullId) || cartProductQuantities.get(numId) || 0;
+          // If specific variants were configured, only match those specific variants
+          const variantMatches = !hasSpecificOfferedVariants ||
+            (variantId && (offeredVariantIds.has(variantId) || offeredVariantIds.has(variantNumId)));
 
-          if (totalInCart >= reqQty) {
-            qualifies = true;
+          if (variantMatches) {
+            const reqQty = offeredQuantities.get(fullId) || offeredQuantities.get(numId) || 1;
+            const totalInCart = cartProductQuantities.get(fullId) || cartProductQuantities.get(numId) || 0;
+
+            if (totalInCart >= reqQty) {
+              qualifies = true;
+            }
           }
         }
       }

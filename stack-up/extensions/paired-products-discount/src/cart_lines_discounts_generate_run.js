@@ -88,25 +88,49 @@ export function cartLinesDiscountsGenerateRun(input) {
     }
   });
 
-  // Map configured quantities per product
+  // Map configured quantities per product and optional variant restrictions
   const mainProductQuantities = {};
+  const mainVariantIds = new Set();
+  let hasSpecificMainVariants = false;
+
   if (Array.isArray(config.mainProducts)) {
     for (const item of config.mainProducts) {
       if (item?.id) {
         const qty = Number(item.quantity) || 1;
         mainProductQuantities[String(item.id).trim()] = qty;
         mainProductQuantities[getNumericId(item.id)] = qty;
+
+        if (Array.isArray(item.variants) && item.variants.length > 0) {
+          hasSpecificMainVariants = true;
+          item.variants.forEach((v) => {
+            const vId = String(typeof v === 'object' ? v.id : v).trim();
+            mainVariantIds.add(vId);
+            mainVariantIds.add(getNumericId(vId));
+          });
+        }
       }
     }
   }
 
   const subProductQuantities = {};
+  const subVariantIds = new Set();
+  let hasSpecificSubVariants = false;
+
   if (Array.isArray(config.subProducts)) {
     for (const item of config.subProducts) {
       if (item?.id) {
         const qty = Number(item.quantity) || 1;
         subProductQuantities[String(item.id).trim()] = qty;
         subProductQuantities[getNumericId(item.id)] = qty;
+
+        if (Array.isArray(item.variants) && item.variants.length > 0) {
+          hasSpecificSubVariants = true;
+          item.variants.forEach((v) => {
+            const vId = String(typeof v === 'object' ? v.id : v).trim();
+            subVariantIds.add(vId);
+            subVariantIds.add(getNumericId(vId));
+          });
+        }
       }
     }
   }
@@ -175,10 +199,19 @@ export function cartLinesDiscountsGenerateRun(input) {
   const pairedCartLineIds = [];
 
   for (const line of input.cart.lines) {
-    const productId = line.merchandise?.__typename === 'ProductVariant' ? line.merchandise.product?.id : null;
+    const isVariant = line.merchandise?.__typename === 'ProductVariant';
+    const productId = isVariant ? line.merchandise.product?.id : null;
+    const variantId = isVariant && line.merchandise.id ? String(line.merchandise.id).trim() : null;
+    const variantNumId = variantId ? getNumericId(variantId) : null;
     const numId = getNumericId(productId);
-    const isMain = productId && (mainProductIds.has(productId) || mainProductIds.has(numId));
-    let isSub = productId && (subProductIds.has(productId) || subProductIds.has(numId));
+
+    const matchesMainVariant = !hasSpecificMainVariants ||
+      (variantId && (mainVariantIds.has(variantId) || mainVariantIds.has(variantNumId)));
+    const isMain = productId && (mainProductIds.has(productId) || mainProductIds.has(numId)) && matchesMainVariant;
+
+    const matchesSubVariant = !hasSpecificSubVariants ||
+      (variantId && (subVariantIds.has(variantId) || subVariantIds.has(variantNumId)));
+    let isSub = productId && (subProductIds.has(productId) || subProductIds.has(numId)) && matchesSubVariant;
 
     if (!isSub && subProductIds.size === 0 && productId) {
       for (const item of cartLinesByProduct) {
