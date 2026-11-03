@@ -35,6 +35,7 @@ export const loader = async ({ request, params }) => {
 
     let discountNode = null;
     let shopTimezone = "UTC";
+    let widgetSettings = null;
 
     const possibleIds = [
         `gid://shopify/DiscountAutomaticNode/${numericId}`,
@@ -70,6 +71,9 @@ export const loader = async ({ request, params }) => {
                     }
                     shop {
                         ianaTimezone
+                        metafield(namespace: "stack_up", key: "selected_widget_settings") {
+                            value
+                        }
                     }
                 }`,
                 { variables: { id: gid } }
@@ -80,6 +84,15 @@ export const loader = async ({ request, params }) => {
             if (data?.shop?.ianaTimezone) {
                 shopTimezone = data.shop.ianaTimezone;
                 if (shop) setShopTimezoneCache(shop, shopTimezone);
+            }
+
+            const rawWidgetMetafield = data?.shop?.metafield?.value;
+            if (rawWidgetMetafield) {
+                try {
+                    widgetSettings = JSON.parse(rawWidgetMetafield);
+                } catch {
+                    widgetSettings = null;
+                }
             }
 
             if (data?.discountNode?.discount) {
@@ -305,6 +318,7 @@ export const loader = async ({ request, params }) => {
         initialTargetProducts,
         initialOfferedProducts,
         usedMainProducts,
+        widgetSettings,
         analytics: {
             usageCount: dbFallback?.usageCount || 0,
             totalRevenue: dbFallback?.totalRevenue || 0,

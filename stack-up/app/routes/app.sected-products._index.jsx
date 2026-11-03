@@ -210,6 +210,21 @@ export default function SelectedProducts() {
         navigate("/app/sected-products/create");
     };
 
+    // Customize widget navigation loading state
+    const [isNavigatingCustomize, setIsNavigatingCustomize] = useState(false);
+    const isCustomizeLoading = isNavigatingCustomize || (navigation.state === "loading" && navigation.location?.pathname?.includes("/customize"));
+
+    const handleCustomizeWidget = (e) => {
+        if (e?.preventDefault) e.preventDefault();
+        try {
+            shopify.loading(true);
+        } catch {
+            // ignore if not in embedded bridge
+        }
+        setIsNavigatingCustomize(true);
+        navigate("/app/sected-products/customize");
+    };
+
     // Edit offer navigation loading state
     const [editingId, setEditingId] = useState(null);
     const isNavigatingEdit = Boolean(editingId) || (navigation.state === "loading" && navigation.location?.pathname?.includes("/edit/"));
@@ -227,6 +242,7 @@ export default function SelectedProducts() {
     useEffect(() => {
         if (navigation.state === "idle") {
             setIsNavigatingCreate(false);
+            setIsNavigatingCustomize(false);
             setEditingId(null);
         }
     }, [navigation.state]);
@@ -461,11 +477,19 @@ export default function SelectedProducts() {
                 Home
             </s-link>
             <s-button
+                slot="secondary-actions"
+                onClick={handleCustomizeWidget}
+                loading={isCustomizeLoading ? true : undefined}
+                disabled={(isCustomizeLoading || isCreateLoading || isSubmitting || isNavigatingEdit) ? true : undefined}
+            >
+                🎨 Customize Widget
+            </s-button>
+            <s-button
                 slot="primary-action"
                 variant="primary"
                 onClick={handleCreateOffer}
                 loading={isCreateLoading ? true : undefined}
-                disabled={(isCreateLoading || isSubmitting || isNavigatingEdit) ? true : undefined}
+                disabled={(isCreateLoading || isCustomizeLoading || isSubmitting || isNavigatingEdit) ? true : undefined}
             >
                 Create offer
             </s-button>

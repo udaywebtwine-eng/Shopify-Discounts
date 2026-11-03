@@ -16,6 +16,7 @@
   {% assign current_id = product.id | append: '' %}
   {% assign prefixed_id = 'id_' | append: current_id %}
   {% assign all_offers = shop.metafields.stack_up.selected_offers.value %}
+  {% assign custom_settings = shop.metafields.stack_up.selected_widget_settings.value %}
   {% assign selected_offer = all_offers[current_id] | default: all_offers[prefixed_id] %}
 
   {% if selected_offer == blank and all_offers != blank %}
@@ -37,7 +38,7 @@
   {% if is_active_offer or is_editor %}
     {% if is_active_offer %}
       {% assign discount_pct = selected_offer.percentage | default: 10 %}
-      {% assign heading_text = block.settings.heading %}
+      {% assign heading_text = custom_settings.content.heading %}
       {% if heading_text == blank %}
         {% assign heading_text = selected_offer.title | default: 'Special Add-Ons Just for You' %}
       {% endif %}
@@ -45,18 +46,46 @@
     {% else %}
       {% comment %} Sample Data for Theme Editor Preview {% endcomment %}
       {% assign discount_pct = 15 %}
-      {% assign heading_text = block.settings.heading | default: 'Special Add-Ons Just for You' %}
+      {% assign heading_text = custom_settings.content.heading | default: 'Special Add-Ons Just for You' %}
       {% assign add_ons_list = blank %}
     {% endif %}
 
-    {% assign card_bg = block.settings.card_bg | default: '#ffffff' %}
-    {% assign border_color = block.settings.border_color | default: '#e2e8f0' %}
-    {% assign border_radius = block.settings.border_radius | default: 12 %}
-    {% assign btn_bg = block.settings.btn_bg | default: '#0f172a' %}
-    {% assign btn_color = block.settings.btn_color | default: '#ffffff' %}
-    {% assign badge_bg = block.settings.badge_bg | default: '#ecfdf5' %}
-    {% assign badge_color = block.settings.badge_color | default: '#065f46' %}
-    {% assign check_default = block.settings.checked_by_default %}
+    {% assign subheading_text = custom_settings.content.subheading | default: 'Recommended companion items for this product' %}
+    {% assign button_text = custom_settings.content.buttonText | default: 'Add to Cart with Add-Ons' %}
+    {% assign badge_template = custom_settings.content.badgeText | default: 'Save {percentage}% OFF Add-Ons' %}
+    {% assign badge_label = badge_template | replace: '{percentage}', discount_pct %}
+
+    {% assign card_bg = custom_settings.styles.cardSurface | default: '#ffffff' %}
+    {% assign border_color = custom_settings.styles.borderColor | default: '#e2e8f0' %}
+    {% assign border_width = custom_settings.styles.borderWidth | default: 1 %}
+    {% assign border_radius = custom_settings.styles.borderRadius | default: 12 %}
+    {% assign btn_bg = custom_settings.styles.buttonBg | default: '#0f172a' %}
+    {% assign btn_color = custom_settings.styles.buttonTextColor | default: '#ffffff' %}
+    {% assign badge_bg = custom_settings.styles.badgeBg | default: '#ecfdf5' %}
+    {% assign badge_color = custom_settings.styles.badgeTextColor | default: '#065f46' %}
+    {% assign total_bg = custom_settings.styles.totalBoxBg | default: '#f8fafc' %}
+
+    {% assign show_title = true %}
+    {% if custom_settings.display.showWidgetTitle == false %}
+      {% assign show_title = false %}
+    {% endif %}
+
+    {% assign show_subheading = true %}
+    {% if custom_settings.display.showSubheading == false %}
+      {% assign show_subheading = false %}
+    {% endif %}
+
+    {% assign show_total = true %}
+    {% if custom_settings.display.showTotalBox == false %}
+      {% assign show_total = false %}
+    {% endif %}
+
+    {% assign show_badge = true %}
+    {% if custom_settings.display.showSaleBadge == false %}
+      {% assign show_badge = false %}
+    {% endif %}
+
+    {% assign check_default = custom_settings.display.checkByDefault %}
     {% if check_default == null %}
       {% assign check_default = true %}
     {% endif %}
@@ -109,16 +138,18 @@
       data-main-price="{{ main_price }}"
       data-main-title="{{ product.title | escape }}"
       data-main-available="{{ main_available }}"
-      data-custom-btn-text="{{ block.settings.button_text }}"
+      data-custom-btn-text="{{ button_text }}"
       data-is-editor="{% if is_editor %}true{% else %}false{% endif %}"
       style="
         --stackup-addon-card-bg: {{ card_bg }};
         --stackup-addon-border-color: {{ border_color }};
+        --stackup-addon-border-width: {{ border_width }}px;
         --stackup-addon-radius: {{ border_radius }}px;
         --stackup-addon-btn-bg: {{ btn_bg }};
         --stackup-addon-btn-color: {{ btn_color }};
         --stackup-addon-badge-bg: {{ badge_bg }};
         --stackup-addon-badge-color: {{ badge_color }};
+        --stackup-addon-total-bg: {{ total_bg }};
       "
     >
       {% if is_editor and is_active_offer == false %}
@@ -128,21 +159,25 @@
         </div>
       {% endif %}
 
-      <div class="stackup-addons-header">
-        <div class="stackup-addons-title-wrap">
-          <span class="stackup-sparkle-icon">✨</span>
-          <h3 class="stackup-addons-title">{{ heading_text }}</h3>
+      {% if show_title or show_badge %}
+        <div class="stackup-addons-header">
+          {% if show_title %}
+            <div class="stackup-addons-title-wrap">
+              <span class="stackup-sparkle-icon">✨</span>
+              <h3 class="stackup-addons-title">{{ heading_text }}</h3>
+            </div>
+          {% endif %}
+          {% if show_badge and discount_pct > 0 %}
+            <div class="stackup-addons-badge">
+              <span class="stackup-savings-bolt">⚡</span>
+              <span>{{ badge_label }}</span>
+            </div>
+          {% endif %}
         </div>
-        {% if discount_pct > 0 %}
-          <div class="stackup-addons-badge">
-            <span class="stackup-savings-bolt">⚡</span>
-            <span>Save {{ discount_pct }}% OFF Add-Ons</span>
-          </div>
-        {% endif %}
-      </div>
+      {% endif %}
 
-      {% if block.settings.subheading != blank %}
-        <div class="stackup-addons-subheading">{{ block.settings.subheading }}</div>
+      {% if show_subheading and subheading_text != blank %}
+        <div class="stackup-addons-subheading">{{ subheading_text }}</div>
       {% endif %}
 
       <div class="stackup-addons-list">
@@ -372,20 +407,22 @@
       </div>
 
       <!-- Add-Ons Summary Box -->
-      <div class="stackup-addons-total-box">
-        <div class="stackup-total-left">
-          <div class="stackup-total-label">Total for Selected Items</div>
-          <div class="stackup-prices">
-            <span class="stackup-addons-final-price">{{ initial_discounted_cents | money }}</span>
-            <span class="stackup-addons-original-price"{% if initial_original_cents <= initial_discounted_cents %} style="display: none;"{% endif %}>{{ initial_original_cents | money }}</span>
+      {% if show_total %}
+        <div class="stackup-addons-total-box">
+          <div class="stackup-total-left">
+            <div class="stackup-total-label">Total for Selected Items</div>
+            <div class="stackup-prices">
+              <span class="stackup-addons-final-price">{{ initial_discounted_cents | money }}</span>
+              <span class="stackup-addons-original-price"{% if initial_original_cents <= initial_discounted_cents %} style="display: none;"{% endif %}>{{ initial_original_cents | money }}</span>
+            </div>
+          </div>
+          {% assign initial_savings = initial_original_cents | minus: initial_discounted_cents %}
+          <div class="stackup-addons-savings-pill"{% if initial_savings <= 0 %} style="display: none;"{% endif %}>
+            <span class="stackup-savings-bolt">⚡</span>
+            <span class="stackup-addons-savings-text">Save {{ initial_savings | money }} ({{ discount_pct }}% OFF)</span>
           </div>
         </div>
-        {% assign initial_savings = initial_original_cents | minus: initial_discounted_cents %}
-        <div class="stackup-addons-savings-pill"{% if initial_savings <= 0 %} style="display: none;"{% endif %}>
-          <span class="stackup-savings-bolt">⚡</span>
-          <span class="stackup-addons-savings-text">Save {{ initial_savings | money }} ({{ discount_pct }}% OFF)</span>
-        </div>
-      </div>
+      {% endif %}
 
       <!-- Out of Stock Alert -->
       <div class="stackup-addons-stock-alert" role="alert" style="display: none;">
@@ -431,7 +468,7 @@
           </svg>
         </span>
         <span class="stackup-addons-btn-text">
-          {{ block.settings.button_text | default: 'Add to Cart with Add-Ons' }}
+          {{ button_text | default: 'Add to Cart with Add-Ons' }}
         </span>
         <span class="stackup-addons-btn-spinner" style="display: none;">
           <svg
@@ -460,74 +497,8 @@
   "javascript": "stack-up.js",
   "settings": [
     {
-      "type": "text",
-      "id": "heading",
-      "label": "Widget Heading",
-      "default": "Special Add-Ons Just for You",
-      "info": "Leave blank to use the offer title defined in StackUp admin."
-    },
-    {
-      "type": "text",
-      "id": "subheading",
-      "label": "Subheading Text",
-      "default": "Recommended companion items for this product"
-    },
-    {
-      "type": "text",
-      "id": "button_text",
-      "label": "Button Text",
-      "default": "Add to Cart with Add-Ons"
-    },
-    {
-      "type": "checkbox",
-      "id": "checked_by_default",
-      "label": "Check add-on items by default",
-      "default": true
-    },
-    {
-      "type": "color",
-      "id": "card_bg",
-      "label": "Card Background",
-      "default": "#ffffff"
-    },
-    {
-      "type": "color",
-      "id": "border_color",
-      "label": "Border Color",
-      "default": "#e2e8f0"
-    },
-    {
-      "type": "range",
-      "id": "border_radius",
-      "label": "Border Radius (px)",
-      "min": 0,
-      "max": 24,
-      "step": 2,
-      "default": 12
-    },
-    {
-      "type": "color",
-      "id": "btn_bg",
-      "label": "Button Background Color",
-      "default": "#0f172a"
-    },
-    {
-      "type": "color",
-      "id": "btn_color",
-      "label": "Button Text Color",
-      "default": "#ffffff"
-    },
-    {
-      "type": "color",
-      "id": "badge_bg",
-      "label": "Savings Badge Background",
-      "default": "#ecfdf5"
-    },
-    {
-      "type": "color",
-      "id": "badge_color",
-      "label": "Savings Badge Text Color",
-      "default": "#065f46"
+      "type": "paragraph",
+      "content": "StackUp automatically displays recommended add-on items on matching product pages. Customize the colors, texts, and styling inside the StackUp app."
     }
   ]
 }

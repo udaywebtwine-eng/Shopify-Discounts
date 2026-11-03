@@ -21,21 +21,28 @@ import {
 } from "../utils/timezone";
 import { syncAllActiveSelectedOffersToShopMetafield } from "../utils/selectedOffersMetafields.server";
 import { getActiveMainProductsMap, checkMainProductConflicts } from "../utils/productConflicts.server";
+import SelectedWidgetPreview from "./components/Preview/SelectedWidgetPreview";
 
 export const loader = async ({ request }) => {
   const { admin, session } = await authenticate.admin(request);
   const shop = session?.shop || "";
 
   let functionId = null;
+  let widgetSettings = null;
   try {
     const response = await admin.graphql(
       `#graphql
-      query GetFunctionId {
+      query GetFunctionIdAndWidgetSettings {
         shopifyFunctions(first: 25) {
           nodes {
             id
             title
             apiType
+          }
+        }
+        shop {
+          metafield(namespace: "stack_up", key: "selected_widget_settings") {
+            value
           }
         }
       }`
@@ -48,6 +55,15 @@ export const loader = async ({ request }) => {
         fn.handle?.toLowerCase().includes("selected")
     );
     functionId = matched?.id || functions[0]?.id || null;
+
+    const rawMetafield = json.data?.shop?.metafield?.value;
+    if (rawMetafield) {
+      try {
+        widgetSettings = JSON.parse(rawMetafield);
+      } catch {
+        widgetSettings = null;
+      }
+    }
   } catch (err) {
     console.warn("Could not query shopifyFunctions:", err);
   }
@@ -72,7 +88,7 @@ export const loader = async ({ request }) => {
         : `/app/sected-products/edit/${info.numericId}`,
   }));
 
-  return { functionId, shopTimezone, timezoneAbbr, currentTime, shop, usedMainProducts };
+  return { functionId, shopTimezone, timezoneAbbr, currentTime, shop, usedMainProducts, widgetSettings };
 };
 
 export const action = async ({ request }) => {
