@@ -7,7 +7,7 @@ import SelectedWidgetPreview from "./components/Preview/SelectedWidgetPreview";
 // Default settings used as fallback if merchant hasn't saved customizations yet
 const DEFAULT_SETTINGS = {
   content: {
-    heading: "Special Add-Ons Just for You",
+    heading: "{widgettitle}",
     subheading: "Recommended companion items for this product",
     buttonText: "Add to Cart with Add-Ons",
     badgeText: "Save {percentage}% OFF Add-Ons",
@@ -64,6 +64,9 @@ export const loader = async ({ request }) => {
     if (rawMetafield) {
       try {
         savedSettings = JSON.parse(rawMetafield);
+        if (savedSettings?.content?.heading === "Special Add-Ons Just for You") {
+          savedSettings.content.heading = "{widgettitle}";
+        }
       } catch (e) {
         console.warn("Failed to parse selected_widget_settings:", e);
       }
@@ -285,10 +288,11 @@ export default function SelectedProductsCustomize() {
                 <s-divider />
                 <s-grid gap="base">
                   <s-text-field
-                    label="Widget Title / Heading"
+                    label="Widget Title / Heading (Use {widgettitle} variable)"
                     value={content.heading}
                     onInput={(e) => setContent({ ...content, heading: e.target.value })}
-                    placeholder="Special Add-Ons Just for You"
+                    placeholder="e.g. {widgettitle}"
+                    details="Use {widgettitle} to dynamically display each offer's individual title set in the offer editor."
                   ></s-text-field>
                   <s-text-field
                     label="Subheading Text"
@@ -573,7 +577,8 @@ export default function SelectedProductsCustomize() {
 
               {/* LIVE WIDGET PREVIEW */}
               <SelectedWidgetPreview
-                title={content.heading}
+                title="Special Add-Ons Just for You"
+                widgetTitle="Special Add-Ons Just for You"
                 percentage={15}
                 targetProducts={[{ title: "Floral Summer Dress", price: "$48.00" }]}
                 offeredProducts={[

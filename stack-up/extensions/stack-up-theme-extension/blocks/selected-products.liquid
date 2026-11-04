@@ -38,10 +38,20 @@
   {% if is_active_offer or is_editor %}
     {% if is_active_offer %}
       {% assign discount_pct = selected_offer.percentage | default: 10 %}
-      {% assign heading_text = custom_settings.content.heading %}
-      {% if heading_text == blank %}
-        {% assign heading_text = selected_offer.title | default: 'Special Add-Ons Just for You' %}
+      {% assign offer_custom_heading = selected_offer.widgetTitle | default: '' %}
+      {% assign global_heading = custom_settings.content.heading | default: '{widgettitle}' %}
+      {% if global_heading contains '{widgettitle}' %}
+        {% assign resolved_offer_title = offer_custom_heading %}
+        {% if resolved_offer_title == blank %}
+          {% assign resolved_offer_title = 'Special Add-Ons Just for You' %}
+        {% endif %}
+        {% assign heading_text = global_heading | replace: '{widgettitle}', resolved_offer_title %}
+      {% elsif offer_custom_heading != blank %}
+        {% assign heading_text = offer_custom_heading %}
+      {% else %}
+        {% assign heading_text = global_heading %}
       {% endif %}
+      {% assign heading_text = heading_text | replace: '{widgetname}', selected_offer.title | replace: '{offername}', selected_offer.title | replace: '{percentage}', discount_pct %}
       {% assign add_ons_list = selected_offer.offeredProducts %}
     {% else %}
       {% comment %} Sample Data for Theme Editor Preview {% endcomment %}

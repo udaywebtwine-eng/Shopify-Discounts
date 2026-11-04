@@ -36,6 +36,7 @@ model PairedOffer {
   discountId           String       @unique // e.g. gid://shopify/DiscountAutomaticNode/...
   numericId            String
   title                String
+  widgetTitle          String?
   percentage           Float
   status               String       @default("ACTIVE") // ACTIVE / EXPIRED
   combinesWithOrder    Boolean      @default(false)
@@ -59,6 +60,7 @@ model SelectedProductOffer {
   discountId           String       @unique // e.g. gid://shopify/DiscountAutomaticNode/...
   numericId            String
   title                String
+  widgetTitle          String?
   percentage           Float
   status               String       @default("ACTIVE") // ACTIVE / EXPIRED
   combinesWithOrder    Boolean      @default(false)

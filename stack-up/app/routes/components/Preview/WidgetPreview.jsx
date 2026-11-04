@@ -22,6 +22,7 @@ function formatMoney(amount) {
  */
 export default function WidgetPreview({
   title = "",
+  widgetTitle = "",
   percentage = 10,
   mainProducts = [],
   subProducts = [],
@@ -45,8 +46,19 @@ export default function WidgetPreview({
     buttonTextColor: widgetSettings?.styles?.buttonTextColor || "#ffffff",
   };
 
+  const globalHeading = widgetSettings?.content?.heading || "{widgettitle}";
+  const offerHeading = widgetTitle?.trim() || "Frequently Bought Together";
+  const baseHeading = globalHeading.includes("{widgettitle}")
+    ? globalHeading.replace(/{widgettitle}/gi, offerHeading)
+    : (widgetTitle?.trim() || globalHeading);
+
+  const resolvedHeading = baseHeading
+    .replace(/{widgetname}/gi, title || "Bundle")
+    .replace(/{offername}/gi, title || "Bundle")
+    .replace(/{percentage}/gi, String(percentage || "0"));
+
   const content = {
-    heading: widgetSettings?.content?.heading || "Frequently Bought Together",
+    heading: resolvedHeading,
     buttonText: widgetSettings?.content?.buttonText || "Add in cart",
   };
 

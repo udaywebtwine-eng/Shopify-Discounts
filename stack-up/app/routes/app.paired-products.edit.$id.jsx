@@ -327,6 +327,7 @@ export const loader = async ({ request, params }) => {
         discountNodeId: discountNode.id,
         shopifyStatus: disc.status || "ACTIVE",
         title: disc.title || "",
+        widgetTitle: config.widgetTitle || dbOffer?.widgetTitle || "",
         percentage: String(config.percentage || "20"),
         combinesWith: disc.combinesWith || {
             orderDiscounts: false,
@@ -499,6 +500,7 @@ export const action = async ({ request, params }) => {
 
     // Handle Update
     const title = (formData.get("title") || "").trim();
+    const widgetTitle = (formData.get("widgetTitle") || "").trim();
     const percentageStr = formData.get("percentage") || "";
     const percentage = parseFloat(percentageStr);
     const mainProductIdsRaw = formData.get("mainProductIds") || "[]";
@@ -601,6 +603,7 @@ export const action = async ({ request, params }) => {
         discountType: "PAIRED_PRODUCTS",
         percentage,
         title,
+        widgetTitle,
         mainProductIds,
         subProductIds,
         mainProducts: sanitizedMainProducts,
@@ -748,6 +751,7 @@ export const action = async ({ request, params }) => {
                             discountId: newDiscount.discountId,
                             numericId: newNumericId,
                             title,
+                            widgetTitle: widgetTitle || null,
                             percentage,
                             status: newDiscount.status || "ACTIVE",
                             combinesWithOrder,
@@ -780,6 +784,7 @@ export const action = async ({ request, params }) => {
                 where: { discountId: discountNodeId },
                 update: {
                     title,
+                    widgetTitle: widgetTitle || null,
                     percentage,
                     combinesWithOrder,
                     combinesWithProduct,
@@ -794,6 +799,7 @@ export const action = async ({ request, params }) => {
                     discountId: discountNodeId,
                     numericId,
                     title,
+                    widgetTitle: widgetTitle || null,
                     percentage,
                     status: "ACTIVE",
                     combinesWithOrder,
@@ -833,6 +839,7 @@ export default function PairedProductsEdit() {
     const shopify = useAppBridge();
 
     const [title, setTitle] = useState(data.title);
+    const [widgetTitle, setWidgetTitle] = useState(data.widgetTitle || "");
     const [percentage, setPercentage] = useState(data.percentage);
 
     // Main Products list
@@ -1061,6 +1068,7 @@ export default function PairedProductsEdit() {
     // Dirty detection comparing to initial loader state
     const isDirty = Boolean(
         title.trim() !== data.title ||
+        widgetTitle.trim() !== (data.widgetTitle || "") ||
         percentage !== data.percentage ||
         combinesWithOrder !== Boolean(data.combinesWith.orderDiscounts) ||
         combinesWithProduct !== Boolean(data.combinesWith.productDiscounts) ||
@@ -1182,6 +1190,7 @@ export default function PairedProductsEdit() {
         const formData = new FormData();
         formData.append("intent", "update");
         formData.append("title", title);
+        formData.append("widgetTitle", widgetTitle);
         formData.append("percentage", percentage);
         formData.append(
             "mainProductIds",
@@ -1453,11 +1462,12 @@ export default function PairedProductsEdit() {
                         >
                             <s-grid-item gridColumn="span 7">
                                 <s-text-field
-                                    label="Offer title"
+                                    label="Discount title (Internal & Checkout)"
                                     name="title"
                                     placeholder="e.g. Phone + Charger Bundle 20% OFF"
                                     value={title}
                                     onInput={(e) => setTitle(e.target.value)}
+                                    details="Shown at checkout and in Shopify Admin when this discount applies."
                                     required
                                 ></s-text-field>
                             </s-grid-item>
@@ -1473,6 +1483,17 @@ export default function PairedProductsEdit() {
                                     value={percentage}
                                     onInput={(e) => setPercentage(e.target.value)}
                                 ></s-number-field>
+                            </s-grid-item>
+
+                            <s-grid-item gridColumn="span 10">
+                                <s-text-field
+                                    label="Widget title (Displayed on Product Page)"
+                                    name="widgetTitle"
+                                    placeholder="e.g. Frequently Bought Together (leave blank for default)"
+                                    value={widgetTitle}
+                                    onInput={(e) => setWidgetTitle(e.target.value)}
+                                    details="Custom heading shown above the bundle widget on the storefront for this offer."
+                                ></s-text-field>
                             </s-grid-item>
                         </s-grid>
                     </s-section>
@@ -1898,6 +1919,7 @@ export default function PairedProductsEdit() {
             {/* Live Widget Preview */}
             <WidgetPreview
                 title={title}
+                widgetTitle={widgetTitle}
                 percentage={percentage}
                 mainProducts={mainProducts}
                 subProducts={subProducts}

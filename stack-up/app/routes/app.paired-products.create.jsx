@@ -122,6 +122,7 @@ export const action = async ({ request }) => {
   const formData = await request.formData();
 
   const title = (formData.get("title") || "").trim();
+  const widgetTitle = (formData.get("widgetTitle") || "").trim();
   const percentageStr = formData.get("percentage") || "";
   const percentage = parseFloat(percentageStr);
   const mainProductIdsRaw = formData.get("mainProductIds") || "[]";
@@ -224,6 +225,7 @@ export const action = async ({ request }) => {
     discountType: "PAIRED_PRODUCTS",
     percentage,
     title,
+    widgetTitle,
     mainProductIds,
     subProductIds,
     mainProducts: sanitizedMainProducts,
@@ -313,6 +315,7 @@ export const action = async ({ request }) => {
           discountId,
           numericId,
           title,
+          widgetTitle: widgetTitle || null,
           percentage,
           status: createdDiscount?.status || "ACTIVE",
           combinesWithOrder,
@@ -356,6 +359,7 @@ export default function CreatePairedProductsOffer() {
   const DEFAULT_PERCENTAGE = "10";
 
   const [title, setTitle] = useState("");
+  const [widgetTitle, setWidgetTitle] = useState("");
   const [percentage, setPercentage] = useState(DEFAULT_PERCENTAGE);
 
   // Main Products list
@@ -577,6 +581,7 @@ export default function CreatePairedProductsOffer() {
 
   const isDirty = Boolean(
     title.trim() !== "" ||
+    widgetTitle.trim() !== "" ||
     percentage !== DEFAULT_PERCENTAGE ||
     mainProducts.length > 0 ||
     subProducts.length > 0 ||
@@ -615,6 +620,7 @@ export default function CreatePairedProductsOffer() {
     e?.preventDefault?.();
     e?.stopPropagation?.();
     setTitle("");
+    setWidgetTitle("");
     setPercentage(DEFAULT_PERCENTAGE);
     setMainProducts([]);
     setSubProducts([]);
@@ -678,6 +684,7 @@ export default function CreatePairedProductsOffer() {
 
     const formData = new FormData();
     formData.append("title", title);
+    formData.append("widgetTitle", widgetTitle);
     formData.append("percentage", percentage);
     formData.append(
       "mainProductIds",
@@ -785,11 +792,12 @@ export default function CreatePairedProductsOffer() {
             >
               <s-grid-item gridColumn="span 7">
                 <s-text-field
-                  label="Offer title"
+                  label="Discount title (Internal & Checkout)"
                   name="title"
                   placeholder="e.g. Phone + Charger Bundle 20% OFF"
                   value={title}
                   onInput={(e) => setTitle(e.target.value)}
+                  details="Shown at checkout and in Shopify Admin when this discount applies."
                   required
                 ></s-text-field>
               </s-grid-item>
@@ -805,6 +813,17 @@ export default function CreatePairedProductsOffer() {
                   value={percentage}
                   onInput={(e) => setPercentage(e.target.value)}
                 ></s-number-field>
+              </s-grid-item>
+
+              <s-grid-item gridColumn="span 10">
+                <s-text-field
+                  label="Widget title (Displayed on Product Page)"
+                  name="widgetTitle"
+                  placeholder="e.g. Frequently Bought Together (leave blank for default)"
+                  value={widgetTitle}
+                  onInput={(e) => setWidgetTitle(e.target.value)}
+                  details="Custom heading shown above the bundle widget on the storefront for this offer."
+                ></s-text-field>
               </s-grid-item>
             </s-grid>
           </s-section>
@@ -1227,6 +1246,7 @@ export default function CreatePairedProductsOffer() {
       {/* Right side Sidebar: Live Widget Preview */}
       <WidgetPreview
         title={title}
+        widgetTitle={widgetTitle}
         percentage={percentage}
         mainProducts={mainProducts}
         subProducts={subProducts}

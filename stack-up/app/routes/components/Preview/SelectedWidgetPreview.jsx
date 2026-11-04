@@ -21,6 +21,7 @@ function formatMoney(amount) {
  */
 export default function SelectedWidgetPreview({
   title = "",
+  widgetTitle = "",
   percentage = 10,
   targetProducts = [],
   offeredProducts = [],
@@ -41,8 +42,19 @@ export default function SelectedWidgetPreview({
     totalBoxBg: widgetSettings?.styles?.totalBoxBg || "#f8fafc",
   };
 
+  const globalHeading = widgetSettings?.content?.heading || "{widgettitle}";
+  const offerHeading = widgetTitle?.trim() || "Special Add-Ons Just for You";
+  const baseHeading = globalHeading.includes("{widgettitle}")
+    ? globalHeading.replace(/{widgettitle}/gi, offerHeading)
+    : (widgetTitle?.trim() || globalHeading);
+
+  const resolvedHeading = baseHeading
+    .replace(/{widgetname}/gi, title || "Special Offer")
+    .replace(/{offername}/gi, title || "Special Offer")
+    .replace(/{percentage}/gi, String(percentage || "0"));
+
   const content = {
-    heading: widgetSettings?.content?.heading || "Special Add-Ons Just for You",
+    heading: resolvedHeading,
     subheading: widgetSettings?.content?.subheading || "Recommended companion items for this product",
     buttonText: widgetSettings?.content?.buttonText || "Add to Cart with Add-Ons",
     badgeText: widgetSettings?.content?.badgeText || "Save {percentage}% OFF Add-Ons",

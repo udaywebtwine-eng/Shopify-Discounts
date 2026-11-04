@@ -141,6 +141,7 @@ export async function syncAllActiveOffersToShopMetafield(admin) {
         const offerData = {
           offerId: offer.discountId,
           title: offer.title,
+          widgetTitle: offer.widgetTitle || "",
           percentage: offer.percentage,
           mainQuantity: mainQty,
           subProducts: enrichedSubProducts,

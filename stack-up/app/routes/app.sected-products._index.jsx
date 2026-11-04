@@ -666,6 +666,8 @@ export default function SelectedProducts() {
                                         <s-button
                                             slot="secondary-actions"
                                             onClick={handleCreateOffer}
+                                            loading={isCreateLoading ? true : undefined}
+                                            disabled={(isCreateLoading || isCustomizeLoading || isSubmitting || isNavigatingEdit) ? true : undefined}
                                         >
                                             Create offer
                                         </s-button>
@@ -683,6 +685,8 @@ export default function SelectedProducts() {
                                             slot="primary-action"
                                             variant="primary"
                                             onClick={handleCreateOffer}
+                                            loading={isCreateLoading ? true : undefined}
+                                            disabled={(isCreateLoading || isCustomizeLoading || isSubmitting || isNavigatingEdit) ? true : undefined}
                                         >
                                             Create offer
                                         </s-button>
@@ -792,7 +796,7 @@ export default function SelectedProducts() {
                                                     accessibilityLabel="Edit offer"
                                                     onClick={() => handleEditOffer(offer.numericId)}
                                                     loading={editingId === String(offer.numericId) ? true : undefined}
-                                                    disabled={(isSubmitting || isCreateLoading || isNavigatingEdit) ? true : undefined}
+                                                    disabled={(isSubmitting || isCreateLoading || isCustomizeLoading || isNavigatingEdit) ? true : undefined}
                                                 />
 
                                                 <s-button
@@ -804,7 +808,7 @@ export default function SelectedProducts() {
                                                     interestFor={`delete-tip-${offer.numericId}`}
                                                     accessibilityLabel="Delete offer"
                                                     loading={deletingId === String(offer.numericId) ? true : undefined}
-                                                    disabled={(isSubmitting || isCreateLoading || isNavigatingEdit) ? true : undefined}
+                                                    disabled={(isSubmitting || isCreateLoading || isCustomizeLoading || isNavigatingEdit) ? true : undefined}
                                                 />
 
                                                 <s-modal id={`delete-modal-${offer.numericId}`} heading="Delete offer?">
@@ -821,7 +825,7 @@ export default function SelectedProducts() {
                                                         command="--hide"
                                                         onClick={() => handleDelete(offer.id, offer.numericId)}
                                                         loading={deletingId === String(offer.numericId) ? true : undefined}
-                                                        disabled={(isSubmitting || isCreateLoading || isNavigatingEdit) ? true : undefined}
+                                                        disabled={(isSubmitting || isCreateLoading || isCustomizeLoading || isNavigatingEdit) ? true : undefined}
                                                     >
                                                         Delete offer
                                                     </s-button>
@@ -830,7 +834,7 @@ export default function SelectedProducts() {
                                                         variant="secondary"
                                                         commandFor={`delete-modal-${offer.numericId}`}
                                                         command="--hide"
-                                                        disabled={(isSubmitting || isCreateLoading || isNavigatingEdit) ? true : undefined}
+                                                        disabled={(isSubmitting || isCreateLoading || isCustomizeLoading || isNavigatingEdit) ? true : undefined}
                                                     >
                                                         Cancel
                                                     </s-button>

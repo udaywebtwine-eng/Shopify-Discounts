@@ -60,7 +60,20 @@
     {% endif %}
 
     {% comment %} Resolve Settings with Safe Defaults {% endcomment %}
-    {% assign heading = custom_settings.content.heading | default: 'Frequently Bought Together' %}
+    {% assign offer_custom_heading = bundle.widgetTitle | default: '' %}
+    {% assign global_heading = custom_settings.content.heading | default: '{widgettitle}' %}
+    {% if global_heading contains '{widgettitle}' %}
+      {% assign resolved_offer_title = offer_custom_heading %}
+      {% if resolved_offer_title == blank %}
+        {% assign resolved_offer_title = 'Frequently Bought Together' %}
+      {% endif %}
+      {% assign heading = global_heading | replace: '{widgettitle}', resolved_offer_title %}
+    {% elsif offer_custom_heading != blank %}
+      {% assign heading = offer_custom_heading %}
+    {% else %}
+      {% assign heading = global_heading %}
+    {% endif %}
+    {% assign heading = heading | replace: '{widgetname}', bundle.title | replace: '{offername}', bundle.title | replace: '{percentage}', discount_pct %}
     {% assign button_text = custom_settings.content.buttonText | default: default_btn_text %}
     {% assign badge_template = custom_settings.content.badgeText | default: 'Save {percentage}% OFF' %}
     {% assign badge_label = badge_template | replace: '{percentage}', discount_pct %}

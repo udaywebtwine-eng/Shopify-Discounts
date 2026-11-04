@@ -6,7 +6,7 @@ import { authenticate } from "../shopify.server";
 // Default settings used as fallback if merchant hasn't saved customizations yet
 const DEFAULT_SETTINGS = {
   content: {
-    heading: "Frequently Bought Together",
+    heading: "{widgettitle}",
     buttonText: "Add Both to Cart",
     badgeText: "Save {percentage}% OFF",
     subProductLabel: "Pair with:",
@@ -282,10 +282,11 @@ export default function PairedProductsCustomize() {
                 <s-divider />
                 <s-grid gap="base">
                   <s-text-field
-                    label="Widget Title"
+                    label="Widget Title (Use {widgettitle} variable)"
                     value={content.heading}
                     onInput={(e) => setContent({ ...content, heading: e.target.value })}
-                    placeholder="Frequently Bought Together"
+                    placeholder="e.g. {widgettitle}"
+                    details="Use {widgettitle} to dynamically display each offer's individual title set in the offer editor."
                   ></s-text-field>
                   <s-text-field
                     label="Button Text"
@@ -587,7 +588,12 @@ export default function PairedProductsCustomize() {
                     }}
                   >
                     <span>✨</span>
-                    <span>{content.heading || "Frequently Bought Together"}</span>
+                    <span>
+                      {(content.heading || "{widgettitle}")
+                        .replace(/{widgettitle}/gi, "Frequently Bought Together")
+                        .replace(/{widgetname}/gi, "Summer Combo")
+                        .replace(/{percentage}/gi, "20")}
+                    </span>
                   </div>
                 )}
 

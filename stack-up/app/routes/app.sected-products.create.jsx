@@ -96,6 +96,7 @@ export const action = async ({ request }) => {
   const formData = await request.formData();
 
   const title = (formData.get("title") || "").trim();
+  const widgetTitle = (formData.get("widgetTitle") || "").trim();
   const percentageStr = formData.get("percentage") || "";
   const percentage = parseFloat(percentageStr);
 
@@ -197,6 +198,7 @@ export const action = async ({ request }) => {
     discountType: "SELECTED_PRODUCTS",
     percentage,
     title,
+    widgetTitle,
     targetProductIds: sanitizedTargetProducts.map((p) => p.id),
     offeredProductIds: sanitizedOfferedProducts.map((p) => p.id),
     targetProducts: sanitizedTargetProducts,
@@ -273,6 +275,7 @@ export const action = async ({ request }) => {
           discountId,
           numericId,
           title,
+          widgetTitle: widgetTitle || null,
           percentage,
           status: createdDiscount?.status || "ACTIVE",
           combinesWithOrder,
@@ -315,6 +318,7 @@ export default function CreateSelectedProductsOffer() {
   const DEFAULT_PERCENTAGE = "10";
 
   const [title, setTitle] = useState("Special Add-Ons Just for You");
+  const [widgetTitle, setWidgetTitle] = useState("");
   const [percentage, setPercentage] = useState(DEFAULT_PERCENTAGE);
 
   // 1. Target / Main Products (where the widget appears)
@@ -507,6 +511,7 @@ export default function CreateSelectedProductsOffer() {
 
   const isDirty = Boolean(
     title.trim() !== "Special Add-Ons Just for You" ||
+    widgetTitle.trim() !== "" ||
     percentage !== DEFAULT_PERCENTAGE ||
     targetProducts.length > 0 ||
     offeredProducts.length > 0 ||
@@ -545,6 +550,7 @@ export default function CreateSelectedProductsOffer() {
     e?.preventDefault?.();
     e?.stopPropagation?.();
     setTitle("Special Add-Ons Just for You");
+    setWidgetTitle("");
     setPercentage(DEFAULT_PERCENTAGE);
     setTargetProducts([]);
     setOfferedProducts([]);
@@ -608,6 +614,7 @@ export default function CreateSelectedProductsOffer() {
 
     const formData = new FormData();
     formData.append("title", title);
+    formData.append("widgetTitle", widgetTitle);
     formData.append("percentage", percentage);
     formData.append(
       "targetProducts",
@@ -714,11 +721,12 @@ export default function CreateSelectedProductsOffer() {
             >
               <s-grid-item gridColumn="span 7">
                 <s-text-field
-                  label="Offer title / Heading"
+                  label="Discount title (Internal & Checkout)"
                   name="title"
-                  placeholder="e.g. Special Add-Ons Just for You"
+                  placeholder="e.g. Special Add-Ons 10% OFF"
                   value={title}
                   onInput={(e) => setTitle(e.target.value)}
+                  details="Shown at checkout and in Shopify Admin when this discount applies."
                   required
                 ></s-text-field>
               </s-grid-item>
@@ -734,6 +742,17 @@ export default function CreateSelectedProductsOffer() {
                   value={percentage}
                   onInput={(e) => setPercentage(e.target.value)}
                 ></s-number-field>
+              </s-grid-item>
+
+              <s-grid-item gridColumn="span 10">
+                <s-text-field
+                  label="Widget title (Displayed on Product Page)"
+                  name="widgetTitle"
+                  placeholder="e.g. Special Add-Ons Just for You (leave blank for default)"
+                  value={widgetTitle}
+                  onInput={(e) => setWidgetTitle(e.target.value)}
+                  details="Custom heading shown above the add-ons widget on the storefront for this offer."
+                ></s-text-field>
               </s-grid-item>
             </s-grid>
           </s-section>

@@ -166,6 +166,7 @@ export async function syncAllActiveSelectedOffersToShopMetafield(admin) {
           offerId: offer.discountId,
           numericId: offer.numericId,
           title: offer.title,
+          widgetTitle: offer.widgetTitle || "",
           percentage: offer.percentage,
           targetProductId: fullGid,
           offeredProducts: enrichedOfferedProducts,

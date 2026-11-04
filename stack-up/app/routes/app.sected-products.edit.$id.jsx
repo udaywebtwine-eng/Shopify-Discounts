@@ -312,6 +312,7 @@ export const loader = async ({ request, params }) => {
         discountNodeId: discountNode.id,
         shopifyStatus: disc.status || "ACTIVE",
         title: disc.title || "",
+        widgetTitle: config.widgetTitle || dbFallback?.widgetTitle || "",
         percentage: String(config.percentage || "10"),
         combinesWith: disc.combinesWith || {
             orderDiscounts: false,
@@ -470,6 +471,7 @@ export const action = async ({ request, params }) => {
     // Update
     if (intent === "update") {
         const title = (formData.get("title") || "").trim();
+        const widgetTitle = (formData.get("widgetTitle") || "").trim();
         const percentageStr = formData.get("percentage") || "";
         const percentage = parseFloat(percentageStr);
 
@@ -569,6 +571,7 @@ export const action = async ({ request, params }) => {
             discountType: "SELECTED_PRODUCTS",
             percentage,
             title,
+            widgetTitle,
             targetProductIds: sanitizedTargetProducts.map((p) => p.id),
             offeredProductIds: sanitizedOfferedProducts.map((p) => p.id),
             targetProducts: sanitizedTargetProducts,
@@ -638,6 +641,7 @@ export const action = async ({ request, params }) => {
                     where: { numericId },
                     data: {
                         title,
+                        widgetTitle: widgetTitle || null,
                         percentage,
                         status: updatedDiscount?.status || "ACTIVE",
                         combinesWithOrder,
@@ -676,6 +680,7 @@ export default function EditSelectedProductOffer() {
     const shopify = useAppBridge();
 
     const [title, setTitle] = useState(data.title);
+    const [widgetTitle, setWidgetTitle] = useState(data.widgetTitle || "");
     const [percentage, setPercentage] = useState(data.percentage);
 
     const [targetProducts, setTargetProducts] = useState(data.initialTargetProducts || []);
@@ -722,6 +727,7 @@ export default function EditSelectedProductOffer() {
 
     const isDirty = Boolean(
         title.trim() !== data.title ||
+        widgetTitle.trim() !== (data.widgetTitle || "") ||
         percentage !== data.percentage ||
         combinesWithOrder !== (data.combinesWith?.orderDiscounts || false) ||
         combinesWithProduct !== (data.combinesWith?.productDiscounts || false) ||
@@ -987,6 +993,7 @@ export default function EditSelectedProductOffer() {
         formData.append("intent", "update");
         formData.append("discountNodeId", data.discountNodeId);
         formData.append("title", title);
+        formData.append("widgetTitle", widgetTitle);
         formData.append("percentage", percentage);
         formData.append(
             "targetProducts",
@@ -1031,16 +1038,25 @@ export default function EditSelectedProductOffer() {
         submit(formData, { method: "post" });
     };
 
-    const handleToggleStatus = () => {
+    const handleDeactivateOffer = () => {
         setIsSaving(false);
         shopify.saveBar?.hide("edit-selected-offer-save-bar");
         const formData = new FormData();
-        formData.append("intent", data.shopifyStatus === "ACTIVE" ? "deactivate" : "activate");
+        formData.append("intent", "deactivate");
         formData.append("discountNodeId", data.discountNodeId);
         submit(formData, { method: "post" });
     };
 
-    const handleDelete = () => {
+    const handleActivateOffer = () => {
+        setIsSaving(false);
+        shopify.saveBar?.hide("edit-selected-offer-save-bar");
+        const formData = new FormData();
+        formData.append("intent", "activate");
+        formData.append("discountNodeId", data.discountNodeId);
+        submit(formData, { method: "post" });
+    };
+
+    const handleDeleteOffer = () => {
         setIsSaving(false);
         shopify.saveBar?.hide("edit-selected-offer-save-bar");
         const formData = new FormData();
@@ -1070,29 +1086,113 @@ export default function EditSelectedProductOffer() {
                 ? "Scheduled"
                 : "Expired";
 
+    const isDeactivatedOrExpired =
+        data.shopifyStatus === "EXPIRED" ||
+        (hasEndDate && endsAtDate && endsAtDate < todayStr);
+
     return (
         <s-page heading={data.title || "Edit Selected Products Offer"}>
             <s-link slot="breadcrumb-actions" href="/app/sected-products">
                 Selected Products Offers
             </s-link>
 
-            {/* Header Actions */}
+            {/* Official Polaris Web Component More Actions Menu */}
             <s-button
                 slot="secondary-actions"
-                commandFor="status-modal"
-                command="--show"
+                commandFor="offer-actions"
             >
-                {data.shopifyStatus === "ACTIVE" ? "Deactivate" : "Activate"}
+                More actions
             </s-button>
 
-            <s-button
-                slot="secondary-actions"
-                tone="critical"
-                commandFor="delete-modal"
-                command="--show"
+            <s-menu
+                id="offer-actions"
+                accessibilityLabel="Offer actions"
             >
-                Delete offer
-            </s-button>
+                {isDeactivatedOrExpired ? (
+                    <s-button onClick={handleActivateOffer}>
+                        Activate
+                    </s-button>
+                ) : (
+                    <s-button
+                        commandFor="deactivate-offer-modal"
+                        command="--show"
+                    >
+                        Deactivate
+                    </s-button>
+                )}
+
+                <s-button
+                    tone="critical"
+                    commandFor="delete-offer-modal"
+                    command="--show"
+                >
+                    Delete
+                </s-button>
+            </s-menu>
+
+            {/* Deactivate Confirmation Modal */}
+            <s-modal id="deactivate-offer-modal" heading="Deactivate offer?">
+                <s-stack gap="base">
+                    <s-paragraph>
+                        Are you sure you want to deactivate <b>&ldquo;{title || data.title}&rdquo;</b>? Customers will no longer receive this discount at checkout.
+                    </s-paragraph>
+                    {isDirty && (
+                        <s-paragraph tone="caution">
+                            Note: Any unsaved changes you made will be discarded.
+                        </s-paragraph>
+                    )}
+                </s-stack>
+
+                <s-button
+                    slot="primary-action"
+                    variant="primary"
+                    tone="critical"
+                    commandFor="deactivate-offer-modal"
+                    command="--hide"
+                    onClick={handleDeactivateOffer}
+                >
+                    Deactivate
+                </s-button>
+                <s-button
+                    slot="secondary-actions"
+                    variant="secondary"
+                    commandFor="deactivate-offer-modal"
+                    command="--hide"
+                >
+                    Cancel
+                </s-button>
+            </s-modal>
+
+            {/* Delete Confirmation Modal */}
+            <s-modal id="delete-offer-modal" heading="Delete offer?">
+                <s-stack gap="base">
+                    <s-paragraph>
+                        Are you sure you want to delete <b>&ldquo;{title || data.title}&rdquo;</b>?
+                    </s-paragraph>
+                    <s-paragraph tone="critical">
+                        This action cannot be undone.
+                    </s-paragraph>
+                </s-stack>
+
+                <s-button
+                    slot="primary-action"
+                    variant="primary"
+                    tone="critical"
+                    commandFor="delete-offer-modal"
+                    command="--hide"
+                    onClick={handleDeleteOffer}
+                >
+                    Delete offer
+                </s-button>
+                <s-button
+                    slot="secondary-actions"
+                    variant="secondary"
+                    commandFor="delete-offer-modal"
+                    command="--hide"
+                >
+                    Cancel
+                </s-button>
+            </s-modal>
 
             {/* SaveBar */}
             <SaveBar id="edit-selected-offer-save-bar" open={showSaveBar}>
@@ -1113,57 +1213,6 @@ export default function EditSelectedProductOffer() {
                     Discard
                 </button>
             </SaveBar>
-
-            {/* Modals */}
-            <s-modal id="status-modal" heading={`${data.shopifyStatus === "ACTIVE" ? "Deactivate" : "Activate"} offer?`}>
-                <s-stack gap="base">
-                    <s-text>
-                        {data.shopifyStatus === "ACTIVE"
-                            ? "Deactivating this offer will prevent the discount from being applied at checkout."
-                            : "Activating this offer will make the discount available at checkout immediately."}
-                    </s-text>
-                </s-stack>
-                <s-button
-                    slot="primary-action"
-                    variant="primary"
-                    commandFor="status-modal"
-                    command="--hide"
-                    onClick={handleToggleStatus}
-                >
-                    {data.shopifyStatus === "ACTIVE" ? "Deactivate" : "Activate"}
-                </s-button>
-                <s-button
-                    slot="secondary-actions"
-                    commandFor="status-modal"
-                    command="--hide"
-                >
-                    Cancel
-                </s-button>
-            </s-modal>
-
-            <s-modal id="delete-modal" heading="Delete offer?">
-                <s-stack gap="base">
-                    <s-text>Are you sure you want to delete <b>&ldquo;{data.title}&rdquo;</b>?</s-text>
-                    <s-text tone="caution">This action cannot be undone.</s-text>
-                </s-stack>
-                <s-button
-                    slot="primary-action"
-                    variant="primary"
-                    tone="critical"
-                    commandFor="delete-modal"
-                    command="--hide"
-                    onClick={handleDelete}
-                >
-                    Delete offer
-                </s-button>
-                <s-button
-                    slot="secondary-actions"
-                    commandFor="delete-modal"
-                    command="--hide"
-                >
-                    Cancel
-                </s-button>
-            </s-modal>
 
             <form
                 onSubmit={(e) => {
@@ -1199,10 +1248,12 @@ export default function EditSelectedProductOffer() {
                         >
                             <s-grid-item gridColumn="span 7">
                                 <s-text-field
-                                    label="Offer title / Heading"
+                                    label="Discount title (Internal & Checkout)"
                                     name="title"
+                                    placeholder="e.g. Special Add-Ons 10% OFF"
                                     value={title}
                                     onInput={(e) => setTitle(e.target.value)}
+                                    details="Shown at checkout and in Shopify Admin when this discount applies."
                                     required
                                 ></s-text-field>
                             </s-grid-item>
@@ -1217,6 +1268,17 @@ export default function EditSelectedProductOffer() {
                                     value={percentage}
                                     onInput={(e) => setPercentage(e.target.value)}
                                 ></s-number-field>
+                            </s-grid-item>
+
+                            <s-grid-item gridColumn="span 10">
+                                <s-text-field
+                                    label="Widget title (Displayed on Product Page)"
+                                    name="widgetTitle"
+                                    placeholder="e.g. Special Add-Ons Just for You (leave blank for default)"
+                                    value={widgetTitle}
+                                    onInput={(e) => setWidgetTitle(e.target.value)}
+                                    details="Custom heading shown above the add-ons widget on the storefront for this offer."
+                                ></s-text-field>
                             </s-grid-item>
                         </s-grid>
                     </s-section>
