@@ -19,3 +19,7 @@ description = "t:description"
 [[extensions.metafields]]
 namespace = "stack_up"
 key = "stack_up_app_enabled"
+
+[[extensions.metafields]]
+namespace = "stack_up"
+key = "selected_offers"

@@ -208,97 +208,42 @@ export const action = async ({ request }) => {
     products: sanitizedOfferedProducts,
   };
 
-  const mutation = `#graphql
-    mutation CreateAutomaticDiscount($automaticAppDiscount: DiscountAutomaticAppInput!) {
-      discountAutomaticAppCreate(automaticAppDiscount: $automaticAppDiscount) {
-        automaticAppDiscount {
-          discountId
-          title
-          status
-        }
-        userErrors {
-          field
-          message
-        }
-      }
-    }
-  `;
-
-  const effectiveFunctionId =
-    functionId || "gid://shopify/ShopifyFunction/selected-products-discount";
-
   const shopTimezone = await getShopTimezone(admin, session?.shop);
   const effectiveStartsAt = dateToShopISO(startsAtDate, startsAtTime, shopTimezone) || new Date().toISOString();
   const effectiveEndsAt = hasEndDate && endsAtDate ? dateToShopISO(endsAtDate, endsAtTime, shopTimezone) : undefined;
 
-  const variables = {
-    automaticAppDiscount: {
-      title,
-      functionId: effectiveFunctionId,
-      startsAt: effectiveStartsAt,
-      ...(effectiveEndsAt ? { endsAt: effectiveEndsAt } : {}),
-      discountClasses: ["PRODUCT"],
-      combinesWith: {
-        orderDiscounts: combinesWithOrder,
-        productDiscounts: combinesWithProduct,
-        shippingDiscounts: combinesWithShipping,
-      },
-      metafields: [
-        {
-          namespace: "$app:discount",
-          key: "function_configuration",
-          type: "json",
-          value: JSON.stringify(configPayload),
-        },
-      ],
-    },
-  };
+  // Generate unique internal ID for this offer (Single Master Engine Architecture)
+  const numericId = Date.now().toString();
+  const discountId = `gid://shopify/SelectedOffer/${numericId}`;
 
   try {
-    const response = await admin.graphql(mutation, { variables });
-    const json = await response.json();
+    await prisma.selectedProductOffer.create({
+      data: {
+        shop: session.shop,
+        discountId,
+        numericId,
+        title,
+        widgetTitle: widgetTitle || null,
+        percentage,
+        status: "ACTIVE",
+        combinesWithOrder,
+        combinesWithProduct,
+        combinesWithShipping,
+        startsAt: effectiveStartsAt ? new Date(effectiveStartsAt) : new Date(),
+        endsAt: effectiveEndsAt ? new Date(effectiveEndsAt) : null,
+        targetProducts: JSON.stringify(sanitizedTargetProducts),
+        offeredProducts: JSON.stringify(sanitizedOfferedProducts),
+        products: JSON.stringify(sanitizedOfferedProducts),
+      },
+    });
+    console.log("-------------------> 💾 [SelectedProducts: CreateAction] Saved to DB with ID:", numericId);
 
-    const userErrors = json.data?.discountAutomaticAppCreate?.userErrors || [];
-    if (userErrors.length > 0) {
-      return { error: userErrors.map((e) => e.message).join(", ") };
-    }
-
-    const createdDiscount = json.data?.discountAutomaticAppCreate?.automaticAppDiscount;
-    const discountId = createdDiscount?.discountId || "";
-    const numericId = discountId.split("/").pop() || "";
-
-    // Save to PostgreSQL DB
-    try {
-      await prisma.selectedProductOffer.create({
-        data: {
-          shop: session.shop,
-          discountId,
-          numericId,
-          title,
-          widgetTitle: widgetTitle || null,
-          percentage,
-          status: createdDiscount?.status || "ACTIVE",
-          combinesWithOrder,
-          combinesWithProduct,
-          combinesWithShipping,
-          startsAt: effectiveStartsAt ? new Date(effectiveStartsAt) : new Date(),
-          endsAt: effectiveEndsAt ? new Date(effectiveEndsAt) : null,
-          targetProducts: JSON.stringify(sanitizedTargetProducts),
-          offeredProducts: JSON.stringify(sanitizedOfferedProducts),
-          products: JSON.stringify(sanitizedOfferedProducts),
-        },
-      });
-      console.log("-------------------> 💾 [SelectedProducts: CreateAction] Saved to DB with ID:", numericId);
-    } catch (dbErr) {
-      console.error("-------------------> [SelectedProducts: CreateAction] Error saving to DB:", dbErr);
-    }
-
-    // Sync to Shop Metafield for instant storefront rendering
+    // Sync to Shop Metafield for instant storefront rendering & checkout evaluation
     await syncAllActiveSelectedOffersToShopMetafield(admin);
 
     return redirect("/app/sected-products?created=true");
   } catch (err) {
-    console.error("-------------------> [SelectedProducts: CreateAction] Error creating discount:", err);
+    console.error("-------------------> [SelectedProducts: CreateAction] Error saving offer:", err);
     return {
       error:
         err instanceof Error
@@ -1016,71 +961,23 @@ export default function CreateSelectedProductsOffer() {
           {/* Combinations */}
           <s-section heading="Combinations">
             <s-stack gap="base">
-              <s-paragraph tone="subdued">
-                Control whether this discount can be combined with other discounts.
-              </s-paragraph>
-
-              <s-box background="base" border="small" borderRadius="base">
-                <s-box padding="small-300">
-                  <s-stack direction="inline" justifyContent="space-between" alignItems="center">
-                    <s-stack direction="inline" gap="base" alignItems="center">
-                      <s-icon type="product-add" />
-                      <s-stack gap="extra-tight">
-                        <s-text weight="semibold">Product discounts</s-text>
-                        <s-text tone="subdued" size="small">
-                          Multiple can apply per order · One per product (best value wins)
-                        </s-text>
-                      </s-stack>
-                    </s-stack>
-                    <s-switch
-                      checked={combinesWithProduct}
-                      onChange={(e) => setCombinesWithProduct(Boolean(e.target.checked ?? e.currentTarget.checked))}
-                      accessibilityLabel="Combine with Product discounts"
-                    ></s-switch>
+              <s-box
+                background="base"
+                border="small"
+                borderRadius="base"
+                padding="base"
+              >
+                <s-stack direction="inline" gap="base" alignItems="center">
+                  <s-box padding="small" background="subdued" borderRadius="base">
+                    <s-icon type="settings" />
+                  </s-box>
+                  <s-stack gap="extra-tight">
+                    <s-text weight="semibold">Managed store-wide in App Settings</s-text>
+                    <s-paragraph tone="subdued" size="small">
+                      Discount combinations (Product, Order, and Shipping) apply globally across all offers. You can configure them anytime in <s-link href="/app">App Settings → Checkout discount & Combinations</s-link>.
+                    </s-paragraph>
                   </s-stack>
-                </s-box>
-
-                <s-divider />
-
-                <s-box padding="small-300">
-                  <s-stack direction="inline" justifyContent="space-between" alignItems="center">
-                    <s-stack direction="inline" gap="base" alignItems="center">
-                      <s-icon type="order" />
-                      <s-stack gap="extra-tight">
-                        <s-text weight="semibold">Order discounts</s-text>
-                        <s-text tone="subdued" size="small">
-                          Multiple can apply per order
-                        </s-text>
-                      </s-stack>
-                    </s-stack>
-                    <s-switch
-                      checked={combinesWithOrder}
-                      onChange={(e) => setCombinesWithOrder(Boolean(e.target.checked ?? e.currentTarget.checked))}
-                      accessibilityLabel="Combine with Order discounts"
-                    ></s-switch>
-                  </s-stack>
-                </s-box>
-
-                <s-divider />
-
-                <s-box padding="small-300">
-                  <s-stack direction="inline" justifyContent="space-between" alignItems="center">
-                    <s-stack direction="inline" gap="base" alignItems="center">
-                      <s-icon type="delivery" />
-                      <s-stack gap="extra-tight">
-                        <s-text weight="semibold">Shipping discounts</s-text>
-                        <s-text tone="subdued" size="small">
-                          Only one can apply per order (best value wins)
-                        </s-text>
-                      </s-stack>
-                    </s-stack>
-                    <s-switch
-                      checked={combinesWithShipping}
-                      onChange={(e) => setCombinesWithShipping(Boolean(e.target.checked ?? e.currentTarget.checked))}
-                      accessibilityLabel="Combine with Shipping discounts"
-                    ></s-switch>
-                  </s-stack>
-                </s-box>
+                </s-stack>
               </s-box>
             </s-stack>
           </s-section>
@@ -1149,15 +1046,7 @@ export default function CreateSelectedProductsOffer() {
           <s-stack gap="tight">
             <s-text weight="bold">Combinations</s-text>
             <s-paragraph tone="subdued">
-              {combinesWithProduct || combinesWithOrder || combinesWithShipping ? (
-                <>
-                  {combinesWithProduct && "• Combines with Product discounts\n"}
-                  {combinesWithOrder && "• Combines with Order discounts\n"}
-                  {combinesWithShipping && "• Combines with Shipping discounts\n"}
-                </>
-              ) : (
-                "• Cannot be combined with other discounts"
-              )}
+              • Managed store-wide in <s-link href="/app">Settings</s-link>
             </s-paragraph>
           </s-stack>
         </s-stack>

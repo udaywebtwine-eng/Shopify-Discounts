@@ -31,87 +31,17 @@ export const loader = async ({ request, params }) => {
     const numericId = params.id;
     const shop = session?.shop || "";
 
-    console.log("-------------------> [SelectedProducts: EditLoader] Loading offer for numericId:", numericId);
+    console.log("-------------------> [SelectedProducts: EditLoader] Loading offer from DB for numericId:", numericId);
 
-    let discountNode = null;
-    let shopTimezone = "UTC";
-    let widgetSettings = null;
-
-    const possibleIds = [
-        `gid://shopify/DiscountAutomaticNode/${numericId}`,
-        `gid://shopify/DiscountAutomaticApp/${numericId}`,
-    ];
-
-    // Single batched query for discountNode + shop timezone
-    for (const gid of possibleIds) {
-        try {
-            const response = await admin.graphql(
-                `#graphql
-                query GetDiscountAndShopDetails($id: ID!) {
-                    discountNode(id: $id) {
-                        id
-                        discount {
-                            __typename
-                            ... on DiscountAutomaticApp {
-                                title
-                                status
-                                startsAt
-                                endsAt
-                                combinesWith {
-                                    orderDiscounts
-                                    productDiscounts
-                                    shippingDiscounts
-                                }
-                            }
-                        }
-                        metafield(namespace: "$app:discount", key: "function_configuration") {
-                            id
-                            value
-                        }
-                    }
-                    shop {
-                        ianaTimezone
-                        metafield(namespace: "stack_up", key: "selected_widget_settings") {
-                            value
-                        }
-                    }
-                }`,
-                { variables: { id: gid } }
-            );
-            const json = await response.json();
-            const data = json.data;
-
-            if (data?.shop?.ianaTimezone) {
-                shopTimezone = data.shop.ianaTimezone;
-                if (shop) setShopTimezoneCache(shop, shopTimezone);
-            }
-
-            const rawWidgetMetafield = data?.shop?.metafield?.value;
-            if (rawWidgetMetafield) {
-                try {
-                    widgetSettings = JSON.parse(rawWidgetMetafield);
-                } catch {
-                    widgetSettings = null;
-                }
-            }
-
-            if (data?.discountNode?.discount) {
-                discountNode = data.discountNode;
-                break;
-            }
-        } catch (e) {
-            console.warn("-------------------> [SelectedProducts: EditLoader] Query failed for", gid, e);
-        }
-    }
-
-    // Parallel DB fallback and order sync
-    const [dbFallback] = await Promise.all([
+    // Fetch offer from DB (Master Engine architecture: DB is the single source of truth)
+    const [dbFallback, shopTimezoneRes] = await Promise.all([
         prisma.selectedProductOffer.findFirst({
             where: {
                 OR: [
                     { numericId },
-                    { discountId: `gid://shopify/DiscountAutomaticNode/${numericId}` },
                     { id: numericId },
+                    { discountId: `gid://shopify/SelectedOffer/${numericId}` },
+                    { discountId: `gid://shopify/DiscountAutomaticNode/${numericId}` },
                 ],
             },
             include: {
@@ -120,79 +50,51 @@ export const loader = async ({ request, params }) => {
                     orderBy: { createdAt: "desc" },
                 },
             },
-        }).catch((e) => {
-            console.warn("Could not query DB for offer:", e);
-            return null;
         }),
-        shop
-            ? syncRecentOrdersFromShopify(admin, shop).catch((e) => {
-                console.warn("Could not sync recent orders in edit loader:", e);
-                return 0;
-            })
-            : Promise.resolve(0),
+        getShopTimezone(admin, shop),
     ]);
 
-    if (!discountNode) {
-        if (!dbFallback) {
-            throw new Response("Selected Product Offer Not Found", { status: 404 });
-        }
-
-        let parsedTargets = [];
-        let parsedOffered = [];
-        try {
-            parsedTargets = JSON.parse(dbFallback.targetProducts || "[]");
-            parsedOffered = JSON.parse(dbFallback.offeredProducts || dbFallback.products || "[]");
-        } catch {}
-
-        discountNode = {
-            id: dbFallback.discountId || `gid://shopify/DiscountAutomaticNode/${numericId}`,
-            discount: {
-                title: dbFallback.title,
-                status: dbFallback.status || "ACTIVE",
-                startsAt: dbFallback.startsAt ? dbFallback.startsAt.toISOString() : null,
-                endsAt: dbFallback.endsAt ? dbFallback.endsAt.toISOString() : null,
-                combinesWith: {
-                    orderDiscounts: dbFallback.combinesWithOrder,
-                    productDiscounts: dbFallback.combinesWithProduct,
-                    shippingDiscounts: dbFallback.combinesWithShipping,
-                },
-            },
-            metafield: {
-                id: null,
-                value: JSON.stringify({
-                    discountType: "SELECTED_PRODUCTS",
-                    percentage: dbFallback.percentage,
-                    title: dbFallback.title,
-                    targetProducts: parsedTargets,
-                    offeredProducts: parsedOffered,
-                }),
-            },
-        };
+    if (!dbFallback) {
+        throw new Response("Selected Product Offer Not Found", { status: 404 });
     }
 
-    const disc = discountNode.discount;
-    let config = {};
+    const shopTimezone = shopTimezoneRes || "UTC";
+    if (shop && shopTimezone) setShopTimezoneCache(shop, shopTimezone);
+
+    // Fetch widget settings and sync recent orders in background
+    let widgetSettings = null;
     try {
-        config = JSON.parse(discountNode.metafield?.value || "{}");
-    } catch {
-        config = {};
+        const metaRes = await admin.graphql(
+            `#graphql
+            query GetSelectedWidgetSettings {
+                shop {
+                    metafield(namespace: "stack_up", key: "selected_widget_settings") {
+                        value
+                    }
+                }
+            }`
+        );
+        const metaJson = await metaRes.json();
+        const rawWidgetMetafield = metaJson.data?.shop?.metafield?.value;
+        if (rawWidgetMetafield) {
+            try { widgetSettings = JSON.parse(rawWidgetMetafield); } catch {}
+        }
+    } catch (e) {
+        console.warn("Could not query widget settings:", e);
     }
 
-    let rawTargets = Array.isArray(config.targetProducts) ? config.targetProducts : [];
-    let rawOffered = Array.isArray(config.offeredProducts) ? config.offeredProducts : [];
-
-    // Fallback to legacy single products list if target/offered not yet split
-    if (rawTargets.length === 0 && rawOffered.length === 0 && Array.isArray(config.products)) {
-        rawOffered = config.products;
+    if (shop) {
+        syncRecentOrdersFromShopify(admin, shop).catch((e) =>
+            console.warn("Could not sync recent orders in edit loader:", e)
+        );
     }
 
-    // Fallback to DB fields if Shopify metafield was missing them
-    if (rawTargets.length === 0 && dbFallback?.targetProducts && dbFallback.targetProducts !== "[]") {
-        try { rawTargets = JSON.parse(dbFallback.targetProducts); } catch {}
-    }
-    if (rawOffered.length === 0 && dbFallback?.offeredProducts && dbFallback.offeredProducts !== "[]") {
-        try { rawOffered = JSON.parse(dbFallback.offeredProducts); } catch {}
-    }
+    let rawTargets = [];
+    let rawOffered = [];
+    try {
+        rawTargets = JSON.parse(dbFallback.targetProducts || "[]");
+        rawOffered = JSON.parse(dbFallback.offeredProducts || dbFallback.products || "[]");
+    } catch {}
 
     const allProductIds = [
         ...new Set([
@@ -293,7 +195,7 @@ export const loader = async ({ request, params }) => {
     const usedMainMap = await getActiveMainProductsMap({
         shop,
         offerType: "SELECTED",
-        excludeDiscountId: discountNode.id,
+        excludeDiscountId: dbFallback.discountId,
         excludeNumericId: numericId,
     });
     const usedMainProducts = Array.from(usedMainMap.entries()).map(([numId, info]) => ({
@@ -307,25 +209,30 @@ export const loader = async ({ request, params }) => {
                 : `/app/sected-products/edit/${info.numericId}`,
     }));
 
+    const startsAtDate = dbFallback.startsAt ? formatDateInShopTimezone(dbFallback.startsAt, shopTimezone) : "";
+    const startsAtTime = dbFallback.startsAt ? formatTimeInShopTimezone(dbFallback.startsAt, shopTimezone, "00:00:00") : "00:00:00";
+    const endsAtDate = dbFallback.endsAt ? formatDateInShopTimezone(dbFallback.endsAt, shopTimezone) : "";
+    const endsAtTime = dbFallback.endsAt ? formatTimeInShopTimezone(dbFallback.endsAt, shopTimezone, "23:59:59") : "23:59:59";
+
     return {
         numericId,
-        discountNodeId: discountNode.id,
-        shopifyStatus: disc.status || "ACTIVE",
-        title: disc.title || "",
-        widgetTitle: config.widgetTitle || dbFallback?.widgetTitle || "",
-        percentage: String(config.percentage || "10"),
-        combinesWith: disc.combinesWith || {
-            orderDiscounts: false,
-            productDiscounts: false,
-            shippingDiscounts: false,
+        discountNodeId: dbFallback.discountId || `gid://shopify/SelectedOffer/${numericId}`,
+        shopifyStatus: dbFallback.status || "ACTIVE",
+        title: dbFallback.title || "",
+        widgetTitle: dbFallback.widgetTitle || "",
+        percentage: String(dbFallback.percentage || "10"),
+        combinesWith: {
+            orderDiscounts: Boolean(dbFallback.combinesWithOrder),
+            productDiscounts: Boolean(dbFallback.combinesWithProduct),
+            shippingDiscounts: Boolean(dbFallback.combinesWithShipping),
         },
-        startsAtDate: disc.startsAt ? formatDateInShopTimezone(disc.startsAt, shopTimezone) : "",
-        startsAtTime: disc.startsAt ? formatTimeInShopTimezone(disc.startsAt, shopTimezone, "00:00:00") : "00:00:00",
-        endsAtDate: disc.endsAt ? formatDateInShopTimezone(disc.endsAt, shopTimezone) : "",
-        endsAtTime: disc.endsAt ? formatTimeInShopTimezone(disc.endsAt, shopTimezone, "23:59:59") : "23:59:59",
-        startsAt: disc.startsAt ? formatDateInShopTimezone(disc.startsAt, shopTimezone) : "",
-        endsAt: disc.endsAt ? formatDateInShopTimezone(disc.endsAt, shopTimezone) : "",
-        hasEndDate: Boolean(disc.endsAt),
+        startsAtDate,
+        startsAtTime,
+        endsAtDate,
+        endsAtTime,
+        startsAt: startsAtDate,
+        endsAt: endsAtDate,
+        hasEndDate: Boolean(dbFallback.endsAt),
         shopTimezone,
         timezoneAbbr: getTimezoneAbbr(shopTimezone),
         initialTargetProducts,
@@ -333,10 +240,10 @@ export const loader = async ({ request, params }) => {
         usedMainProducts,
         widgetSettings,
         analytics: {
-            usageCount: dbFallback?.usageCount || 0,
-            totalRevenue: dbFallback?.totalRevenue || 0,
-            totalDiscountAmount: dbFallback?.totalDiscountAmount || 0,
-            recentOrders: dbFallback?.orders || [],
+            usageCount: dbFallback.usageCount || 0,
+            totalRevenue: dbFallback.totalRevenue || 0,
+            totalDiscountAmount: dbFallback.totalDiscountAmount || 0,
+            recentOrders: dbFallback.orders || [],
         },
         shop,
     };
@@ -348,127 +255,58 @@ export const action = async ({ request, params }) => {
     const formData = await request.formData();
     const intent = formData.get("intent") || "update";
 
-    // Deactivate
+    const offerWhere = {
+        OR: [
+            { numericId },
+            { discountId: `gid://shopify/SelectedProductOffer/${numericId}` },
+            { discountId: `gid://shopify/DiscountAutomaticNode/${numericId}` },
+            { id: numericId },
+        ],
+    };
+
+    // Deactivate offer
     if (intent === "deactivate") {
-        const targetId = formData.get("discountNodeId") || `gid://shopify/DiscountAutomaticNode/${numericId}`;
         try {
-            const response = await admin.graphql(
-                `#graphql
-                mutation DeactivateAutomaticDiscount($id: ID!) {
-                    discountAutomaticDeactivate(id: $id) {
-                        automaticDiscountNode {
-                            id
-                        }
-                        userErrors {
-                            field
-                            message
-                        }
-                    }
-                }`,
-                { variables: { id: targetId } }
-            );
-            const json = await response.json();
-            const userErrors = json.data?.discountAutomaticDeactivate?.userErrors || [];
-            if (userErrors.length > 0) {
-                return { error: userErrors.map((e) => e.message).join(", ") };
-            }
-
-            try {
-                await prisma.selectedProductOffer.updateMany({
-                    where: { numericId },
-                    data: { status: "EXPIRED" },
-                });
-                await syncAllActiveSelectedOffersToShopMetafield(admin);
-            } catch (dbErr) {
-                console.warn("Could not sync deactivation to DB:", dbErr);
-            }
-
+            await prisma.selectedProductOffer.updateMany({
+                where: offerWhere,
+                data: { status: "EXPIRED" },
+            });
+            await syncAllActiveSelectedOffersToShopMetafield(admin);
             return redirect(`/app/sected-products/edit/${numericId}`);
         } catch (err) {
             return { error: err instanceof Error ? err.message : "Failed to deactivate offer." };
         }
     }
 
-    // Activate
+    // Activate offer
     if (intent === "activate") {
-        const targetId = formData.get("discountNodeId") || `gid://shopify/DiscountAutomaticNode/${numericId}`;
         try {
-            const response = await admin.graphql(
-                `#graphql
-                mutation ActivateAutomaticDiscount($id: ID!) {
-                    discountAutomaticActivate(id: $id) {
-                        automaticDiscountNode {
-                            id
-                        }
-                        userErrors {
-                            field
-                            message
-                        }
-                    }
-                }`,
-                { variables: { id: targetId } }
-            );
-            const json = await response.json();
-            const userErrors = json.data?.discountAutomaticActivate?.userErrors || [];
-            if (userErrors.length > 0) {
-                return { error: userErrors.map((e) => e.message).join(", ") };
-            }
-
-            try {
-                await prisma.selectedProductOffer.updateMany({
-                    where: { numericId },
-                    data: { status: "ACTIVE" },
-                });
-                await syncAllActiveSelectedOffersToShopMetafield(admin);
-            } catch (dbErr) {
-                console.warn("Could not sync activation to DB:", dbErr);
-            }
-
+            await prisma.selectedProductOffer.updateMany({
+                where: offerWhere,
+                data: { status: "ACTIVE" },
+            });
+            await syncAllActiveSelectedOffersToShopMetafield(admin);
             return redirect(`/app/sected-products/edit/${numericId}`);
         } catch (err) {
             return { error: err instanceof Error ? err.message : "Failed to activate offer." };
         }
     }
 
-    // Delete
+    // Delete offer
     if (intent === "delete") {
-        const targetId = formData.get("discountNodeId") || `gid://shopify/DiscountAutomaticNode/${numericId}`;
         try {
-            const response = await admin.graphql(
-                `#graphql
-                mutation DeleteAutomaticDiscount($id: ID!) {
-                    discountAutomaticDelete(id: $id) {
-                        deletedAutomaticDiscountId
-                        userErrors {
-                            field
-                            message
-                        }
-                    }
-                }`,
-                { variables: { id: targetId } }
-            );
-            const json = await response.json();
-            const userErrors = json.data?.discountAutomaticDelete?.userErrors || [];
-            if (userErrors.length > 0) {
-                return { error: userErrors.map((e) => e.message).join(", ") };
-            }
-
-            try {
-                await prisma.selectedProductOffer.deleteMany({
-                    where: { numericId },
-                });
-                await syncAllActiveSelectedOffersToShopMetafield(admin);
-            } catch (dbErr) {
-                console.warn("Could not delete from DB:", dbErr);
-            }
-
+            await prisma.selectedProductOffer.deleteMany({
+                where: offerWhere,
+            });
+            await syncAllActiveSelectedOffersToShopMetafield(admin);
+            console.log("-------------------> 🗑️ [SelectedProducts: Delete] Deleted offer from DB:", numericId);
             return redirect("/app/sected-products?deleted=true");
         } catch (err) {
             return { error: err instanceof Error ? err.message : "Failed to delete offer." };
         }
     }
 
-    // Update
+    // Update offer
     if (intent === "update") {
         const title = (formData.get("title") || "").trim();
         const widgetTitle = (formData.get("widgetTitle") || "").trim();
@@ -486,7 +324,6 @@ export const action = async ({ request, params }) => {
         const hasEndDate = formData.get("hasEndDate") === "true";
         const endsAtDate = hasEndDate ? (formData.get("endsAtDate") || formData.get("endsAt") || "").trim() : null;
         const endsAtTime = hasEndDate ? (formData.get("endsAtTime") || "23:59:59").trim() : null;
-        const discountNodeId = formData.get("discountNodeId") || `gid://shopify/DiscountAutomaticNode/${numericId}`;
 
         if (!title) {
             return { error: "Please enter an offer title." };
@@ -517,7 +354,6 @@ export const action = async ({ request, params }) => {
             products: targetProducts,
             shop: session?.shop,
             offerType: "SELECTED",
-            excludeDiscountId: `gid://shopify/DiscountAutomaticNode/${numericId}`,
             excludeNumericId: numericId,
         });
         if (conflictCheck.hasConflict) {
@@ -567,102 +403,35 @@ export const action = async ({ request, params }) => {
                 : [],
         }));
 
-        const configPayload = {
-            discountType: "SELECTED_PRODUCTS",
-            percentage,
-            title,
-            widgetTitle,
-            targetProductIds: sanitizedTargetProducts.map((p) => p.id),
-            offeredProductIds: sanitizedOfferedProducts.map((p) => p.id),
-            targetProducts: sanitizedTargetProducts,
-            offeredProducts: sanitizedOfferedProducts,
-            // Backwards compatibility for function
-            productIds: sanitizedOfferedProducts.map((p) => p.id),
-            products: sanitizedOfferedProducts,
-        };
-
         const shopTimezone = await getShopTimezone(admin, session?.shop);
         const effectiveStartsAt = dateToShopISO(startsAtDate, startsAtTime, shopTimezone) || new Date().toISOString();
         const effectiveEndsAt = hasEndDate && endsAtDate ? dateToShopISO(endsAtDate, endsAtTime, shopTimezone) : null;
 
-        const updateVariables = {
-            id: discountNodeId,
-            automaticAppDiscount: {
-                title,
-                startsAt: effectiveStartsAt,
-                endsAt: effectiveEndsAt,
-                discountClasses: ["PRODUCT"],
-                combinesWith: {
-                    orderDiscounts: combinesWithOrder,
-                    productDiscounts: combinesWithProduct,
-                    shippingDiscounts: combinesWithShipping,
-                },
-                metafields: [
-                    {
-                        namespace: "$app:discount",
-                        key: "function_configuration",
-                        type: "json",
-                        value: JSON.stringify(configPayload),
-                    },
-                ],
-            },
-        };
-
         try {
-            const response = await admin.graphql(
-                `#graphql
-                mutation UpdateAutomaticDiscount($id: ID!, $automaticAppDiscount: DiscountAutomaticAppInput!) {
-                    discountAutomaticAppUpdate(id: $id, automaticAppDiscount: $automaticAppDiscount) {
-                        automaticAppDiscount {
-                            discountId
-                            title
-                            status
-                        }
-                        userErrors {
-                            field
-                            message
-                        }
-                    }
-                }`,
-                { variables: updateVariables }
-            );
+            await prisma.selectedProductOffer.updateMany({
+                where: offerWhere,
+                data: {
+                    title,
+                    widgetTitle: widgetTitle || null,
+                    percentage,
+                    combinesWithOrder,
+                    combinesWithProduct,
+                    combinesWithShipping,
+                    startsAt: effectiveStartsAt ? new Date(effectiveStartsAt) : undefined,
+                    endsAt: effectiveEndsAt ? new Date(effectiveEndsAt) : null,
+                    targetProducts: JSON.stringify(sanitizedTargetProducts),
+                    offeredProducts: JSON.stringify(sanitizedOfferedProducts),
+                    products: JSON.stringify(sanitizedOfferedProducts),
+                },
+            });
+            console.log("-------------------> 💾 [SelectedProducts: UpdateAction] Successfully updated DB for offer:", numericId);
 
-            const json = await response.json();
-            const userErrors = json.data?.discountAutomaticAppUpdate?.userErrors || [];
-            if (userErrors.length > 0) {
-                return { error: userErrors.map((e) => e.message).join(", ") };
-            }
-
-            const updatedDiscount = json.data?.discountAutomaticAppUpdate?.automaticAppDiscount;
-
-            // Update PostgreSQL DB
-            try {
-                await prisma.selectedProductOffer.updateMany({
-                    where: { numericId },
-                    data: {
-                        title,
-                        widgetTitle: widgetTitle || null,
-                        percentage,
-                        status: updatedDiscount?.status || "ACTIVE",
-                        combinesWithOrder,
-                        combinesWithProduct,
-                        combinesWithShipping,
-                        startsAt: effectiveStartsAt ? new Date(effectiveStartsAt) : undefined,
-                        endsAt: effectiveEndsAt ? new Date(effectiveEndsAt) : null,
-                        targetProducts: JSON.stringify(sanitizedTargetProducts),
-                        offeredProducts: JSON.stringify(sanitizedOfferedProducts),
-                        products: JSON.stringify(sanitizedOfferedProducts),
-                    },
-                });
-            } catch (dbErr) {
-                console.warn("Could not update DB:", dbErr);
-            }
-
-            // Sync Shop Metafield
+            // Sync Shop Metafield for instant storefront rendering & checkout evaluation
             await syncAllActiveSelectedOffersToShopMetafield(admin);
 
-            return redirect("/app/sected-products?updated=true");
+            return redirect(`/app/sected-products?updated=true`);
         } catch (err) {
+            console.error("-------------------> [SelectedProducts: UpdateAction] Update error:", err);
             return {
                 error: err instanceof Error ? err.message : "Failed to update offer.",
             };
@@ -1542,71 +1311,23 @@ export default function EditSelectedProductOffer() {
                     {/* Combinations */}
                     <s-section heading="Combinations">
                         <s-stack gap="base">
-                            <s-paragraph tone="subdued">
-                                Control whether this discount can be combined with other discounts.
-                            </s-paragraph>
-
-                            <s-box background="base" border="small" borderRadius="base">
-                                <s-box padding="small-300">
-                                    <s-stack direction="inline" justifyContent="space-between" alignItems="center">
-                                        <s-stack direction="inline" gap="base" alignItems="center">
-                                            <s-icon type="product-add" />
-                                            <s-stack gap="extra-tight">
-                                                <s-text weight="semibold">Product discounts</s-text>
-                                                <s-text tone="subdued" size="small">
-                                                    Multiple can apply per order · One per product (best value wins)
-                                                </s-text>
-                                            </s-stack>
-                                        </s-stack>
-                                        <s-switch
-                                            checked={combinesWithProduct}
-                                            onChange={(e) => setCombinesWithProduct(Boolean(e.target.checked ?? e.currentTarget.checked))}
-                                            accessibilityLabel="Combine with Product discounts"
-                                        ></s-switch>
+                            <s-box
+                                background="base"
+                                border="small"
+                                borderRadius="base"
+                                padding="base"
+                            >
+                                <s-stack direction="inline" gap="base" alignItems="center">
+                                    <s-box padding="small" background="subdued" borderRadius="base">
+                                        <s-icon type="settings" />
+                                    </s-box>
+                                    <s-stack gap="extra-tight">
+                                        <s-text weight="semibold">Managed store-wide in App Settings</s-text>
+                                        <s-paragraph tone="subdued" size="small">
+                                            Discount combinations (Product, Order, and Shipping) apply globally across all offers. You can configure them anytime in <s-link href="/app">App Settings → Checkout discount & Combinations</s-link>.
+                                        </s-paragraph>
                                     </s-stack>
-                                </s-box>
-
-                                <s-divider />
-
-                                <s-box padding="small-300">
-                                    <s-stack direction="inline" justifyContent="space-between" alignItems="center">
-                                        <s-stack direction="inline" gap="base" alignItems="center">
-                                            <s-icon type="order" />
-                                            <s-stack gap="extra-tight">
-                                                <s-text weight="semibold">Order discounts</s-text>
-                                                <s-text tone="subdued" size="small">
-                                                    Multiple can apply per order
-                                                </s-text>
-                                            </s-stack>
-                                        </s-stack>
-                                        <s-switch
-                                            checked={combinesWithOrder}
-                                            onChange={(e) => setCombinesWithOrder(Boolean(e.target.checked ?? e.currentTarget.checked))}
-                                            accessibilityLabel="Combine with Order discounts"
-                                        ></s-switch>
-                                    </s-stack>
-                                </s-box>
-
-                                <s-divider />
-
-                                <s-box padding="small-300">
-                                    <s-stack direction="inline" justifyContent="space-between" alignItems="center">
-                                        <s-stack direction="inline" gap="base" alignItems="center">
-                                            <s-icon type="delivery" />
-                                            <s-stack gap="extra-tight">
-                                                <s-text weight="semibold">Shipping discounts</s-text>
-                                                <s-text tone="subdued" size="small">
-                                                    Only one can apply per order (best value wins)
-                                                </s-text>
-                                            </s-stack>
-                                        </s-stack>
-                                        <s-switch
-                                            checked={combinesWithShipping}
-                                            onChange={(e) => setCombinesWithShipping(Boolean(e.target.checked ?? e.currentTarget.checked))}
-                                            accessibilityLabel="Combine with Shipping discounts"
-                                        ></s-switch>
-                                    </s-stack>
-                                </s-box>
+                                </s-stack>
                             </s-box>
                         </s-stack>
                     </s-section>
@@ -1684,15 +1405,7 @@ export default function EditSelectedProductOffer() {
                     <s-stack gap="tight">
                         <s-text weight="bold">Combinations</s-text>
                         <s-paragraph tone="subdued">
-                            {combinesWithProduct || combinesWithOrder || combinesWithShipping ? (
-                                <>
-                                    {combinesWithProduct && "• Combines with Product discounts\n"}
-                                    {combinesWithOrder && "• Combines with Order discounts\n"}
-                                    {combinesWithShipping && "• Combines with Shipping discounts\n"}
-                                </>
-                            ) : (
-                                "• Cannot be combined with other discounts"
-                            )}
+                            • Managed store-wide in <s-link href="/app">Settings</s-link>
                         </s-paragraph>
                     </s-stack>
                 </s-stack>

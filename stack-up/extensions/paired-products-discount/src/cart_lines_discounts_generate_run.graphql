@@ -3,6 +3,9 @@ query CartInput {
     appStatus: metafield(namespace: "stack_up", key: "stack_up_app_enabled") {
       value
     }
+    offersMetafield: metafield(namespace: "stack_up", key: "paired_offers") {
+      value
+    }
   }
   cart {
     lines {

@@ -4,6 +4,7 @@ import { useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import { getShopTimezone, formatDateInShopTimezone, computeOfferStatus } from "../utils/timezone";
+import { syncAllActiveOffersToShopMetafield } from "../utils/bundleMetafields.server";
 
 export const loader = async ({ request }) => {
     const t0 = performance.now();
@@ -88,66 +89,35 @@ export const action = async ({ request }) => {
     if (intent === "delete" && (id || numericId)) {
         console.log("-------------------> [Delete Clicked] Deleting offer ID:", numericId || id);
 
-        // Shopify discountAutomaticDelete requires DiscountAutomaticNode ID
-        const possibleGids = [
-            id,
-            numericId ? `gid://shopify/DiscountAutomaticNode/${numericId}` : null,
-            numericId ? `gid://shopify/DiscountAutomaticApp/${numericId}` : null,
-        ].filter(Boolean);
-
-        let deleted = false;
-        let lastError = null;
-
-        for (const targetGid of possibleGids) {
-            try {
-                const response = await admin.graphql(
-                    `#graphql
-                    mutation DeleteAutomaticDiscount($id: ID!) {
-                        discountAutomaticDelete(id: $id) {
-                            deletedAutomaticDiscountId
-                            userErrors {
-                                field
-                                message
-                            }
-                        }
-                    }`,
-                    { variables: { id: targetGid } }
-                );
-                const json = await response.json();
-                const userErrors = json.data?.discountAutomaticDelete?.userErrors || [];
-                if (userErrors.length === 0 && (json.data?.discountAutomaticDelete?.deletedAutomaticDiscountId || json.data?.discountAutomaticDelete)) {
-                    console.log("-------------------> [Delete Success] Deleted offer ID:", json.data.discountAutomaticDelete.deletedAutomaticDiscountId);
-                    deleted = true;
-
-                    // Delete from PostgreSQL DB and sync Shop Metafield
-                    try {
-                        await prisma.pairedOffer.deleteMany({
-                            where: {
-                                OR: [
-                                    id ? { discountId: id } : undefined,
-                                    numericId ? { numericId } : undefined,
-                                ].filter(Boolean),
-                            },
-                        });
-                        console.log("-------------------> 💾 [Index: Delete] Removed offer from DB for ID:", numericId || id);
-                        const { syncAllActiveOffersToShopMetafield } = await import("../utils/bundleMetafields.server");
-                        await syncAllActiveOffersToShopMetafield(admin);
-                    } catch (dbErr) {
-                        console.warn("Could not delete from DB:", dbErr);
-                    }
-
-                    break;
-                } else if (userErrors.length > 0) {
-                    lastError = userErrors.map((e) => e.message).join(", ");
-                }
-            } catch (err) {
-                lastError = err instanceof Error ? err.message : String(err);
-            }
+        // Delete from PostgreSQL DB and sync Shop Metafield directly
+        try {
+            await prisma.pairedOffer.deleteMany({
+                where: {
+                    OR: [
+                        id ? { discountId: id } : undefined,
+                        numericId ? { numericId } : undefined,
+                    ].filter(Boolean),
+                },
+            });
+            console.log("-------------------> 💾 [Index: Delete] Removed offer from DB for ID:", numericId || id);
+            await syncAllActiveOffersToShopMetafield(admin);
+        } catch (dbErr) {
+            console.warn("Could not delete from DB:", dbErr);
+            return { error: "Failed to delete offer from database" };
         }
 
-        if (!deleted) {
-            console.error("-------------------> [Delete Failed] Error:", lastError);
-            return { error: lastError || "Failed to delete offer" };
+        // Cleanup any legacy Shopify discount node gracefully in background if one existed
+        const targetGid = id || (numericId ? `gid://shopify/DiscountAutomaticNode/${numericId}` : null);
+        if (targetGid) {
+            admin.graphql(
+                `#graphql
+                mutation DeleteAutomaticDiscount($id: ID!) {
+                    discountAutomaticDelete(id: $id) {
+                        deletedAutomaticDiscountId
+                    }
+                }`,
+                { variables: { id: targetGid } }
+            ).catch(() => {});
         }
 
         return { success: true };
@@ -748,38 +718,14 @@ export default function PairedProducts() {
                                         </s-table-cell>
 
                                         <s-table-cell>
-                                            <s-tooltip id={`combo-prod-${offer.numericId}`}>
-                                                {offer.combinesWith?.productDiscounts ? "Combines with product discounts" : "Can't combine with product discounts"}
+                                            <s-tooltip id={`combo-tip-${offer.numericId}`}>
+                                                Combinations are managed store-wide in App Settings
                                             </s-tooltip>
-                                            <s-tooltip id={`combo-order-${offer.numericId}`}>
-                                                {offer.combinesWith?.orderDiscounts ? "Combines with order discounts" : "Can't combine with order discounts"}
-                                            </s-tooltip>
-                                            <s-tooltip id={`combo-ship-${offer.numericId}`}>
-                                                {offer.combinesWith?.shippingDiscounts ? "Combines with shipping discounts" : "Can't combine with shipping discounts"}
-                                            </s-tooltip>
-
-                                            <s-stack direction="inline" gap="small-300">
-                                                <s-icon
-                                                    type="product-add"
-                                                    color={offer.combinesWith?.productDiscounts ? "base" : "subdued"}
-                                                    interestFor={`combo-prod-${offer.numericId}`}
-                                                    style={{ opacity: offer.combinesWith?.productDiscounts ? 1 : 0.28 }}
-                                                />
-
-                                                <s-icon
-                                                    type="order"
-                                                    color={offer.combinesWith?.orderDiscounts ? "base" : "subdued"}
-                                                    interestFor={`combo-order-${offer.numericId}`}
-                                                    style={{ opacity: offer.combinesWith?.orderDiscounts ? 1 : 0.28 }}
-                                                />
-
-                                                <s-icon
-                                                    type="delivery"
-                                                    color={offer.combinesWith?.shippingDiscounts ? "base" : "subdued"}
-                                                    interestFor={`combo-ship-${offer.numericId}`}
-                                                    style={{ opacity: offer.combinesWith?.shippingDiscounts ? 1 : 0.28 }}
-                                                />
-                                            </s-stack>
+                                            <s-link href="/app">
+                                                <s-badge tone="info" interestFor={`combo-tip-${offer.numericId}`}>
+                                                    Store-wide
+                                                </s-badge>
+                                            </s-link>
                                         </s-table-cell>
 
                                         {/* Used count */}

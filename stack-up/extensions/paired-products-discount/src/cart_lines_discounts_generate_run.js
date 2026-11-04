@@ -1,5 +1,4 @@
 import {
-  DiscountClass,
   OrderDiscountSelectionStrategy,
 } from '../generated/api';
 
@@ -9,9 +8,21 @@ import {
  */
 
 /**
- * Parses the function configuration stored in the discount's metafield.
+ * Extracts numeric ID from a Shopify GID or string ID.
+ * @param {string} id
+ * @returns {string}
  */
-function parseConfiguration(metafieldValue) {
+function getNumericId(id) {
+  if (!id) return '';
+  return String(id).split('/').pop().trim();
+}
+
+/**
+ * Parses JSON configuration stored in a metafield.
+ * @param {string|null} metafieldValue
+ * @returns {object|null}
+ */
+function parseJson(metafieldValue) {
   if (!metafieldValue) return null;
   try {
     return JSON.parse(metafieldValue);
@@ -22,6 +33,8 @@ function parseConfiguration(metafieldValue) {
 
 /**
  * Parses a product's suggested_products metafield value into an array of product GIDs.
+ * @param {string|null} metafieldValue
+ * @returns {Array<string>}
  */
 function parseSuggestedProductIds(metafieldValue) {
   if (!metafieldValue) return [];
@@ -40,11 +53,39 @@ function parseSuggestedProductIds(metafieldValue) {
 }
 
 /**
- * Extracts numeric ID from a Shopify GID or string ID.
+ * Extracts active paired product offers from shop metafield (Master Engine)
+ * or fallback discount node metafield (legacy).
+ * @param {RunInput} input
+ * @returns {Array<object>}
  */
-function getNumericId(id) {
-  if (!id) return '';
-  return String(id).split('/').pop().trim();
+function getOffersList(input) {
+  // 1. Try shop-level metafield (Master Engine Architecture)
+  const shopMetaValue = input.shop?.offersMetafield?.value;
+  if (shopMetaValue) {
+    const map = parseJson(shopMetaValue);
+    if (map && typeof map === 'object') {
+      const seen = new Set();
+      const list = [];
+      for (const key of Object.keys(map)) {
+        const offer = map[key];
+        if (!offer || typeof offer !== 'object') continue;
+        const idKey = offer.numericId || offer.offerId || offer.title || key;
+        if (!seen.has(idKey)) {
+          seen.add(idKey);
+          list.push(offer);
+        }
+      }
+      if (list.length > 0) return list;
+    }
+  }
+
+  // 2. Fallback to discount node metafield (legacy)
+  const legacyConfig = parseJson(input.discount?.metafield?.value);
+  if (legacyConfig && !legacyConfig.isMaster) {
+    return [legacyConfig];
+  }
+
+  return [];
 }
 
 /**
@@ -52,8 +93,8 @@ function getNumericId(id) {
  * @returns {CartLinesDiscountsGenerateRunResult}
  */
 export function cartLinesDiscountsGenerateRun(input) {
-  // Check if StackUp is enabled in the shop metafield
-  if (input.shop?.appStatus?.value !== 'true') {
+  // 1. Check if StackUp is enabled in the shop metafield
+  if (input.shop?.appStatus?.value === 'false') {
     return { operations: [] };
   }
 
@@ -61,81 +102,13 @@ export function cartLinesDiscountsGenerateRun(input) {
     return { operations: [] };
   }
 
-  // 1. Read configuration from discount metafield
-  const config = parseConfiguration(input.discount?.metafield?.value);
-  if (!config) {
+  // 2. Retrieve active paired offers
+  const offers = getOffersList(input);
+  if (offers.length === 0) {
     return { operations: [] };
   }
 
-  const percentage = Number(config.percentage);
-  if (isNaN(percentage) || percentage <= 0) {
-    return { operations: [] };
-  }
-
-  const mainProductIds = new Set();
-  (config.mainProductIds || []).forEach((id) => {
-    if (id) {
-      mainProductIds.add(String(id).trim());
-      mainProductIds.add(getNumericId(id));
-    }
-  });
-
-  const subProductIds = new Set();
-  (config.subProductIds || []).forEach((id) => {
-    if (id) {
-      subProductIds.add(String(id).trim());
-      subProductIds.add(getNumericId(id));
-    }
-  });
-
-  // Map configured quantities per product and optional variant restrictions
-  const mainProductQuantities = {};
-  const mainVariantIds = new Set();
-  let hasSpecificMainVariants = false;
-
-  if (Array.isArray(config.mainProducts)) {
-    for (const item of config.mainProducts) {
-      if (item?.id) {
-        const qty = Number(item.quantity) || 1;
-        mainProductQuantities[String(item.id).trim()] = qty;
-        mainProductQuantities[getNumericId(item.id)] = qty;
-
-        if (Array.isArray(item.variants) && item.variants.length > 0) {
-          hasSpecificMainVariants = true;
-          item.variants.forEach((v) => {
-            const vId = String(typeof v === 'object' ? v.id : v).trim();
-            mainVariantIds.add(vId);
-            mainVariantIds.add(getNumericId(vId));
-          });
-        }
-      }
-    }
-  }
-
-  const subProductQuantities = {};
-  const subVariantIds = new Set();
-  let hasSpecificSubVariants = false;
-
-  if (Array.isArray(config.subProducts)) {
-    for (const item of config.subProducts) {
-      if (item?.id) {
-        const qty = Number(item.quantity) || 1;
-        subProductQuantities[String(item.id).trim()] = qty;
-        subProductQuantities[getNumericId(item.id)] = qty;
-
-        if (Array.isArray(item.variants) && item.variants.length > 0) {
-          hasSpecificSubVariants = true;
-          item.variants.forEach((v) => {
-            const vId = String(typeof v === 'object' ? v.id : v).trim();
-            subVariantIds.add(vId);
-            subVariantIds.add(getNumericId(vId));
-          });
-        }
-      }
-    }
-  }
-
-  // 2. Scan products currently in the customer's cart and accumulate quantities
+  // Scan products currently in the customer's cart and accumulate quantities
   const cartProductIds = new Set();
   const cartProductQuantities = new Map();
   const cartLinesByProduct = [];
@@ -162,96 +135,165 @@ export function cartLinesDiscountsGenerateRun(input) {
     }
   }
 
-  // 3. Check if Main Product is in cart with required quantity
-  const hasMainProduct = Array.from(mainProductIds).some((id) => {
-    const requiredQty = mainProductQuantities[id] || 1;
-    const inCartQty = cartProductQuantities.get(id) || 0;
-    return inCartQty >= requiredQty;
-  });
+  const candidates = [];
 
-  // 4. Check if Sub Product is in cart with required quantity
-  let hasSubProduct = Array.from(subProductIds).some((id) => {
-    const requiredQty = subProductQuantities[id] || 1;
-    const inCartQty = cartProductQuantities.get(id) || 0;
-    return inCartQty >= requiredQty;
-  });
+  for (const offer of offers) {
+    const percentage = Number(offer.percentage);
+    if (isNaN(percentage) || percentage <= 0) continue;
 
-  // Fallback: If no explicit sub products chosen, check product's suggested_products metafield
-  if (!hasSubProduct && subProductIds.size === 0) {
-    for (const item of cartLinesByProduct) {
-      if (mainProductIds.has(item.productId) || mainProductIds.has(item.numericId)) {
-        if (item.suggestedMetafieldIds.some((id) => cartProductIds.has(id) || cartProductIds.has(getNumericId(id)))) {
-          hasSubProduct = true;
-          break;
+    // Build main products set & requirements
+    const mainProductIds = new Set();
+    const mainProductQuantities = {};
+    const mainVariantIds = new Set();
+    let hasSpecificMainVariants = false;
+
+    const rawMains = Array.isArray(offer.mainProducts)
+      ? offer.mainProducts
+      : Array.isArray(offer.mainProductIds)
+      ? offer.mainProductIds.map((id) => ({ id }))
+      : [];
+
+    rawMains.forEach((item) => {
+      if (item?.id) {
+        const fullId = String(item.id).trim();
+        const numId = getNumericId(fullId);
+        const qty = Number(item.quantity) || 1;
+        mainProductIds.add(fullId);
+        mainProductIds.add(numId);
+        mainProductQuantities[fullId] = qty;
+        mainProductQuantities[numId] = qty;
+
+        if (Array.isArray(item.variants) && item.variants.length > 0) {
+          hasSpecificMainVariants = true;
+          item.variants.forEach((v) => {
+            const vId = String(typeof v === 'object' ? v.id : v).trim();
+            mainVariantIds.add(vId);
+            mainVariantIds.add(getNumericId(vId));
+          });
+        }
+      }
+    });
+
+    // Build sub products set & requirements
+    const subProductIds = new Set();
+    const subProductQuantities = {};
+    const subVariantIds = new Set();
+    let hasSpecificSubVariants = false;
+
+    const rawSubs = Array.isArray(offer.subProducts)
+      ? offer.subProducts
+      : Array.isArray(offer.subProductIds)
+      ? offer.subProductIds.map((id) => ({ id }))
+      : [];
+
+    rawSubs.forEach((item) => {
+      if (item?.id) {
+        const fullId = String(item.id).trim();
+        const numId = getNumericId(fullId);
+        const qty = Number(item.quantity) || 1;
+        subProductIds.add(fullId);
+        subProductIds.add(numId);
+        subProductQuantities[fullId] = qty;
+        subProductQuantities[numId] = qty;
+
+        if (Array.isArray(item.variants) && item.variants.length > 0) {
+          hasSpecificSubVariants = true;
+          item.variants.forEach((v) => {
+            const vId = String(typeof v === 'object' ? v.id : v).trim();
+            subVariantIds.add(vId);
+            subVariantIds.add(getNumericId(vId));
+          });
+        }
+      }
+    });
+
+    // Check if Main Product is in cart with required quantity
+    const hasMainProduct = Array.from(mainProductIds).some((id) => {
+      const requiredQty = mainProductQuantities[id] || 1;
+      const inCartQty = cartProductQuantities.get(id) || 0;
+      return inCartQty >= requiredQty;
+    });
+
+    // Check if Sub Product is in cart with required quantity
+    let hasSubProduct = Array.from(subProductIds).some((id) => {
+      const requiredQty = subProductQuantities[id] || 1;
+      const inCartQty = cartProductQuantities.get(id) || 0;
+      return inCartQty >= requiredQty;
+    });
+
+    // Fallback: If no explicit sub products chosen, check product's suggested_products metafield
+    if (!hasSubProduct && subProductIds.size === 0) {
+      for (const item of cartLinesByProduct) {
+        if (mainProductIds.has(item.productId) || mainProductIds.has(item.numericId)) {
+          if (item.suggestedMetafieldIds.some((id) => cartProductIds.has(id) || cartProductIds.has(getNumericId(id)))) {
+            hasSubProduct = true;
+            break;
+          }
         }
       }
     }
+
+    // Both Main and Sub products must be in cart to qualify
+    if (!hasMainProduct || !hasSubProduct) continue;
+
+    // Identify Paired lines and Non-Paired lines (excluded from order discount)
+    const excludedCartLineIds = [];
+    for (const line of input.cart.lines) {
+      const isVariant = line.merchandise?.__typename === 'ProductVariant';
+      const productId = isVariant ? line.merchandise.product?.id : null;
+      const variantId = isVariant && line.merchandise.id ? String(line.merchandise.id).trim() : null;
+      const variantNumId = variantId ? getNumericId(variantId) : null;
+      const numId = getNumericId(productId);
+
+      const matchesMainVariant = !hasSpecificMainVariants ||
+        (variantId && (mainVariantIds.has(variantId) || mainVariantIds.has(variantNumId)));
+      const isMain = productId && (mainProductIds.has(productId) || mainProductIds.has(numId)) && matchesMainVariant;
+
+      const matchesSubVariant = !hasSpecificSubVariants ||
+        (variantId && (subVariantIds.has(variantId) || subVariantIds.has(variantNumId)));
+      let isSub = productId && (subProductIds.has(productId) || subProductIds.has(numId)) && matchesSubVariant;
+
+      if (!isSub && subProductIds.size === 0 && productId) {
+        for (const item of cartLinesByProduct) {
+          if ((mainProductIds.has(item.productId) || mainProductIds.has(item.numericId)) &&
+              (item.suggestedMetafieldIds.includes(productId) || item.suggestedMetafieldIds.includes(numId))) {
+            isSub = true;
+            break;
+          }
+        }
+      }
+
+      if (!isMain && !isSub) {
+        excludedCartLineIds.push(line.id);
+      }
+    }
+
+    candidates.push({
+      message: offer.title || `${percentage}% OFF PAIRED OFFER`,
+      targets: [
+        {
+          orderSubtotal: {
+            excludedCartLineIds,
+          },
+        },
+      ],
+      value: {
+        percentage: {
+          value: percentage,
+        },
+      },
+    });
   }
 
-  // 5. Evaluate pair condition: both Main and Sub products must be in cart
-  if (!hasMainProduct || !hasSubProduct) {
+  if (candidates.length === 0) {
     return { operations: [] };
   }
 
-  // 6. Identify Paired lines and Non-Paired lines
-  // Non-paired lines are excluded from the order subtotal discount calculation
-  const excludedCartLineIds = [];
-  const pairedCartLineIds = [];
-
-  for (const line of input.cart.lines) {
-    const isVariant = line.merchandise?.__typename === 'ProductVariant';
-    const productId = isVariant ? line.merchandise.product?.id : null;
-    const variantId = isVariant && line.merchandise.id ? String(line.merchandise.id).trim() : null;
-    const variantNumId = variantId ? getNumericId(variantId) : null;
-    const numId = getNumericId(productId);
-
-    const matchesMainVariant = !hasSpecificMainVariants ||
-      (variantId && (mainVariantIds.has(variantId) || mainVariantIds.has(variantNumId)));
-    const isMain = productId && (mainProductIds.has(productId) || mainProductIds.has(numId)) && matchesMainVariant;
-
-    const matchesSubVariant = !hasSpecificSubVariants ||
-      (variantId && (subVariantIds.has(variantId) || subVariantIds.has(variantNumId)));
-    let isSub = productId && (subProductIds.has(productId) || subProductIds.has(numId)) && matchesSubVariant;
-
-    if (!isSub && subProductIds.size === 0 && productId) {
-      for (const item of cartLinesByProduct) {
-        if ((mainProductIds.has(item.productId) || mainProductIds.has(item.numericId)) &&
-            (item.suggestedMetafieldIds.includes(productId) || item.suggestedMetafieldIds.includes(numId))) {
-          isSub = true;
-          break;
-        }
-      }
-    }
-
-    if (isMain || isSub) {
-      pairedCartLineIds.push(line.id);
-    } else {
-      excludedCartLineIds.push(line.id);
-    }
-  }
-
-  // 7. Return Order Subtotal Percentage Discount excluding non-paired items
   return {
     operations: [
       {
         orderDiscountsAdd: {
-          candidates: [
-            {
-              message: config.title || `${percentage}% OFF PAIRED OFFER`,
-              targets: [
-                {
-                  orderSubtotal: {
-                    excludedCartLineIds,
-                  },
-                },
-              ],
-              value: {
-                percentage: {
-                  value: percentage,
-                },
-              },
-            },
-          ],
+          candidates,
           selectionStrategy: OrderDiscountSelectionStrategy.First,
         },
       },

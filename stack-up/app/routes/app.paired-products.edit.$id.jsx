@@ -34,129 +34,81 @@ export const loader = async ({ request, params }) => {
 
     console.log("-------------------> [EditLoader] Loading offer for numericId:", numericId);
 
-    let discountNode = null;
-    let shopTimezone = "UTC";
-    let widgetSettings = null;
-
-    const possibleIds = [
-        `gid://shopify/DiscountAutomaticNode/${numericId}`,
-        `gid://shopify/DiscountAutomaticApp/${numericId}`,
-    ];
-
-    // Single batched query for discountNode + shop timezone + widget settings
-    for (const gid of possibleIds) {
-        try {
-            const response = await admin.graphql(
-                `#graphql
-                query GetDiscountAndShopDetails($id: ID!) {
-                  discountNode(id: $id) {
-                    id
-                    discount {
-                      __typename
-                      ... on DiscountAutomaticApp {
-                        title
-                        status
-                        startsAt
-                        endsAt
-                        combinesWith {
-                          orderDiscounts
-                          productDiscounts
-                          shippingDiscounts
-                        }
-                      }
-                    }
-                    metafield(namespace: "$app:discount", key: "function_configuration") {
-                      id
-                      value
-                    }
-                  }
-                  shop {
-                    ianaTimezone
-                    metafield(namespace: "stack_up", key: "paired_widget_settings") {
-                      value
-                    }
-                  }
-                }`,
-                { variables: { id: gid } }
-            );
-            const json = await response.json();
-            const data = json.data;
-
-            if (data?.shop?.ianaTimezone) {
-                shopTimezone = data.shop.ianaTimezone;
-                if (shop) setShopTimezoneCache(shop, shopTimezone);
-            }
-
-            if (data?.shop?.metafield?.value) {
-                try {
-                    widgetSettings = JSON.parse(data.shop.metafield.value);
-                } catch {
-                    widgetSettings = null;
-                }
-            }
-
-            if (data?.discountNode?.discount) {
-                discountNode = data.discountNode;
-                break;
-            }
-        } catch (e) {
-            console.warn("-------------------> [EditLoader] Query attempt failed for", gid, e);
-        }
-    }
-
-    if (!shopTimezone || shopTimezone === "UTC") {
-        shopTimezone = await getShopTimezone(admin, shop).catch(() => "UTC");
-    }
-
-    if (!discountNode) {
-        console.warn("-------------------> [EditLoader] discountNode not found in Shopify for numericId:", numericId, ". Falling back to database...");
-        const dbFallback = await prisma.pairedOffer.findFirst({
+    const [dbFallback, shopTimezoneRes] = await Promise.all([
+        prisma.pairedOffer.findFirst({
             where: {
                 OR: [
                     { numericId },
+                    { discountId: `gid://shopify/PairedOffer/${numericId}` },
                     { discountId: `gid://shopify/DiscountAutomaticNode/${numericId}` },
                     { id: numericId },
                 ],
             },
-        });
+        }),
+        getShopTimezone(admin, shop).catch(() => "UTC"),
+    ]);
 
-        if (!dbFallback) {
-            console.error("-------------------> [EditLoader] Offer not found in DB or Shopify for numericId:", numericId);
-            throw new Response("Offer Not Found", { status: 404 });
-        }
-
-        let parsedMain = [];
-        let parsedSub = [];
-        try { parsedMain = JSON.parse(dbFallback.mainProducts || "[]"); } catch { }
-        try { parsedSub = JSON.parse(dbFallback.subProducts || "[]"); } catch { }
-
-        discountNode = {
-            id: dbFallback.discountId || `gid://shopify/DiscountAutomaticNode/${numericId}`,
-            discount: {
-                title: dbFallback.title,
-                status: dbFallback.status || "ACTIVE",
-                startsAt: dbFallback.startsAt ? dbFallback.startsAt.toISOString() : null,
-                endsAt: dbFallback.endsAt ? dbFallback.endsAt.toISOString() : null,
-                combinesWith: {
-                    orderDiscounts: dbFallback.combinesWithOrder,
-                    productDiscounts: dbFallback.combinesWithProduct,
-                    shippingDiscounts: dbFallback.combinesWithShipping,
-                },
-            },
-            metafield: {
-                id: null,
-                value: JSON.stringify({
-                    discountType: "PAIRED_PRODUCTS",
-                    percentage: dbFallback.percentage,
-                    title: dbFallback.title,
-                    mainProductIds: parsedMain.map((p) => p.id),
-                    subProductIds: parsedSub.map((p) => p.id),
-                    mainProducts: parsedMain,
-                    subProducts: parsedSub,
-                }),
-            },
-        };
+    if (!dbFallback) {
+        console.error("-------------------> [EditLoader] Offer not found in DB for numericId:", numericId);
+        throw new Response("Offer Not Found", { status: 404 });
     }
+
+    const shopTimezone = shopTimezoneRes || "UTC";
+    if (shop && shopTimezone) setShopTimezoneCache(shop, shopTimezone);
+
+    let widgetSettings = null;
+    try {
+        const metaRes = await admin.graphql(
+            `#graphql
+            query GetPairedWidgetSettings {
+                shop {
+                    metafield(namespace: "stack_up", key: "paired_widget_settings") {
+                        value
+                    }
+                }
+            }`
+        );
+        const metaJson = await metaRes.json();
+        const rawWidgetMetafield = metaJson.data?.shop?.metafield?.value;
+        if (rawWidgetMetafield) {
+            try { widgetSettings = JSON.parse(rawWidgetMetafield); } catch {}
+        }
+    } catch (e) {
+        console.warn("Could not query widget settings:", e);
+    }
+
+    let parsedMain = [];
+    let parsedSub = [];
+    try { parsedMain = JSON.parse(dbFallback.mainProducts || "[]"); } catch { }
+    try { parsedSub = JSON.parse(dbFallback.subProducts || "[]"); } catch { }
+
+    const discountNode = {
+        id: dbFallback.discountId || `gid://shopify/PairedOffer/${numericId}`,
+        discount: {
+            title: dbFallback.title,
+            status: dbFallback.status || "ACTIVE",
+            startsAt: dbFallback.startsAt ? dbFallback.startsAt.toISOString() : null,
+            endsAt: dbFallback.endsAt ? dbFallback.endsAt.toISOString() : null,
+            combinesWith: {
+                orderDiscounts: dbFallback.combinesWithOrder,
+                productDiscounts: dbFallback.combinesWithProduct,
+                shippingDiscounts: dbFallback.combinesWithShipping,
+            },
+        },
+        metafield: {
+            id: null,
+            value: JSON.stringify({
+                discountType: "PAIRED_PRODUCTS",
+                percentage: dbFallback.percentage,
+                title: dbFallback.title,
+                widgetTitle: dbFallback.widgetTitle || "",
+                mainProductIds: parsedMain.map((p) => p.id),
+                subProductIds: parsedSub.map((p) => p.id),
+                mainProducts: parsedMain,
+                subProducts: parsedSub,
+            }),
+        },
+    };
 
     const disc = discountNode.discount;
     let config = {};
@@ -363,47 +315,43 @@ export const action = async ({ request, params }) => {
     const formData = await request.formData();
     const intent = formData.get("intent") || "update";
 
+    const offerWhere = {
+        OR: [
+            { numericId },
+            { discountId: `gid://shopify/PairedOffer/${numericId}` },
+            { discountId: `gid://shopify/DiscountAutomaticNode/${numericId}` },
+            { id: numericId },
+        ],
+    };
+
     // Handle Deactivate
     if (intent === "deactivate") {
         console.log("-------------------> [Deactivate Clicked] Offer ID:", numericId);
-        const targetId = formData.get("discountNodeId") || `gid://shopify/DiscountAutomaticNode/${numericId}`;
-
         try {
-            const response = await admin.graphql(
-                `#graphql
-                mutation DeactivateAutomaticDiscount($id: ID!) {
-                  discountAutomaticDeactivate(id: $id) {
-                    automaticDiscountNode {
-                      id
-                    }
-                    userErrors {
-                      field
-                      message
-                    }
-                  }
-                }`,
-                { variables: { id: targetId } }
-            );
-            const json = await response.json();
-            const userErrors = json.data?.discountAutomaticDeactivate?.userErrors || [];
-            if (userErrors.length > 0) {
-                return { error: userErrors.map((e) => e.message).join(", ") };
-            }
+            await prisma.pairedOffer.updateMany({
+                where: offerWhere,
+                data: { status: "EXPIRED" },
+            });
+            console.log("-------------------> 💾 [Deactivate] Synced EXPIRED status to DB for ID:", numericId);
+            await syncAllActiveOffersToShopMetafield(admin);
 
-            try {
-                await prisma.pairedOffer.updateMany({
-                    where: { numericId },
-                    data: { status: "EXPIRED" },
-                });
-                console.log("-------------------> 💾 [Deactivate] Synced EXPIRED status to DB for ID:", numericId);
-                await syncAllActiveOffersToShopMetafield(admin);
-            } catch (dbErr) {
-                console.warn("Could not sync deactivation to DB:", dbErr);
+            // Best-effort cleanup for any legacy discount node in Shopify
+            const targetId = formData.get("discountNodeId") || `gid://shopify/DiscountAutomaticNode/${numericId}`;
+            if (targetId) {
+                admin.graphql(
+                    `#graphql
+                    mutation DeactivateAutomaticDiscount($id: ID!) {
+                      discountAutomaticDeactivate(id: $id) {
+                        automaticDiscountNode { id }
+                      }
+                    }`,
+                    { variables: { id: targetId } }
+                ).catch(() => {});
             }
 
             return redirect(`/app/paired-products/edit/${numericId}`);
         } catch (err) {
-            console.error("-------------------> [EditAction] Error deactivating discount:", err);
+            console.error("-------------------> [EditAction] Error deactivating offer:", err);
             return { error: err instanceof Error ? err.message : "Failed to deactivate offer." };
         }
     }
@@ -411,44 +359,31 @@ export const action = async ({ request, params }) => {
     // Handle Activate
     if (intent === "activate") {
         console.log("-------------------> [Activate Clicked] Offer ID:", numericId);
-        const targetId = formData.get("discountNodeId") || `gid://shopify/DiscountAutomaticNode/${numericId}`;
-
         try {
-            const response = await admin.graphql(
-                `#graphql
-                mutation ActivateAutomaticDiscount($id: ID!) {
-                  discountAutomaticActivate(id: $id) {
-                    automaticDiscountNode {
-                      id
-                    }
-                    userErrors {
-                      field
-                      message
-                    }
-                  }
-                }`,
-                { variables: { id: targetId } }
-            );
-            const json = await response.json();
-            const userErrors = json.data?.discountAutomaticActivate?.userErrors || [];
-            if (userErrors.length > 0) {
-                return { error: userErrors.map((e) => e.message).join(", ") };
-            }
+            await prisma.pairedOffer.updateMany({
+                where: offerWhere,
+                data: { status: "ACTIVE" },
+            });
+            console.log("-------------------> 💾 [Activate] Synced ACTIVE status to DB for ID:", numericId);
+            await syncAllActiveOffersToShopMetafield(admin);
 
-            try {
-                await prisma.pairedOffer.updateMany({
-                    where: { numericId },
-                    data: { status: "ACTIVE" },
-                });
-                console.log("-------------------> 💾 [Activate] Synced ACTIVE status to DB for ID:", numericId);
-                await syncAllActiveOffersToShopMetafield(admin);
-            } catch (dbErr) {
-                console.warn("Could not sync activation to DB:", dbErr);
+            // Best-effort cleanup for any legacy discount node in Shopify
+            const targetId = formData.get("discountNodeId") || `gid://shopify/DiscountAutomaticNode/${numericId}`;
+            if (targetId) {
+                admin.graphql(
+                    `#graphql
+                    mutation ActivateAutomaticDiscount($id: ID!) {
+                      discountAutomaticActivate(id: $id) {
+                        automaticDiscountNode { id }
+                      }
+                    }`,
+                    { variables: { id: targetId } }
+                ).catch(() => {});
             }
 
             return redirect(`/app/paired-products/edit/${numericId}`);
         } catch (err) {
-            console.error("-------------------> [EditAction] Error activating discount:", err);
+            console.error("-------------------> [EditAction] Error activating offer:", err);
             return { error: err instanceof Error ? err.message : "Failed to activate offer." };
         }
     }
@@ -456,44 +391,31 @@ export const action = async ({ request, params }) => {
     // Handle Delete
     if (intent === "delete") {
         console.log("-------------------> [Delete Clicked] Deleting offer ID:", numericId);
-        const deleteId = formData.get("discountNodeId") || `gid://shopify/DiscountAutomaticNode/${numericId}`;
-
         try {
-            const response = await admin.graphql(
-                `#graphql
-        mutation DeleteAutomaticDiscount($id: ID!) {
-          discountAutomaticDelete(id: $id) {
-            deletedAutomaticDiscountId
-            userErrors {
-              field
-              message
-            }
-          }
-        }`,
-                { variables: { id: deleteId } }
-            );
-            const json = await response.json();
-            console.log("-------------------> [EditAction] Delete response:", JSON.stringify(json, null, 2));
+            await prisma.pairedOffer.deleteMany({
+                where: offerWhere,
+            });
+            console.log("-------------------> 💾 [Delete] Removed offer from DB for ID:", numericId);
+            await syncAllActiveOffersToShopMetafield(admin);
 
-            const userErrors = json.data?.discountAutomaticDelete?.userErrors || [];
-            if (userErrors.length > 0) {
-                return { error: userErrors.map((e) => e.message).join(", ") };
-            }
-
-            try {
-                await prisma.pairedOffer.deleteMany({
-                    where: { numericId },
-                });
-                console.log("-------------------> 💾 [Delete] Removed offer from DB for ID:", numericId);
-                await syncAllActiveOffersToShopMetafield(admin);
-            } catch (dbErr) {
-                console.warn("Could not delete offer from DB:", dbErr);
+            // Best-effort cleanup for any legacy discount node in Shopify
+            const deleteId = formData.get("discountNodeId") || `gid://shopify/DiscountAutomaticNode/${numericId}`;
+            if (deleteId) {
+                admin.graphql(
+                    `#graphql
+                    mutation DeleteAutomaticDiscount($id: ID!) {
+                      discountAutomaticDelete(id: $id) {
+                        deletedAutomaticDiscountId
+                      }
+                    }`,
+                    { variables: { id: deleteId } }
+                ).catch(() => {});
             }
 
             console.log("-------------------> 🎉 [EditAction] Offer deleted successfully!");
             return redirect("/app/paired-products?deleted=true");
         } catch (err) {
-            console.error("-------------------> [EditAction] Error deleting discount:", err);
+            console.error("-------------------> [EditAction] Error deleting offer:", err);
             return { error: err instanceof Error ? err.message : "Failed to delete offer." };
         }
     }
@@ -599,226 +521,36 @@ export const action = async ({ request, params }) => {
             : [],
     }));
 
-    const configPayload = {
-        discountType: "PAIRED_PRODUCTS",
-        percentage,
-        title,
-        widgetTitle,
-        mainProductIds,
-        subProductIds,
-        mainProducts: sanitizedMainProducts,
-        subProducts: sanitizedSubProducts,
-    };
-
-    const updateGid = `gid://shopify/DiscountAutomaticApp/${numericId}`;
-
     const shopTimezone = await getShopTimezone(admin, session?.shop);
     const effectiveStartsAt = dateToShopISO(startsAtDate, startsAtTime, shopTimezone) || new Date().toISOString();
     const effectiveEndsAt = hasEndDate && endsAtDate ? dateToShopISO(endsAtDate, endsAtTime, shopTimezone) : null;
-
-    const metafieldItem = {
-        namespace: "$app:discount",
-        key: "function_configuration",
-        type: "json",
-        value: JSON.stringify(configPayload),
-    };
-
-    const variables = {
-        id: updateGid,
-        automaticAppDiscount: {
-            title,
-            discountClasses: ["ORDER"],
-            startsAt: effectiveStartsAt,
-            endsAt: effectiveEndsAt,
-            combinesWith: {
-                orderDiscounts: combinesWithOrder,
-                productDiscounts: combinesWithProduct,
-                shippingDiscounts: combinesWithShipping,
-            },
-            metafields: [metafieldItem],
-        },
-    };
 
     console.log("-------------------> [Save Edit Clicked]");
     console.log("------------------->   Offer ID:", numericId);
     console.log("------------------->   Updated Title:", title);
     console.log("------------------->   Updated Percentage:", percentage + "%");
-    console.log("------------------->   Updated Main Products:", mainProducts);
-    console.log("------------------->   Updated Sub Products:", subProducts);
 
     try {
-        const response = await admin.graphql(
-            `#graphql
-      mutation UpdateAutomaticDiscount($id: ID!, $automaticAppDiscount: DiscountAutomaticAppInput!) {
-        discountAutomaticAppUpdate(id: $id, automaticAppDiscount: $automaticAppDiscount) {
-          automaticAppDiscount {
-            discountId
-            title
-            status
-          }
-          userErrors {
-            field
-            message
-          }
-        }
-      }`,
-            { variables }
-        );
-        const json = await response.json();
-        const userErrors = json.data?.discountAutomaticAppUpdate?.userErrors || [];
-        if (userErrors.length > 0) {
-            const isMissingInShopify = userErrors.some((e) =>
-                e.message?.toLowerCase().includes("not exist") ||
-                e.message?.toLowerCase().includes("not found") ||
-                e.field?.includes("id")
-            );
-
-            if (isMissingInShopify) {
-                console.warn("-------------------> [Save Edit] Discount node missing in Shopify. Auto-recreating via discountAutomaticAppCreate...");
-                let functionId = null;
-                try {
-                    const fnRes = await admin.graphql(
-                        `#graphql
-                        query GetFunctionId {
-                            shopifyFunctions(first: 25) {
-                                nodes {
-                                    id
-                                    title
-                                    apiType
-                                }
-                            }
-                        }`
-                    );
-                    const fnJson = await fnRes.json();
-                    const functions = fnJson.data?.shopifyFunctions?.nodes || [];
-                    const matched = functions.find(
-                        (fn) =>
-                            fn.title?.toLowerCase().includes("paired") ||
-                            fn.apiType === "cart_lines_discounts_generate" ||
-                            fn.apiType === "order_discounts"
-                    );
-                    functionId = matched?.id || functions[0]?.id || "gid://shopify/ShopifyFunction/paired-products-discount";
-                } catch {
-                    functionId = "gid://shopify/ShopifyFunction/paired-products-discount";
-                }
-
-                const createMutation = `#graphql
-                    mutation CreateAutomaticDiscount($automaticAppDiscount: DiscountAutomaticAppInput!) {
-                        discountAutomaticAppCreate(automaticAppDiscount: $automaticAppDiscount) {
-                            automaticAppDiscount {
-                                discountId
-                                title
-                                status
-                            }
-                            userErrors {
-                                field
-                                message
-                            }
-                        }
-                    }
-                `;
-
-                const createRes = await admin.graphql(createMutation, {
-                    variables: {
-                        automaticAppDiscount: {
-                            title,
-                            functionId,
-                            startsAt: effectiveStartsAt,
-                            ...(effectiveEndsAt ? { endsAt: effectiveEndsAt } : {}),
-                            discountClasses: ["ORDER"],
-                            combinesWith: {
-                                orderDiscounts: combinesWithOrder,
-                                productDiscounts: combinesWithProduct,
-                                shippingDiscounts: combinesWithShipping,
-                            },
-                            metafields: [metafieldItem],
-                        },
-                    },
-                });
-
-                const createJson = await createRes.json();
-                const newDiscount = createJson.data?.discountAutomaticAppCreate?.automaticAppDiscount;
-                if (newDiscount?.discountId) {
-                    const newNumericId = newDiscount.discountId.split("/").pop();
-                    await prisma.pairedOffer.updateMany({
-                        where: {
-                            OR: [
-                                { numericId },
-                                { discountId: `gid://shopify/DiscountAutomaticNode/${numericId}` },
-                            ],
-                        },
-                        data: {
-                            discountId: newDiscount.discountId,
-                            numericId: newNumericId,
-                            title,
-                            widgetTitle: widgetTitle || null,
-                            percentage,
-                            status: newDiscount.status || "ACTIVE",
-                            combinesWithOrder,
-                            combinesWithProduct,
-                            combinesWithShipping,
-                            startsAt: effectiveStartsAt ? new Date(effectiveStartsAt) : undefined,
-                            endsAt: effectiveEndsAt ? new Date(effectiveEndsAt) : null,
-                            mainProducts: JSON.stringify(sanitizedMainProducts),
-                            subProducts: JSON.stringify(sanitizedSubProducts),
-                        },
-                    });
-
-                    await syncAllActiveOffersToShopMetafield(admin);
-                    console.log("-------------------> 🎉 [Save Edit] Successfully recreated discount in Shopify and updated DB!");
-                    return redirect("/app/paired-products?updated=true");
-                }
-            }
-
-            const errMsg = userErrors.map((e) => e.message).join(", ");
-            console.error("-------------------> [Save Edit Failed] Shopify Error:", errMsg);
-            return { error: errMsg };
-        }
-
-        console.log("-------------------> [Save Edit Success] Offer updated successfully in Shopify for ID:", numericId);
-
-        // Sync updated offer to PostgreSQL DB via Prisma
-        const discountNodeId = formData.get("discountNodeId") || `gid://shopify/DiscountAutomaticNode/${numericId}`;
-        try {
-            await prisma.pairedOffer.upsert({
-                where: { discountId: discountNodeId },
-                update: {
-                    title,
-                    widgetTitle: widgetTitle || null,
-                    percentage,
-                    combinesWithOrder,
-                    combinesWithProduct,
-                    combinesWithShipping,
-                    startsAt: effectiveStartsAt ? new Date(effectiveStartsAt) : undefined,
-                    endsAt: effectiveEndsAt ? new Date(effectiveEndsAt) : null,
-                    mainProducts: JSON.stringify(sanitizedMainProducts),
-                    subProducts: JSON.stringify(sanitizedSubProducts),
-                },
-                create: {
-                    shop: session?.shop || "",
-                    discountId: discountNodeId,
-                    numericId,
-                    title,
-                    widgetTitle: widgetTitle || null,
-                    percentage,
-                    status: "ACTIVE",
-                    combinesWithOrder,
-                    combinesWithProduct,
-                    combinesWithShipping,
-                    startsAt: effectiveStartsAt ? new Date(effectiveStartsAt) : new Date(),
-                    endsAt: effectiveEndsAt ? new Date(effectiveEndsAt) : null,
-                    mainProducts: JSON.stringify(sanitizedMainProducts),
-                    subProducts: JSON.stringify(sanitizedSubProducts),
-                },
-            });
-            console.log("-------------------> 💾 [EditAction] Successfully synced offer to PostgreSQL DB! ID:", numericId);
-        } catch (dbErr) {
-            console.error("-------------------> [EditAction] Error updating DB:", dbErr);
-        }
+        await prisma.pairedOffer.updateMany({
+            where: offerWhere,
+            data: {
+                title,
+                widgetTitle: widgetTitle || null,
+                percentage,
+                combinesWithOrder,
+                combinesWithProduct,
+                combinesWithShipping,
+                startsAt: effectiveStartsAt ? new Date(effectiveStartsAt) : undefined,
+                endsAt: effectiveEndsAt ? new Date(effectiveEndsAt) : null,
+                mainProducts: JSON.stringify(sanitizedMainProducts),
+                subProducts: JSON.stringify(sanitizedSubProducts),
+            },
+        });
 
         // Sync updated bundle data to Shop Metafield for instant storefront rendering
         await syncAllActiveOffersToShopMetafield(admin);
 
+        console.log("-------------------> 🎉 [Save Edit Success] Offer updated directly in DB and shop metafield!");
         return redirect("/app/paired-products?updated=true");
     } catch (err) {
         console.error("-------------------> [Save Edit Failed] Exception:", err);
@@ -1761,78 +1493,23 @@ export default function PairedProductsEdit() {
                     {/* Combinations */}
                     <s-section heading="Combinations">
                         <s-stack gap="base">
-                            <s-paragraph tone="subdued">
-                                Control whether this discount can be combined with other discounts. Defaults to OFF for merchant margin safety.
-                            </s-paragraph>
-
                             <s-box
                                 background="base"
                                 border="small"
                                 borderRadius="base"
+                                padding="base"
                             >
-                                {/* Product discounts */}
-                                <s-box padding="small-300">
-                                    <s-stack direction="inline" justifyContent="space-between" alignItems="center">
-                                        <s-stack direction="inline" gap="base" alignItems="center">
-                                            <s-icon type="product-add" />
-                                            <s-stack gap="extra-tight">
-                                                <s-text weight="semibold">Product discounts</s-text>
-                                                <s-text tone="subdued" size="small">
-                                                    Multiple can apply per order · One per product (best value wins)
-                                                </s-text>
-                                            </s-stack>
-                                        </s-stack>
-                                        <s-switch
-                                            checked={combinesWithProduct}
-                                            onChange={(e) => setCombinesWithProduct(Boolean(e.target.checked ?? e.currentTarget.checked))}
-                                            accessibilityLabel="Combine with Product discounts"
-                                        ></s-switch>
+                                <s-stack direction="inline" gap="base" alignItems="center">
+                                    <s-box padding="small" background="subdued" borderRadius="base">
+                                        <s-icon type="settings" />
+                                    </s-box>
+                                    <s-stack gap="extra-tight">
+                                        <s-text weight="semibold">Managed store-wide in App Settings</s-text>
+                                        <s-paragraph tone="subdued" size="small">
+                                            Discount combinations (Product, Order, and Shipping) apply globally across all offers. You can configure them anytime in <s-link href="/app">App Settings → Checkout discount & Combinations</s-link>.
+                                        </s-paragraph>
                                     </s-stack>
-                                </s-box>
-
-                                <s-divider />
-
-                                {/* Order discounts */}
-                                <s-box padding="small-300">
-                                    <s-stack direction="inline" justifyContent="space-between" alignItems="center">
-                                        <s-stack direction="inline" gap="base" alignItems="center">
-                                            <s-icon type="order" />
-                                            <s-stack gap="extra-tight">
-                                                <s-text weight="semibold">Order discounts</s-text>
-                                                <s-text tone="subdued" size="small">
-                                                    Multiple can apply per order
-                                                </s-text>
-                                            </s-stack>
-                                        </s-stack>
-                                        <s-switch
-                                            checked={combinesWithOrder}
-                                            onChange={(e) => setCombinesWithOrder(Boolean(e.target.checked ?? e.currentTarget.checked))}
-                                            accessibilityLabel="Combine with Order discounts"
-                                        ></s-switch>
-                                    </s-stack>
-                                </s-box>
-
-                                <s-divider />
-
-                                {/* Shipping discounts */}
-                                <s-box padding="small-300">
-                                    <s-stack direction="inline" justifyContent="space-between" alignItems="center">
-                                        <s-stack direction="inline" gap="base" alignItems="center">
-                                            <s-icon type="delivery" />
-                                            <s-stack gap="extra-tight">
-                                                <s-text weight="semibold">Shipping discounts</s-text>
-                                                <s-text tone="subdued" size="small">
-                                                    Only one can apply per order (best value wins)
-                                                </s-text>
-                                            </s-stack>
-                                        </s-stack>
-                                        <s-switch
-                                            checked={combinesWithShipping}
-                                            onChange={(e) => setCombinesWithShipping(Boolean(e.target.checked ?? e.currentTarget.checked))}
-                                            accessibilityLabel="Combine with Shipping discounts"
-                                        ></s-switch>
-                                    </s-stack>
-                                </s-box>
+                                </s-stack>
                             </s-box>
                         </s-stack>
                     </s-section>
@@ -1891,11 +1568,7 @@ export default function PairedProductsEdit() {
                     <s-stack gap="tight">
                         <s-text weight="bold">Combinations</s-text>
                         <s-paragraph tone="subdued">
-                            • {[
-                                combinesWithOrder && "Order",
-                                combinesWithProduct && "Product",
-                                combinesWithShipping && "Shipping",
-                            ].filter(Boolean).join(", ") || "None"}
+                            • Managed store-wide in <s-link href="/app">Settings</s-link>
                         </s-paragraph>
                     </s-stack>
 
