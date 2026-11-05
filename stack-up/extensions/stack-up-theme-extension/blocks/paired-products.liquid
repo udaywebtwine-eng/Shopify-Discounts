@@ -62,6 +62,9 @@
     {% comment %} Resolve Settings with Safe Defaults {% endcomment %}
     {% assign offer_custom_heading = bundle.widgetTitle | default: '' %}
     {% assign global_heading = custom_settings.content.heading | default: '{widgettitle}' %}
+    {% if global_heading == 'Frequently Bought Together' and offer_custom_heading != blank %}
+      {% assign global_heading = '{widgettitle}' %}
+    {% endif %}
     {% if global_heading contains '{widgettitle}' %}
       {% assign resolved_offer_title = offer_custom_heading %}
       {% if resolved_offer_title == blank %}

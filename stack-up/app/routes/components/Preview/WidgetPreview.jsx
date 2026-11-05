@@ -46,7 +46,10 @@ export default function WidgetPreview({
     buttonTextColor: widgetSettings?.styles?.buttonTextColor || "#ffffff",
   };
 
-  const globalHeading = widgetSettings?.content?.heading || "{widgettitle}";
+  const rawHeading = widgetSettings?.content?.heading;
+  const globalHeading = (!rawHeading || rawHeading === "Frequently Bought Together")
+    ? "{widgettitle}"
+    : rawHeading;
   const offerHeading = widgetTitle?.trim() || "Frequently Bought Together";
   const baseHeading = globalHeading.includes("{widgettitle}")
     ? globalHeading.replace(/{widgettitle}/gi, offerHeading)

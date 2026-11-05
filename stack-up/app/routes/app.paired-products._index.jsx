@@ -5,6 +5,7 @@ import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import { getShopTimezone, formatDateInShopTimezone, computeOfferStatus } from "../utils/timezone";
 import { syncAllActiveOffersToShopMetafield } from "../utils/bundleMetafields.server";
+import { ensureMasterDiscounts } from "../utils/masterDiscount.server";
 
 export const loader = async ({ request }) => {
     const t0 = performance.now();
@@ -12,7 +13,7 @@ export const loader = async ({ request }) => {
     const tAuth = performance.now();
     const shopName = session.shop.replace(".myshopify.com", "");
 
-    // Parallelize DB fetch with cached shop timezone
+    // Parallelize DB fetch with cached shop timezone and self-healing master discount verification
     const [shopTimezone, dbOffers] = await Promise.all([
         getShopTimezone(admin, session.shop).catch(() => "UTC"),
         prisma.pairedOffer.findMany({
@@ -27,6 +28,7 @@ export const loader = async ({ request }) => {
             console.warn("Could not fetch DB offers:", e);
             return [];
         }),
+        ensureMasterDiscounts(admin).catch(() => {}),
     ]);
     const tAsync = performance.now();
 
@@ -721,7 +723,7 @@ export default function PairedProducts() {
                                             <s-tooltip id={`combo-tip-${offer.numericId}`}>
                                                 Combinations are managed store-wide in App Settings
                                             </s-tooltip>
-                                            <s-link href="/app">
+                                            <s-link href="/app/settings">
                                                 <s-badge tone="info" interestFor={`combo-tip-${offer.numericId}`}>
                                                     Store-wide
                                                 </s-badge>

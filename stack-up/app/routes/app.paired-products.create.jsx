@@ -86,6 +86,13 @@ export const loader = async ({ request }) => {
     if (rawMetafield) {
       try {
         widgetSettings = JSON.parse(rawMetafield);
+        if (
+          !widgetSettings?.content?.heading ||
+          widgetSettings?.content?.heading === "Frequently Bought Together"
+        ) {
+          if (!widgetSettings.content) widgetSettings.content = {};
+          widgetSettings.content.heading = "{widgettitle}";
+        }
       } catch {
         widgetSettings = null;
       }
@@ -1018,26 +1025,34 @@ export default function CreatePairedProductsOffer() {
 
           {/* Combinations */}
           <s-section heading="Combinations">
-            <s-stack gap="base">
+            <s-grid
+              gridTemplateColumns="auto minmax(0, 1fr)"
+              gap="base"
+              alignItems="start"
+            >
               <s-box
-                background="base"
-                border="small"
+                padding="small"
+                background="subdued"
                 borderRadius="base"
-                padding="base"
               >
-                <s-stack direction="inline" gap="base" alignItems="center">
-                  <s-box padding="small" background="subdued" borderRadius="base">
-                    <s-icon type="settings" />
-                  </s-box>
-                  <s-stack gap="extra-tight">
-                    <s-text weight="semibold">Managed store-wide in App Settings</s-text>
-                    <s-paragraph tone="subdued" size="small">
-                      Discount combinations (Product, Order, and Shipping) apply globally across all offers. You can configure them anytime in <s-link href="/app">App Settings → Checkout discount & Combinations</s-link>.
-                    </s-paragraph>
-                  </s-stack>
-                </s-stack>
+                <s-icon type="settings" />
               </s-box>
-            </s-stack>
+
+              <s-stack gap="small-100">
+                <s-heading type="strong">
+                  Managed store-wide in App Settings
+                </s-heading>
+
+                <s-paragraph color="subdued">
+                  Discount combinations (Product, Order, and Shipping)
+                  apply globally across all offers. You can configure
+                  them anytime in{" "}
+                  <s-link href="/app/settings">
+                    Settings → Combinations
+                  </s-link>.
+                </s-paragraph>
+              </s-stack>
+            </s-grid>
           </s-section>
         </s-stack>
       </form>
@@ -1090,7 +1105,7 @@ export default function CreatePairedProductsOffer() {
           <s-stack gap="tight">
             <s-text weight="bold">Combinations</s-text>
             <s-paragraph tone="subdued">
-              • Managed store-wide in <s-link href="/app">Settings</s-link>
+              • Managed store-wide in <s-link href="/app/settings">Settings</s-link>
             </s-paragraph>
           </s-stack>
 

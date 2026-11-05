@@ -270,6 +270,28 @@ export async function ensureMasterDiscounts(admin, options = {}) {
     } catch (e) {
       console.warn("[MasterDiscount] Could not auto-create Selected master discount:", e.message);
     }
+  } else if (selectedMaster && selectedMaster.status !== "ACTIVE" && selectedMaster.nodeId) {
+    // If merchant deactivated it in Shopify Admin, reactivate it automatically
+    try {
+      await admin.graphql(
+        `#graphql
+        mutation ReactivateSelectedMaster($id: ID!) {
+          discountAutomaticActivate(id: $id) {
+            automaticDiscountNode {
+              id
+            }
+            userErrors {
+              message
+            }
+          }
+        }`,
+        { variables: { id: selectedMaster.nodeId } }
+      );
+      if (updatedSelected) updatedSelected.status = "ACTIVE";
+      console.log("[MasterDiscount] Automatically reactivated Selected Master Discount:", selectedMaster.nodeId);
+    } catch (actErr) {
+      console.warn("[MasterDiscount] Could not auto-reactivate Selected master discount:", actErr);
+    }
   }
 
   if (!pairedMaster && pairedFunctionId) {
@@ -291,6 +313,28 @@ export async function ensureMasterDiscounts(admin, options = {}) {
       }
     } catch (e) {
       console.warn("[MasterDiscount] Could not auto-create Paired master discount:", e.message);
+    }
+  } else if (pairedMaster && pairedMaster.status !== "ACTIVE" && pairedMaster.nodeId) {
+    // If merchant deactivated it in Shopify Admin, reactivate it automatically
+    try {
+      await admin.graphql(
+        `#graphql
+        mutation ReactivatePairedMaster($id: ID!) {
+          discountAutomaticActivate(id: $id) {
+            automaticDiscountNode {
+              id
+            }
+            userErrors {
+              message
+            }
+          }
+        }`,
+        { variables: { id: pairedMaster.nodeId } }
+      );
+      if (updatedPaired) updatedPaired.status = "ACTIVE";
+      console.log("[MasterDiscount] Automatically reactivated Paired Master Discount:", pairedMaster.nodeId);
+    } catch (actErr) {
+      console.warn("[MasterDiscount] Could not auto-reactivate Paired master discount:", actErr);
     }
   }
 

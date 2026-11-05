@@ -62,6 +62,13 @@ export const loader = async ({ request }) => {
     if (rawMetafield) {
       try {
         savedSettings = JSON.parse(rawMetafield);
+        if (
+          !savedSettings?.content?.heading ||
+          savedSettings?.content?.heading === "Frequently Bought Together"
+        ) {
+          if (!savedSettings.content) savedSettings.content = {};
+          savedSettings.content.heading = "{widgettitle}";
+        }
       } catch (e) {
         console.warn("Failed to parse paired_widget_settings:", e);
       }
@@ -282,7 +289,7 @@ export default function PairedProductsCustomize() {
                 <s-divider />
                 <s-grid gap="base">
                   <s-text-field
-                    label="Widget Title (Use {widgettitle} variable)"
+                    label="Widget Title / Heading (Use {widgettitle} variable)"
                     value={content.heading}
                     onInput={(e) => setContent({ ...content, heading: e.target.value })}
                     placeholder="e.g. {widgettitle}"
