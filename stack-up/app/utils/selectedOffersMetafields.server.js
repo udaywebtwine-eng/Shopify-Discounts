@@ -21,8 +21,8 @@ export async function syncAllActiveSelectedOffersToShopMetafield(admin) {
     if (!shopId) return;
 
     // Fetch all selected product offers from DB that are not manually deactivated
-    const allOffers = await prisma.selectedProductOffer.findMany({
-      where: { status: { not: "EXPIRED" } },
+    const allOffers = await prisma.offer.findMany({
+      where: { type: "SELECTED", status: { not: "EXPIRED" } },
     });
     const activeOffers = allOffers.filter((o) => computeOfferStatus(o) === "ACTIVE");
 
@@ -30,7 +30,7 @@ export async function syncAllActiveSelectedOffersToShopMetafield(admin) {
     for (const o of allOffers) {
       const realStatus = computeOfferStatus(o);
       if (realStatus !== o.status && o.status !== "EXPIRED") {
-        prisma.selectedProductOffer.update({ where: { id: o.id }, data: { status: realStatus } }).catch(() => {});
+        prisma.offer.update({ where: { id: o.id }, data: { status: realStatus } }).catch(() => {});
       }
     }
 

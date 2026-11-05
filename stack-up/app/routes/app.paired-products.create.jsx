@@ -248,12 +248,13 @@ export const action = async ({ request }) => {
   const discountId = `gid://shopify/PairedOffer/${numericId}`;
 
   try {
-    await prisma.pairedOffer.create({
+    await prisma.offer.create({
       data: {
         shop: session.shop,
         discountId,
         numericId,
         title,
+        type: "PAIRED",
         widgetTitle: widgetTitle || null,
         percentage,
         status: "ACTIVE",
@@ -271,7 +272,7 @@ export const action = async ({ request }) => {
     // Sync to Shop Metafield for instant storefront rendering & checkout evaluation
     await syncAllActiveOffersToShopMetafield(admin);
 
-    return redirect("/app/paired-products?created=true");
+    return redirect("/app/offers?created=true");
   } catch (err) {
     console.error("-------------------> [PairedProducts: CreateAction] Error saving offer:", err);
     return {
@@ -669,8 +670,8 @@ export default function CreatePairedProductsOffer() {
 
   return (
     <s-page heading="Create Main + Sub Product Offer">
-      <s-link slot="breadcrumb-actions" href="/app/paired-products">
-        Paired Products Offers
+      <s-link slot="breadcrumb-actions" href="/app/offers">
+        All Discounts
       </s-link>
 
       <SaveBar id="create-paired-offer-save-bar" open={showSaveBar}>

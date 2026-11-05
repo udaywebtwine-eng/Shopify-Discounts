@@ -36,7 +36,7 @@ export const loader = async ({ request, params }) => {
 
     // Fetch offer from DB (Master Engine architecture: DB is the single source of truth)
     const [dbFallback, shopTimezoneRes] = await Promise.all([
-        prisma.selectedProductOffer.findFirst({
+        prisma.offer.findFirst({
             where: {
                 OR: [
                     { numericId },
@@ -268,7 +268,7 @@ export const action = async ({ request, params }) => {
     // Deactivate offer
     if (intent === "deactivate") {
         try {
-            await prisma.selectedProductOffer.updateMany({
+            await prisma.offer.updateMany({
                 where: offerWhere,
                 data: { status: "EXPIRED" },
             });
@@ -282,7 +282,7 @@ export const action = async ({ request, params }) => {
     // Activate offer
     if (intent === "activate") {
         try {
-            await prisma.selectedProductOffer.updateMany({
+            await prisma.offer.updateMany({
                 where: offerWhere,
                 data: { status: "ACTIVE" },
             });
@@ -296,12 +296,12 @@ export const action = async ({ request, params }) => {
     // Delete offer
     if (intent === "delete") {
         try {
-            await prisma.selectedProductOffer.deleteMany({
+            await prisma.offer.deleteMany({
                 where: offerWhere,
             });
             await syncAllActiveSelectedOffersToShopMetafield(admin);
             console.log("-------------------> 🗑️ [SelectedProducts: Delete] Deleted offer from DB:", numericId);
-            return redirect("/app/sected-products?deleted=true");
+            return redirect("/app/offers?deleted=true");
         } catch (err) {
             return { error: err instanceof Error ? err.message : "Failed to delete offer." };
         }
@@ -409,7 +409,7 @@ export const action = async ({ request, params }) => {
         const effectiveEndsAt = hasEndDate && endsAtDate ? dateToShopISO(endsAtDate, endsAtTime, shopTimezone) : null;
 
         try {
-            await prisma.selectedProductOffer.updateMany({
+            await prisma.offer.updateMany({
                 where: offerWhere,
                 data: {
                     title,
@@ -422,7 +422,6 @@ export const action = async ({ request, params }) => {
                     endsAt: effectiveEndsAt ? new Date(effectiveEndsAt) : null,
                     targetProducts: JSON.stringify(sanitizedTargetProducts),
                     offeredProducts: JSON.stringify(sanitizedOfferedProducts),
-                    products: JSON.stringify(sanitizedOfferedProducts),
                 },
             });
             console.log("-------------------> 💾 [SelectedProducts: UpdateAction] Successfully updated DB for offer:", numericId);
@@ -430,7 +429,7 @@ export const action = async ({ request, params }) => {
             // Sync Shop Metafield for instant storefront rendering & checkout evaluation
             await syncAllActiveSelectedOffersToShopMetafield(admin);
 
-            return redirect(`/app/sected-products?updated=true`);
+            return redirect(`/app/offers?updated=true`);
         } catch (err) {
             console.error("-------------------> [SelectedProducts: UpdateAction] Update error:", err);
             return {
@@ -862,8 +861,8 @@ export default function EditSelectedProductOffer() {
 
     return (
         <s-page heading={data.title || "Edit Selected Products Offer"}>
-            <s-link slot="breadcrumb-actions" href="/app/sected-products">
-                Selected Products Offers
+            <s-link slot="breadcrumb-actions" href="/app/offers">
+                All Discounts
             </s-link>
 
             {/* Official Polaris Web Component More Actions Menu */}

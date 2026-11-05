@@ -4,44 +4,50 @@ import { useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import { getShopTimezone, formatDateInShopTimezone, computeOfferStatus } from "../utils/timezone";
+import { syncAllActiveOffersToShopMetafield } from "../utils/bundleMetafields.server";
 import { syncAllActiveSelectedOffersToShopMetafield } from "../utils/selectedOffersMetafields.server";
-import { ensureMasterDiscounts } from "../utils/masterDiscount.server";
+import { ensureMasterDiscounts, cleanupLegacyDiscounts } from "../utils/masterDiscount.server";
 
 export const loader = async ({ request }) => {
     const t0 = performance.now();
     const { admin, session } = await authenticate.admin(request);
-    const tAuth = performance.now();
     const shopName = session.shop.replace(".myshopify.com", "");
 
-    // Parallelize DB fetch with cached shop timezone and self-healing master discount verification
     const [shopTimezone, dbOffers] = await Promise.all([
         getShopTimezone(admin, session.shop).catch(() => "UTC"),
-        prisma.selectedProductOffer.findMany({
+        prisma.offer.findMany({
             where: {
                 OR: [
                     { shop: session.shop },
                     { shop: shopName },
-                    { shop: { contains: shopName } },
+                    { shop: `${shopName}.myshopify.com` },
                 ],
             },
             orderBy: { createdAt: "desc" },
         }).catch((e) => {
-            console.warn("Could not fetch DB selected offers:", e);
+            console.warn("Could not fetch DB offers:", e);
             return [];
         }),
-        ensureMasterDiscounts(admin).catch(() => {}),
+        ensureMasterDiscounts(admin).catch(() => { }),
+        cleanupLegacyDiscounts(admin).catch(() => { }),
+        syncAllActiveOffersToShopMetafield(admin).catch(() => { }),
+        syncAllActiveSelectedOffersToShopMetafield(admin).catch(() => { }),
     ]);
-    const tAsync = performance.now();
 
     const formattedOffers = dbOffers.map((dbo) => {
-        let targetCount = 0;
-        let offeredCount = 0;
+        let mainCount = 0;
+        let subCount = 0;
         try {
-            targetCount = JSON.parse(dbo.targetProducts || "[]").length;
-            offeredCount = JSON.parse(dbo.offeredProducts || dbo.products || "[]").length;
+            if (dbo.type === "PAIRED") {
+                mainCount = JSON.parse(dbo.mainProducts || "[]").length;
+                subCount = JSON.parse(dbo.subProducts || "[]").length;
+            } else {
+                mainCount = JSON.parse(dbo.targetProducts || "[]").length;
+                subCount = JSON.parse(dbo.offeredProducts || "[]").length;
+            }
         } catch {
-            targetCount = 0;
-            offeredCount = 0;
+            mainCount = 0;
+            subCount = 0;
         }
 
         const computedStatus = computeOfferStatus({
@@ -50,22 +56,33 @@ export const loader = async ({ request }) => {
             status: dbo.status,
         });
 
-        // If status changed in real-time (e.g. SCHEDULED -> ACTIVE or ACTIVE -> EXPIRED), sync DB record
+        // Background sync if status changed
         if (computedStatus !== dbo.status && dbo.status !== "EXPIRED") {
-            prisma.selectedProductOffer.update({
+            prisma.offer.update({
                 where: { id: dbo.id },
                 data: { status: computedStatus },
-            }).catch((err) => console.warn("Could not auto-update selected offer status in DB:", err));
+            }).catch(() => { });
         }
+
+        const isPaired = dbo.type === "PAIRED";
+        const typeLabel = isPaired ? "Frequently Bought" : "Product Add-ons";
+        const typeBadgeTone = isPaired ? "info" : "caution";
+        const productSummary = isPaired
+            ? `${mainCount} Main + ${subCount} Sub`
+            : `${mainCount} Target + ${subCount} Add-on`;
 
         return {
             id: dbo.discountId,
             numericId: dbo.numericId,
             title: dbo.title,
-            discountPercentage: `${dbo.percentage}%`,
-            targetCount,
-            offeredCount,
-            productCount: offeredCount,
+            widgetTitle: dbo.widgetTitle || "",
+            type: dbo.type,
+            typeLabel,
+            typeBadgeTone,
+            discountPercentage: `${dbo.percentage || 0}%`,
+            productSummary,
+            mainProductCount: mainCount,
+            subProductCount: subCount,
             status: computedStatus,
             combinesWith: {
                 orderDiscounts: dbo.combinesWithOrder,
@@ -77,9 +94,9 @@ export const loader = async ({ request }) => {
             endDate: dbo.endsAt ? formatDateInShopTimezone(dbo.endsAt, shopTimezone) : null,
         };
     });
-    const tEnd = performance.now();
 
-    console.log(`⏱️ [SelectedProducts: Table] Total: ${(tEnd - t0).toFixed(0)}ms (Auth: ${(tAuth - t0).toFixed(0)}ms | DB+TZ: ${(tAsync - tAuth).toFixed(0)}ms | Format: ${(tEnd - tAsync).toFixed(0)}ms) - ${formattedOffers.length} offers`);
+    const tEnd = performance.now();
+    console.log(`⏱️ [AllOffers: Table] Loaded ${formattedOffers.length} offers in ${(tEnd - t0).toFixed(0)}ms`);
     return { shopName, offers: formattedOffers };
 };
 
@@ -91,24 +108,29 @@ export const action = async ({ request }) => {
     const numericId = formData.get("numericId");
 
     if (intent === "delete" && (id || numericId)) {
-        console.log("-------------------> [SelectedProducts: Delete] Deleting offer ID:", numericId || id);
+        console.log("-------------------> [Unified Offers: Delete] Deleting offer ID:", numericId || id);
 
         try {
-            await prisma.selectedProductOffer.deleteMany({
+            await prisma.offer.deleteMany({
                 where: {
                     OR: [
-                        numericId ? { numericId } : undefined,
                         id ? { discountId: id } : undefined,
+                        numericId ? { numericId } : undefined,
                         id ? { id } : undefined,
                     ].filter(Boolean),
                 },
             });
-            console.log("-------------------> 💾 [SelectedProducts: Delete] Removed offer from DB for ID:", numericId || id);
-            await syncAllActiveSelectedOffersToShopMetafield(admin);
+
+            // Resync both metafields immediately to Shopify to prevent any phantom discounts
+            await Promise.all([
+                syncAllActiveOffersToShopMetafield(admin),
+                syncAllActiveSelectedOffersToShopMetafield(admin),
+            ]);
+
             return { success: true };
-        } catch (dbErr) {
-            console.error("-------------------> [SelectedProducts: Delete Failed] Error:", dbErr);
-            return { error: dbErr instanceof Error ? dbErr.message : "Failed to delete offer from database" };
+        } catch (err) {
+            console.error("-------------------> [Unified Offers: Delete] Error deleting offer:", err);
+            return { error: "Failed to delete offer from database" };
         }
     }
 
@@ -141,7 +163,7 @@ function MetricCard({ label, value, iconType, onClick, disabled }) {
     );
 }
 
-export default function SelectedProducts() {
+export default function AllOffersIndex() {
     const { offers } = useLoaderData();
     const actionData = useActionData();
     const submit = useSubmit();
@@ -155,87 +177,136 @@ export default function SelectedProducts() {
         ? String(navigation.formData?.get("numericId") || navigation.formData?.get("id"))
         : null;
 
-    // Create offer navigation loading state
-    const [isNavigatingCreate, setIsNavigatingCreate] = useState(false);
-    const isCreateLoading = isNavigatingCreate || (navigation.state === "loading" && navigation.location?.pathname?.includes("/create"));
-
-    const handleCreateOffer = (e) => {
-        if (e?.preventDefault) e.preventDefault();
-        try {
-            shopify.loading(true);
-        } catch {
-            // ignore if not in embedded bridge
-        }
-        setIsNavigatingCreate(true);
-        navigate("/app/sected-products/create");
-    };
-
-    // Customize widget navigation loading state
-    const [isNavigatingCustomize, setIsNavigatingCustomize] = useState(false);
-    const isCustomizeLoading = isNavigatingCustomize || (navigation.state === "loading" && navigation.location?.pathname?.includes("/customize"));
-
-    const handleCustomizeWidget = (e) => {
-        if (e?.preventDefault) e.preventDefault();
-        try {
-            shopify.loading(true);
-        } catch {
-            // ignore if not in embedded bridge
-        }
-        setIsNavigatingCustomize(true);
-        navigate("/app/sected-products/customize");
-    };
-
-    // Edit offer navigation loading state
     const [editingId, setEditingId] = useState(null);
     const isNavigatingEdit = Boolean(editingId) || (navigation.state === "loading" && navigation.location?.pathname?.includes("/edit/"));
 
-    const handleEditOffer = (numericId) => {
-        setEditingId(String(numericId));
+    const [isNavigatingCreate, setIsNavigatingCreate] = useState(false);
+    const isCreateLoading = isNavigatingCreate || (navigation.state === "loading" && navigation.location?.pathname?.includes("/offers/new"));
+
+    const handleCreateOffer = () => {
         try {
             shopify.loading(true);
-        } catch {
-            // ignore if not in embedded bridge
+        } catch { }
+        setIsNavigatingCreate(true);
+        navigate("/app/offers/new");
+    };
+
+    const handleEditOffer = (offer) => {
+        setEditingId(String(offer.numericId));
+        try {
+            shopify.loading(true);
+        } catch { }
+        if (offer.type === "SELECTED") {
+            navigate(`/app/sected-products/edit/${offer.numericId}`);
+        } else {
+            navigate(`/app/paired-products/edit/${offer.numericId}`);
         }
-        navigate(`/app/sected-products/edit/${numericId}`);
+    };
+
+    const handleDelete = (id, numericId) => {
+        if (isSubmitting) return;
+        try {
+            shopify.loading(true);
+        } catch { }
+        const formData = new FormData();
+        formData.append("intent", "delete");
+        formData.append("id", id);
+        formData.append("numericId", numericId);
+        submit(formData, { method: "post" });
     };
 
     useEffect(() => {
         if (navigation.state === "idle") {
-            setIsNavigatingCreate(false);
-            setIsNavigatingCustomize(false);
             setEditingId(null);
+            setIsNavigatingCreate(false);
         }
     }, [navigation.state]);
 
-    // Read initial filters from URL params so reloads preserve all selections
+    // Hide any hanging savebars from create/edit forms
+    useEffect(() => {
+        try {
+            shopify.loading(false);
+            shopify.saveBar?.hide("create-paired-offer-save-bar");
+            shopify.saveBar?.hide("edit-paired-offer-save-bar");
+            shopify.saveBar?.hide("create-selected-offer-save-bar");
+            shopify.saveBar?.hide("edit-selected-offer-save-bar");
+        } catch { }
+    }, [shopify]);
+
+    // Handle toast messages
+    useEffect(() => {
+        if (searchParams.get("created") === "true") {
+            shopify.toast.show("Discount offer created successfully!");
+            shopify.saveBar?.hide("create-paired-offer-save-bar");
+            shopify.saveBar?.hide("edit-paired-offer-save-bar");
+            shopify.saveBar?.hide("create-selected-offer-save-bar");
+            shopify.saveBar?.hide("edit-selected-offer-save-bar");
+            setSearchParams((prev) => {
+                const next = new URLSearchParams(prev);
+                next.delete("created");
+                return next;
+            }, { replace: true });
+        }
+        if (searchParams.get("updated") === "true") {
+            shopify.toast.show("Discount offer updated successfully!");
+            shopify.saveBar?.hide("create-paired-offer-save-bar");
+            shopify.saveBar?.hide("edit-paired-offer-save-bar");
+            shopify.saveBar?.hide("create-selected-offer-save-bar");
+            shopify.saveBar?.hide("edit-selected-offer-save-bar");
+            setSearchParams((prev) => {
+                const next = new URLSearchParams(prev);
+                next.delete("updated");
+                return next;
+            }, { replace: true });
+        }
+        if (searchParams.get("deleted") === "true" || actionData?.success) {
+            shopify.toast.show("Discount offer deleted successfully!");
+            shopify.saveBar?.hide("create-paired-offer-save-bar");
+            shopify.saveBar?.hide("edit-paired-offer-save-bar");
+            shopify.saveBar?.hide("create-selected-offer-save-bar");
+            shopify.saveBar?.hide("edit-selected-offer-save-bar");
+            setSearchParams((prev) => {
+                const next = new URLSearchParams(prev);
+                next.delete("deleted");
+                return next;
+            }, { replace: true });
+        }
+    }, [searchParams, actionData, shopify, setSearchParams]);
+
+    // Read initial filters from URL params
     const initialQuery = searchParams.get("q") || "";
+    const initialType = searchParams.get("type") || "ALL";
     const initialStatus = searchParams.get("status") || "ALL";
     const initialSort = searchParams.get("sort") || "newest";
     const initialPage = Math.max(1, parseInt(searchParams.get("page") || "1", 10));
 
     const [searchQuery, setSearchQuery] = useState(initialQuery);
+    const [typeFilter, setTypeFilter] = useState(initialType);
     const [statusFilter, setStatusFilter] = useState(initialStatus);
     const [sortBy, setSortBy] = useState(initialSort);
     const [currentPage, setCurrentPage] = useState(initialPage);
 
-    // Sync from URL when browser back/forward or searchParams change
     useEffect(() => {
         const q = searchParams.get("q") || "";
+        const t = searchParams.get("type") || "ALL";
         const s = searchParams.get("status") || "ALL";
         const sort = searchParams.get("sort") || "newest";
         const p = Math.max(1, parseInt(searchParams.get("page") || "1", 10));
 
         if (q !== searchQuery) setSearchQuery(q);
+        if (t !== typeFilter) setTypeFilter(t);
         if (s !== statusFilter) setStatusFilter(s);
         if (sort !== sortBy) setSortBy(sort);
         if (p !== currentPage) setCurrentPage(p);
     }, [searchParams]);
 
-    // Helper to persist filters, sort, and pagination into URL
-    const updateUrlParams = (newQuery, newStatus, newSort, newPage) => {
+    const updateUrlParams = (newQuery, newType, newStatus, newSort, newPage) => {
         const params = new URLSearchParams(searchParams);
         if (newQuery) params.set("q", newQuery);
         else params.delete("q");
+
+        if (newType && newType !== "ALL") params.set("type", newType);
+        else params.delete("type");
 
         if (newStatus && newStatus !== "ALL") params.set("status", newStatus);
         else params.delete("status");
@@ -252,101 +323,57 @@ export default function SelectedProducts() {
     const handleSearchChange = (val) => {
         setSearchQuery(val);
         setCurrentPage(1);
-        updateUrlParams(val, statusFilter, sortBy, 1);
+        updateUrlParams(val, typeFilter, statusFilter, sortBy, 1);
+    };
+
+    const handleTypeChange = (val) => {
+        setTypeFilter(val);
+        setCurrentPage(1);
+        updateUrlParams(searchQuery, val, statusFilter, sortBy, 1);
     };
 
     const handleStatusChange = (val) => {
         setStatusFilter(val);
         setCurrentPage(1);
-        updateUrlParams(searchQuery, val, sortBy, 1);
+        updateUrlParams(searchQuery, typeFilter, val, sortBy, 1);
     };
 
     const handleSortChange = (val) => {
         setSortBy(val);
         setCurrentPage(1);
-        updateUrlParams(searchQuery, statusFilter, val, 1);
+        updateUrlParams(searchQuery, typeFilter, statusFilter, val, 1);
     };
-
-    const isFilteredOrSorted = Boolean(
-        searchQuery.trim() || statusFilter !== "ALL" || sortBy !== "newest"
-    );
 
     const handleClearAllFilters = () => {
         setSearchQuery("");
+        setTypeFilter("ALL");
         setStatusFilter("ALL");
         setSortBy("newest");
         setCurrentPage(1);
-        updateUrlParams("", "ALL", "newest", 1);
+        setSearchParams(new URLSearchParams(), { replace: true });
     };
 
-    const handlePageChange = (val) => {
-        const targetPage = Math.min(Math.max(1, val), totalPages);
-        if (targetPage === safeCurrentPage) return;
-        setCurrentPage(targetPage);
-        updateUrlParams(searchQuery, statusFilter, sortBy, targetPage);
-    };
+    const isFilteredOrSorted = searchQuery !== "" || typeFilter !== "ALL" || statusFilter !== "ALL" || sortBy !== "newest";
 
-    useEffect(() => {
-        if (searchParams.get("created") === "true") {
-            shopify.saveBar?.hide("create-selected-offer-save-bar");
-            shopify.saveBar?.hide("edit-selected-offer-save-bar");
-            shopify.toast.show("Discount created");
-            const newParams = new URLSearchParams(searchParams);
-            newParams.delete("created");
-            setSearchParams(newParams, { replace: true });
-        } else if (searchParams.get("updated") === "true") {
-            shopify.saveBar?.hide("create-selected-offer-save-bar");
-            shopify.saveBar?.hide("edit-selected-offer-save-bar");
-            shopify.toast.show("Offer updated successfully");
-            const newParams = new URLSearchParams(searchParams);
-            newParams.delete("updated");
-            setSearchParams(newParams, { replace: true });
-        } else if (searchParams.get("deleted") === "true") {
-            shopify.saveBar?.hide("create-selected-offer-save-bar");
-            shopify.saveBar?.hide("edit-selected-offer-save-bar");
-            shopify.toast.show("Offer deleted");
-            const newParams = new URLSearchParams(searchParams);
-            newParams.delete("deleted");
-            setSearchParams(newParams, { replace: true });
-        }
-    }, [searchParams, setSearchParams, shopify]);
-
-    useEffect(() => {
-        try {
-            shopify.loading(false);
-        } catch {
-            // ignore if not in embedded bridge
-        }
-        setIsNavigatingCreate(false);
-        setEditingId(null);
-        shopify.saveBar?.hide("create-selected-offer-save-bar");
-        shopify.saveBar?.hide("edit-selected-offer-save-bar");
-    }, [shopify]);
-
-    useEffect(() => {
-        if (actionData?.success) {
-            shopify.toast.show("Offer deleted");
-        } else if (actionData?.error) {
-            shopify.toast.show(actionData.error, { isError: true });
-        }
-    }, [actionData, shopify]);
-
-    // Filter and Sort offers
+    // Filtering & Sorting
     const sortedAndFilteredOffers = useMemo(() => {
-        const query = searchQuery.trim().toLowerCase();
-        const result = (offers || []).filter((offer) => {
-            const matchesSearch =
-                !query ||
-                offer.title.toLowerCase().includes(query) ||
-                String(offer.numericId).includes(query);
+        let result = offers.filter((offer) => {
+            // Type filter
+            if (typeFilter !== "ALL" && offer.type !== typeFilter) return false;
 
-            const matchesStatus =
-                statusFilter === "ALL" ||
-                offer.status === statusFilter ||
-                (statusFilter === "EXPIRED" &&
-                    (offer.status === "EXPIRED" || offer.status === "DEACTIVATED"));
+            // Status filter
+            if (statusFilter !== "ALL" && offer.status !== statusFilter) return false;
 
-            return matchesSearch && matchesStatus;
+            // Search query
+            if (searchQuery.trim()) {
+                const q = searchQuery.toLowerCase().trim();
+                const matchTitle = offer.title?.toLowerCase().includes(q);
+                const matchId = String(offer.numericId).includes(q);
+                const matchType = offer.typeLabel?.toLowerCase().includes(q);
+                if (!matchTitle && !matchId && !matchType) return false;
+            }
+
+            return true;
         });
 
         result.sort((a, b) => {
@@ -354,16 +381,11 @@ export default function SelectedProducts() {
                 case "oldest":
                     return (Number(a.numericId) || 0) - (Number(b.numericId) || 0);
                 case "title_asc":
-                    return a.title.localeCompare(b.title);
+                    return (a.title || "").localeCompare(b.title || "");
                 case "title_desc":
-                    return b.title.localeCompare(a.title);
+                    return (b.title || "").localeCompare(a.title || "");
                 case "used_desc":
                     return (b.usageCount || 0) - (a.usageCount || 0);
-                case "discount_desc": {
-                    const percA = parseFloat(a.discountPercentage) || 0;
-                    const percB = parseFloat(b.discountPercentage) || 0;
-                    return percB - percA;
-                }
                 case "newest":
                 default:
                     return (Number(b.numericId) || 0) - (Number(a.numericId) || 0);
@@ -371,7 +393,7 @@ export default function SelectedProducts() {
         });
 
         return result;
-    }, [offers, searchQuery, statusFilter, sortBy]);
+    }, [offers, searchQuery, typeFilter, statusFilter, sortBy]);
 
     // Pagination calculations (10 offers per page)
     const ITEMS_PER_PAGE = 10;
@@ -384,18 +406,15 @@ export default function SelectedProducts() {
         return sortedAndFilteredOffers.slice(start, start + ITEMS_PER_PAGE);
     }, [sortedAndFilteredOffers, safeCurrentPage]);
 
-    const activeCount = useMemo(() => (offers || []).filter((o) => o.status === "ACTIVE").length, [offers]);
-    const scheduledCount = useMemo(() => (offers || []).filter((o) => o.status === "SCHEDULED").length, [offers]);
-    const deactivatedCount = useMemo(
-        () => (offers || []).filter((o) => o.status === "EXPIRED" || o.status === "DEACTIVATED").length,
-        [offers]
-    );
+    const activeCount = useMemo(() => offers.filter((o) => o.status === "ACTIVE").length, [offers]);
+    const scheduledCount = useMemo(() => offers.filter((o) => o.status === "SCHEDULED").length, [offers]);
+    const deactivatedCount = useMemo(() => offers.filter((o) => o.status === "EXPIRED").length, [offers]);
 
     const metricCards = useMemo(() => [
         {
             id: "total",
             label: "Total Offers",
-            value: (offers || []).length,
+            value: offers.length,
             iconType: "discount",
             filterValue: "ALL",
         },
@@ -420,40 +439,44 @@ export default function SelectedProducts() {
             iconType: "disabled",
             filterValue: "EXPIRED",
         },
-    ], [offers, activeCount, scheduledCount, deactivatedCount]);
-
-    const handleDelete = (id, numericId) => {
-        if (isSubmitting) return; // Prevent double submit
-        const formData = new FormData();
-        formData.append("intent", "delete");
-        formData.append("id", id);
-        formData.append("numericId", numericId);
-        submit(formData, { method: "post" });
-    };
+    ], [offers.length, activeCount, scheduledCount, deactivatedCount]);
 
     return (
-        <s-page heading="Selected Products Offers">
+        <s-page heading="All Discounts">
             <s-link slot="breadcrumb-actions" href="/app">
                 Home
             </s-link>
-            <s-button
-                slot="secondary-actions"
-                onClick={handleCustomizeWidget}
-                loading={isCustomizeLoading ? true : undefined}
-                disabled={(isCustomizeLoading || isCreateLoading || isSubmitting || isNavigatingEdit) ? true : undefined}
-            >
-                🎨 Customize Widget
-            </s-button>
+
+            {/* Create Offer Button -> Navigates to dedicated /app/offers/new page */}
             <s-button
                 slot="primary-action"
                 variant="primary"
                 onClick={handleCreateOffer}
                 loading={isCreateLoading ? true : undefined}
-                disabled={(isCreateLoading || isCustomizeLoading || isSubmitting || isNavigatingEdit) ? true : undefined}
+                disabled={(isCreateLoading || isSubmitting || isNavigatingEdit) ? true : undefined}
             >
                 Create offer
             </s-button>
+            <s-button
+                slot="secondary-actions"
+                commandFor="customize-menu"
+                icon="paint-brush-flat"
+            >
+                Customize Widgets
+            </s-button>
 
+            <s-menu
+                id="customize-menu"
+                accessibilityLabel="Customize widgets"
+            >
+                <s-button href="/app/paired-products/customize">
+                    Frequently Bought Widget
+                </s-button>
+
+                <s-button href="/app/sected-products/customize">
+                    Product Add-ons Widget
+                </s-button>
+            </s-menu>
             {/* KPI Metric Cards */}
             <s-box border="small" borderRadius="base" padding="small">
                 <s-grid
@@ -475,7 +498,7 @@ export default function SelectedProducts() {
                 </s-grid>
             </s-box>
 
-            {/* Filter and Table Section */}
+            {/* Filter and Table Section (Matches original Polaris design) */}
             <s-box paddingBlockStart="large">
                 <s-section padding="none">
                     <s-table>
@@ -483,28 +506,27 @@ export default function SelectedProducts() {
                         <s-grid
                             slot="filters"
                             gap="small-200"
-                            gridTemplateColumns="@container (inline-size <= 760px) 1fr, 1fr 140px auto auto"
+                            gridTemplateColumns="@container (inline-size <= 760px) 1fr, 1fr 180px auto auto"
                             alignItems="center"
                             padding="small-400"
                         >
                             <s-search-field
                                 label="Search offers"
                                 labelAccessibilityVisibility="exclusive"
-                                placeholder="Search offers by name or ID..."
+                                placeholder="Filter discounts by name or ID..."
                                 value={searchQuery}
                                 onInput={(e) => handleSearchChange(e.target.value)}
                             ></s-search-field>
 
                             <s-select
-                                label="Status"
+                                label="Discount Type"
                                 labelAccessibilityVisibility="exclusive"
-                                value={statusFilter}
-                                onChange={(e) => handleStatusChange(e.target.value)}
+                                value={typeFilter}
+                                onChange={(e) => handleTypeChange(e.target.value)}
                             >
-                                <s-option value="ALL">All Statuses</s-option>
-                                <s-option value="ACTIVE">Active</s-option>
-                                <s-option value="SCHEDULED">Scheduled</s-option>
-                                <s-option value="EXPIRED">Deactivated</s-option>
+                                <s-option value="ALL">All Discount Types</s-option>
+                                <s-option value="PAIRED">Frequently Bought</s-option>
+                                <s-option value="SELECTED">Product Add-ons</s-option>
                             </s-select>
 
                             <s-box>
@@ -561,13 +583,6 @@ export default function SelectedProducts() {
                                             >
                                                 Most used
                                             </s-choice>
-                                            <s-choice
-                                                value="discount_desc"
-                                                selected={sortBy === "discount_desc" ? true : undefined}
-                                                onClick={() => handleSortChange("discount_desc")}
-                                            >
-                                                Highest discount
-                                            </s-choice>
                                         </s-choice-list>
                                     </s-box>
                                 </s-popover>
@@ -591,6 +606,7 @@ export default function SelectedProducts() {
                             <s-table-header>
                                 <s-box padding="small-300">Offer name</s-box>
                             </s-table-header>
+                            <s-table-header>Type</s-table-header>
                             <s-table-header>Discount</s-table-header>
                             <s-table-header>Products</s-table-header>
                             <s-table-header>Status</s-table-header>
@@ -620,18 +636,8 @@ export default function SelectedProducts() {
                                     <s-text slot="subheading">
                                         {isFilteredOrSorted
                                             ? "Try clearing your filters or search query to see more offers."
-                                            : "Create selected product discounts to incentivize customers to buy specific quantities of products."}
+                                            : "Create your discount offers to incentivize customers to purchase in your store."}
                                     </s-text>
-                                    {isFilteredOrSorted && (
-                                        <s-button
-                                            slot="secondary-actions"
-                                            onClick={handleCreateOffer}
-                                            loading={isCreateLoading ? true : undefined}
-                                            disabled={(isCreateLoading || isCustomizeLoading || isSubmitting || isNavigatingEdit) ? true : undefined}
-                                        >
-                                            Create offer
-                                        </s-button>
-                                    )}
                                     {isFilteredOrSorted ? (
                                         <s-button
                                             slot="primary-action"
@@ -646,139 +652,156 @@ export default function SelectedProducts() {
                                             variant="primary"
                                             onClick={handleCreateOffer}
                                             loading={isCreateLoading ? true : undefined}
-                                            disabled={(isCreateLoading || isCustomizeLoading || isSubmitting || isNavigatingEdit) ? true : undefined}
+                                            disabled={(isSubmitting || isNavigatingEdit || isCreateLoading) ? true : undefined}
                                         >
                                             Create offer
                                         </s-button>
                                     )}
                                 </s-empty-state>
                             ) : (
-                                paginatedOffers.map((offer) => (
-                                    <s-table-row key={offer.id}>
-                                        <s-table-cell>
-                                            <s-link href={`/app/sected-products/edit/${offer.numericId}`}>
-                                                <s-text weight="bold">{offer.title}</s-text>
-                                            </s-link>
-                                        </s-table-cell>
+                                paginatedOffers.map((offer) => {
+                                    const editUrl = offer.type === "SELECTED"
+                                        ? `/app/sected-products/edit/${offer.numericId}`
+                                        : `/app/paired-products/edit/${offer.numericId}`;
 
-                                        <s-table-cell>
-                                            <s-badge tone="info">{offer.discountPercentage} OFF</s-badge>
-                                        </s-table-cell>
+                                    return (
+                                        <s-table-row key={offer.id}>
+                                            {/* Offer Name */}
+                                            <s-table-cell>
+                                                <s-link href={editUrl}>
+                                                    <s-text weight="bold">{offer.title}</s-text>
+                                                </s-link>
+                                            </s-table-cell>
 
-                                        <s-table-cell>
-                                            <s-text>
-                                                {offer.targetCount > 0
-                                                    ? `${offer.targetCount} main · ${offer.offeredCount} add-on${offer.offeredCount === 1 ? "" : "s"}`
-                                                    : `${offer.productCount} selected`}
-                                            </s-text>
-                                        </s-table-cell>
-
-                                        <s-table-cell>
-                                            <s-badge
-                                                tone={
-                                                    offer.status === "ACTIVE"
-                                                        ? "success"
-                                                        : offer.status === "SCHEDULED"
-                                                            ? "warning"
-                                                            : "neutral"
-                                                }
-                                            >
-                                                {offer.status}
-                                            </s-badge>
-                                        </s-table-cell>
-
-                                        <s-table-cell>
-                                            <s-tooltip id={`combo-tip-${offer.numericId}`}>
-                                                Combinations are managed store-wide in App Settings
-                                            </s-tooltip>
-                                            <s-link href="/app/settings">
-                                                <s-badge tone="info" interestFor={`combo-tip-${offer.numericId}`}>
-                                                    Store-wide
+                                            {/* Type */}
+                                            <s-table-cell>
+                                                <s-badge tone={offer.typeBadgeTone}>
+                                                    {offer.typeLabel}
                                                 </s-badge>
-                                            </s-link>
-                                        </s-table-cell>
+                                            </s-table-cell>
 
-                                        {/* Used count */}
-                                        <s-table-cell>
-                                            <s-text weight={offer.usageCount > 0 ? "bold" : "regular"}>
-                                                {offer.usageCount || 0} times
-                                            </s-text>
-                                        </s-table-cell>
+                                            {/* Discount */}
+                                            <s-table-cell>
+                                                <s-badge tone="info">{offer.discountPercentage} OFF</s-badge>
+                                            </s-table-cell>
 
-                                        <s-table-cell>
-                                            <div style={{ height: "40px", display: "flex", flexDirection: "column", justifyContent: "center" }}>
-                                                <s-stack gap="small-400">
-                                                    <s-chip>{offer.startDate}</s-chip>
-                                                    {
-                                                        offer.endDate && offer.endDate !== "No end date" && (
-                                                            <s-chip>
-                                                                {offer.endDate}
-                                                            </s-chip>
-                                                        )
+                                            {/* Products Summary */}
+                                            <s-table-cell>
+                                                <s-text>{offer.productSummary}</s-text>
+                                            </s-table-cell>
+
+                                            {/* Status */}
+                                            <s-table-cell>
+                                                <s-badge
+                                                    tone={
+                                                        offer.status === "ACTIVE"
+                                                            ? "success"
+                                                            : offer.status === "SCHEDULED"
+                                                                ? "warning"
+                                                                : "neutral"
                                                     }
-                                                </s-stack>
-                                            </div>
-                                        </s-table-cell>
+                                                >
+                                                    {offer.status}
+                                                </s-badge>
+                                            </s-table-cell>
 
-                                        <s-table-cell>
-                                            <s-tooltip id={`edit-tip-${offer.numericId}`}>Edit offer</s-tooltip>
-                                            <s-tooltip id={`delete-tip-${offer.numericId}`}>Delete offer</s-tooltip>
+                                            {/* Combinations */}
+                                            <s-table-cell>
+                                                <s-tooltip id={`combo-tip-${offer.numericId}`}>
+                                                    Combinations are managed store-wide in App Settings
+                                                </s-tooltip>
+                                                <s-link href="/app/settings">
+                                                    <s-badge tone="info" interestFor={`combo-tip-${offer.numericId}`}>
+                                                        Store-wide
+                                                    </s-badge>
+                                                </s-link>
+                                            </s-table-cell>
 
-                                            <s-stack direction="inline" gap="small" alignItems="center">
-                                                <s-button
-                                                    variant="primary"
-                                                    icon={editingId === String(offer.numericId) ? undefined : "edit"}
-                                                    interestFor={`edit-tip-${offer.numericId}`}
-                                                    accessibilityLabel="Edit offer"
-                                                    onClick={() => handleEditOffer(offer.numericId)}
-                                                    loading={editingId === String(offer.numericId) ? true : undefined}
-                                                    disabled={(isSubmitting || isCreateLoading || isCustomizeLoading || isNavigatingEdit) ? true : undefined}
-                                                />
+                                            {/* Used count */}
+                                            <s-table-cell>
+                                                <s-text weight={offer.usageCount > 0 ? "bold" : "regular"}>
+                                                    {offer.usageCount || 0}
+                                                </s-text>
+                                            </s-table-cell>
 
-                                                <s-button
-                                                    variant="primary"
-                                                    tone="critical"
-                                                    commandFor={`delete-modal-${offer.numericId}`}
-                                                    command="--show"
-                                                    icon="delete"
-                                                    interestFor={`delete-tip-${offer.numericId}`}
-                                                    accessibilityLabel="Delete offer"
-                                                    loading={deletingId === String(offer.numericId) ? true : undefined}
-                                                    disabled={(isSubmitting || isCreateLoading || isCustomizeLoading || isNavigatingEdit) ? true : undefined}
-                                                />
-
-                                                <s-modal id={`delete-modal-${offer.numericId}`} heading="Delete offer?">
-                                                    <s-stack gap="base">
-                                                        <s-text>Are you sure you want to delete <b>&ldquo;{offer.title}&rdquo;</b>?</s-text>
-                                                        <s-text tone="caution">This action cannot be undone.</s-text>
+                                            {/* Schedule */}
+                                            <s-table-cell>
+                                                <div style={{ height: "40px", display: "flex", flexDirection: "column", justifyContent: "center" }}>
+                                                    <s-stack gap="small-400">
+                                                        <s-chip>{offer.startDate}</s-chip>
+                                                        {offer.endDate && offer.endDate !== "No end date" && (
+                                                            <s-chip>{offer.endDate}</s-chip>
+                                                        )}
                                                     </s-stack>
+                                                </div>
+                                            </s-table-cell>
 
+                                            {/* Actions: Edit & Delete */}
+                                            <s-table-cell>
+                                                <s-tooltip id={`edit-tip-${offer.numericId}`}>Edit offer</s-tooltip>
+                                                <s-tooltip id={`delete-tip-${offer.numericId}`}>Delete offer</s-tooltip>
+
+                                                <s-stack direction="inline" gap="small" alignItems="center">
+                                                    {/* Edit Button (Pencil Icon) */}
                                                     <s-button
-                                                        slot="primary-action"
+                                                        variant="primary"
+                                                        icon={editingId === String(offer.numericId) ? undefined : "edit"}
+                                                        interestFor={`edit-tip-${offer.numericId}`}
+                                                        accessibilityLabel="Edit offer"
+                                                        onClick={() => handleEditOffer(offer)}
+                                                        loading={editingId === String(offer.numericId) ? true : undefined}
+                                                        disabled={(isSubmitting || isNavigatingEdit || isCreateLoading) ? true : undefined}
+                                                    />
+
+                                                    {/* Delete Button (Trash Icon) */}
+                                                    <s-button
                                                         variant="primary"
                                                         tone="critical"
+                                                        icon={deletingId === String(offer.numericId) ? undefined : "delete"}
+                                                        interestFor={`delete-tip-${offer.numericId}`}
+                                                        accessibilityLabel="Delete offer"
                                                         commandFor={`delete-modal-${offer.numericId}`}
-                                                        command="--hide"
-                                                        onClick={() => handleDelete(offer.id, offer.numericId)}
+                                                        command="--show"
                                                         loading={deletingId === String(offer.numericId) ? true : undefined}
-                                                        disabled={(isSubmitting || isCreateLoading || isCustomizeLoading || isNavigatingEdit) ? true : undefined}
-                                                    >
-                                                        Delete offer
-                                                    </s-button>
-                                                    <s-button
-                                                        slot="secondary-actions"
-                                                        variant="secondary"
-                                                        commandFor={`delete-modal-${offer.numericId}`}
-                                                        command="--hide"
-                                                        disabled={(isSubmitting || isCreateLoading || isCustomizeLoading || isNavigatingEdit) ? true : undefined}
-                                                    >
-                                                        Cancel
-                                                    </s-button>
-                                                </s-modal>
-                                            </s-stack>
-                                        </s-table-cell>
-                                    </s-table-row>
-                                ))
+                                                        disabled={(isSubmitting || isNavigatingEdit || isCreateLoading) ? true : undefined}
+                                                    />
+
+                                                    {/* Delete Confirmation Modal */}
+                                                    <s-modal id={`delete-modal-${offer.numericId}`} heading="Delete offer?">
+                                                        <s-stack gap="base">
+                                                            <s-text>
+                                                                Are you sure you want to delete <b>&ldquo;{offer.title}&rdquo;</b>?
+                                                            </s-text>
+                                                            <s-text tone="caution">This action cannot be undone.</s-text>
+                                                        </s-stack>
+
+                                                        <s-button
+                                                            slot="primary-action"
+                                                            variant="primary"
+                                                            tone="critical"
+                                                            commandFor={`delete-modal-${offer.numericId}`}
+                                                            command="--hide"
+                                                            onClick={() => handleDelete(offer.id, offer.numericId)}
+                                                            loading={deletingId === String(offer.numericId) ? true : undefined}
+                                                            disabled={(isSubmitting || isCreateLoading) ? true : undefined}
+                                                        >
+                                                            Delete offer
+                                                        </s-button>
+                                                        <s-button
+                                                            slot="secondary-actions"
+                                                            variant="secondary"
+                                                            commandFor={`delete-modal-${offer.numericId}`}
+                                                            command="--hide"
+                                                            disabled={(isSubmitting || isCreateLoading) ? true : undefined}
+                                                        >
+                                                            Cancel
+                                                        </s-button>
+                                                    </s-modal>
+                                                </s-stack>
+                                            </s-table-cell>
+                                        </s-table-row>
+                                    );
+                                })
                             )}
                         </s-table-body>
                     </s-table>
@@ -797,7 +820,7 @@ export default function SelectedProducts() {
                                             variant="secondary"
                                             icon="chevron-left"
                                             disabled={safeCurrentPage <= 1 ? true : undefined}
-                                            onClick={safeCurrentPage > 1 ? () => handlePageChange(safeCurrentPage - 1) : undefined}
+                                            onClick={safeCurrentPage > 1 ? () => setCurrentPage(safeCurrentPage - 1) : undefined}
                                             accessibilityLabel="Previous page"
                                         />
                                         <s-text weight="medium" size="small">
@@ -807,7 +830,7 @@ export default function SelectedProducts() {
                                             variant="secondary"
                                             icon="chevron-right"
                                             disabled={safeCurrentPage >= totalPages ? true : undefined}
-                                            onClick={safeCurrentPage < totalPages ? () => handlePageChange(safeCurrentPage + 1) : undefined}
+                                            onClick={safeCurrentPage < totalPages ? () => setCurrentPage(safeCurrentPage + 1) : undefined}
                                             accessibilityLabel="Next page"
                                         />
                                     </s-stack>

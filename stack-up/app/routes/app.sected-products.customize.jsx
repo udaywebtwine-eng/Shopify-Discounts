@@ -219,8 +219,8 @@ export default function SelectedProductsCustomize() {
 
   return (
     <s-page heading="Special Add-Ons Customization">
-      <s-link slot="breadcrumb-actions" href="/app/sected-products">
-        Selected Products Offers
+      <s-link slot="breadcrumb-actions" href="/app/offers">
+        All Discounts
       </s-link>
 
       {/* SaveBar from App Bridge */}

@@ -398,7 +398,11 @@ export async function updateMasterDiscountCombinations(admin, nodeId, combinatio
 export async function cleanupLegacyDiscounts(admin) {
   try {
     const { selectedFunctionId, pairedFunctionId } = await getInstalledFunctionIds(admin);
-    const targetFunctionIds = new Set([selectedFunctionId, pairedFunctionId].filter(Boolean));
+    const targetFunctionIds = new Set();
+    [selectedFunctionId, pairedFunctionId].filter(Boolean).forEach((id) => {
+      targetFunctionIds.add(id);
+      targetFunctionIds.add(String(id).replace("gid://shopify/ShopifyFunction/", "").trim());
+    });
 
     const res = await admin.graphql(
       `#graphql
@@ -434,8 +438,12 @@ export async function cleanupLegacyDiscounts(admin) {
 
       if (isMaster) continue; // Keep Master discounts safe!
 
-      const fnId = disc.appDiscountType?.functionId;
-      const isOurAppFunction = targetFunctionIds.has(fnId);
+      const rawFnId = disc.appDiscountType?.functionId;
+      const cleanFnId = rawFnId ? String(rawFnId).replace("gid://shopify/ShopifyFunction/", "").trim() : "";
+      const isOurAppFunction = Boolean(
+        (rawFnId && targetFunctionIds.has(rawFnId)) ||
+        (cleanFnId && targetFunctionIds.has(cleanFnId))
+      );
       const isStackUpTitle =
         title.toLowerCase().includes("stackup") ||
         title.toLowerCase().includes("stack-up");

@@ -73,24 +73,14 @@ export const action = async ({ request }) => {
             { shop: shop.replace(".myshopify.com", "") },
             { shop: `${shop.replace(".myshopify.com", "")}.myshopify.com` },
         ];
-        await Promise.all([
-            db.pairedOffer.updateMany({
-                where: { OR: shopConditions },
-                data: {
-                    combinesWithOrder: orderDiscounts,
-                    combinesWithProduct: productDiscounts,
-                    combinesWithShipping: shippingDiscounts,
-                },
-            }).catch(() => { }),
-            db.selectedProductOffer.updateMany({
-                where: { OR: shopConditions },
-                data: {
-                    combinesWithOrder: orderDiscounts,
-                    combinesWithProduct: productDiscounts,
-                    combinesWithShipping: shippingDiscounts,
-                },
-            }).catch(() => { }),
-        ]);
+        await db.offer.updateMany({
+            where: { OR: shopConditions },
+            data: {
+                combinesWithOrder: orderDiscounts,
+                combinesWithProduct: productDiscounts,
+                combinesWithShipping: shippingDiscounts,
+            },
+        }).catch(() => { });
 
         return Response.json({ success: true, message: "Combinations saved successfully!" });
     }

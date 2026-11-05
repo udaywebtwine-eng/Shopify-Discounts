@@ -2,7 +2,6 @@ import db from "../db.server";
 
 /**
  * Cleans up any mismatched or false-backfilled orders from the database
- * (e.g. historical store orders from before the offer was created)
  * and recalculates accurate usage count, total revenue, and discount amounts.
  */
 export async function cleanupMismatchedOrders(shop) {
@@ -13,90 +12,18 @@ export async function cleanupMismatchedOrders(shop) {
       { shop: `${shop.replace(".myshopify.com", "")}.myshopify.com` },
     ];
 
-    const [pairedOffers, selectedOffers] = await Promise.all([
-      db.pairedOffer.findMany({ where: { OR: shopConditions } }),
-      db.selectedProductOffer.findMany({ where: { OR: shopConditions } }),
-    ]);
+    const allOffers = await db.offer.findMany({ where: { OR: shopConditions } });
 
-    // 1. Audit Paired Offers
-    for (const offer of pairedOffers) {
-      const offerCreatedAt = new Date(offer.createdAt).getTime() - 5 * 60 * 1000; // 5 min buffer
-
-      // Find all orders linked to this paired offer that were created after offer existed
+    for (const offer of allOffers) {
       const validOrders = await db.orderUsage.findMany({
-        where: {
-          offerId: offer.id,
-          createdAt: { gte: new Date(offerCreatedAt) },
-        },
+        where: { offerId: offer.id },
       });
-
-      // Find any invalid orders (placed before offer existed) and remove link or delete
-      const invalidOrders = await db.orderUsage.findMany({
-        where: {
-          offerId: offer.id,
-          createdAt: { lt: new Date(offerCreatedAt) },
-        },
-      });
-
-      if (invalidOrders.length > 0) {
-        for (const inv of invalidOrders) {
-          if (inv.selectedOfferId) {
-            // If it also had a selected offer, just unlink paired
-            await db.orderUsage.update({ where: { id: inv.id }, data: { offerId: null } });
-          } else {
-            // Delete completely
-            await db.orderUsage.delete({ where: { id: inv.id } });
-          }
-        }
-      }
 
       const newUsageCount = validOrders.length;
       const newRevenue = validOrders.reduce((sum, o) => sum + (o.totalPrice || 0), 0);
       const newDiscount = validOrders.reduce((sum, o) => sum + (o.discountAmount || 0), 0);
 
-      await db.pairedOffer.update({
-        where: { id: offer.id },
-        data: {
-          usageCount: newUsageCount,
-          totalRevenue: newRevenue,
-          totalDiscountAmount: newDiscount,
-        },
-      });
-    }
-
-    // 2. Audit Selected Product Offers
-    for (const offer of selectedOffers) {
-      const offerCreatedAt = new Date(offer.createdAt).getTime() - 5 * 60 * 1000;
-
-      const validOrders = await db.orderUsage.findMany({
-        where: {
-          selectedOfferId: offer.id,
-          createdAt: { gte: new Date(offerCreatedAt) },
-        },
-      });
-
-      const invalidOrders = await db.orderUsage.findMany({
-        where: {
-          selectedOfferId: offer.id,
-          createdAt: { lt: new Date(offerCreatedAt) },
-        },
-      });
-
-      if (invalidOrders.length > 0) {
-        for (const inv of invalidOrders) {
-          if (inv.offerId) {
-            await db.orderUsage.update({ where: { id: inv.id }, data: { selectedOfferId: null } });
-          } else {
-            await db.orderUsage.delete({ where: { id: inv.id } });
-          }
-        }
-      }
-
-      const newUsageCount = validOrders.length;
-      const newRevenue = validOrders.reduce((sum, o) => sum + (o.totalPrice || 0), 0);
-      const newDiscount = validOrders.reduce((sum, o) => sum + (o.discountAmount || 0), 0);
-
-      await db.selectedProductOffer.update({
+      await db.offer.update({
         where: { id: offer.id },
         data: {
           usageCount: newUsageCount,
@@ -112,7 +39,7 @@ export async function cleanupMismatchedOrders(shop) {
 
 /**
  * Syncs and backfills recent orders from Shopify Admin GraphQL into the PostgreSQL database.
- * Accurately supports combined orders where BOTH Paired and Selected offers apply!
+ * Accurately supports combined orders where multiple offers apply!
  */
 export async function syncRecentOrdersFromShopify(admin, shop) {
   try {
@@ -150,12 +77,33 @@ export async function syncRecentOrdersFromShopify(admin, shop) {
                 ... on DiscountCodeApplication {
                   code
                 }
+                ... on ScriptDiscountApplication {
+                  title
+                }
+                ... on ManualDiscountApplication {
+                  title
+                }
               }
             }
             lineItems(first: 50) {
               nodes {
                 id
                 title
+                discountAllocations {
+                  allocatedAmountSet {
+                    shopMoney {
+                      amount
+                    }
+                  }
+                  discountApplication {
+                    ... on AutomaticDiscountApplication {
+                      title
+                    }
+                    ... on DiscountCodeApplication {
+                      code
+                    }
+                  }
+                }
                 product {
                   id
                 }
@@ -177,25 +125,14 @@ export async function syncRecentOrdersFromShopify(admin, shop) {
       { shop: `${shop.replace(".myshopify.com", "")}.myshopify.com` },
     ];
 
-    const [allPairedOffers, allSelectedOffers] = await Promise.all([
-      db.pairedOffer.findMany({ where: { OR: shopConditions } }),
-      db.selectedProductOffer.findMany({ where: { OR: shopConditions } }),
-    ]);
-
-    if (allPairedOffers.length === 0 && allSelectedOffers.length === 0) return 0;
-
-    const orderIdStrs = orders.map((o) => String(o.id.split("/").pop()));
-    const existingOrders = await db.orderUsage.findMany({
-      where: { orderId: { in: orderIdStrs } },
-    });
-    const existingMap = new Map(existingOrders.map((e) => [e.orderId, e]));
+    const allOffers = await db.offer.findMany({ where: { OR: shopConditions } });
+    if (allOffers.length === 0) return 0;
 
     let newlySyncedCount = 0;
 
     for (const order of orders) {
       const orderNumericId = order.id.split("/").pop();
       const orderIdStr = String(orderNumericId);
-      const existingRecord = existingMap.get(orderIdStr);
 
       // Extract applied discount titles, codes, and percentages
       const appliedTitles = (order.discountApplications?.nodes || [])
@@ -219,110 +156,108 @@ export async function syncRecentOrdersFromShopify(admin, shop) {
       });
 
       const orderCreatedAt = new Date(order.createdAt).getTime();
-      const hasMasterSelected = appliedTitles.some((t) => t.includes("stackup selected products"));
-      const hasMasterPaired = appliedTitles.some((t) => t.includes("stackup paired products"));
+      const hasMasterSelected = appliedTitles.some((t) => (t.includes("stackup") || t.includes("stack-up")) && t.includes("selected"));
+      const hasMasterPaired = appliedTitles.some((t) => (t.includes("stackup") || t.includes("stack-up")) && t.includes("paired"));
 
-      // 1. Identify matching Selected Product Offer
-      let validSelectedOffer = null;
-      for (const off of allSelectedOffers) {
+      const matchedOffers = [];
+
+      for (const off of allOffers) {
         const title = (off.title || "").toLowerCase().trim();
+        const titleMatches = Boolean(title && appliedTitles.some((t) => t === title || t.includes(title)));
+
+        if (titleMatches) {
+          matchedOffers.push(off);
+          continue;
+        }
+
         const offerTime = new Date(off.createdAt).getTime() - 5 * 60 * 1000;
         if (orderCreatedAt < offerTime) continue;
 
-        const titleMatches = appliedTitles.some((t) => t === title || t.includes(title));
-        const pctMatches = hasMasterSelected && appliedPercentages.includes(off.percentage);
-
-        // Check if offered or target products match line items
-        let prodMatches = false;
-        if (hasMasterSelected) {
-          try {
-            const tProds = JSON.parse(off.targetProducts || "[]");
-            const oProds = JSON.parse(off.offeredProducts || off.products || "[]");
-            prodMatches = [...tProds, ...oProds].some((p) => p?.id && (orderProductIds.has(String(p.id)) || orderProductIds.has(String(p.id).split("/").pop())));
-          } catch {
-            prodMatches = false;
+        if (off.type === "PAIRED") {
+          const pctMatches = hasMasterPaired && appliedPercentages.includes(off.percentage);
+          let prodMatches = false;
+          if (hasMasterPaired) {
+            try {
+              const mProds = JSON.parse(off.mainProducts || "[]");
+              const sProds = JSON.parse(off.subProducts || "[]");
+              prodMatches = [...mProds, ...sProds].some((p) => p?.id && (orderProductIds.has(String(p.id)) || orderProductIds.has(String(p.id).split("/").pop())));
+            } catch {}
           }
-        }
-
-        if (titleMatches || pctMatches || prodMatches) {
-          validSelectedOffer = off;
-          break;
+          if (pctMatches || prodMatches) matchedOffers.push(off);
+        } else if (off.type === "SELECTED") {
+          const pctMatches = hasMasterSelected && appliedPercentages.includes(off.percentage);
+          let prodMatches = false;
+          if (hasMasterSelected) {
+            try {
+              const tProds = JSON.parse(off.targetProducts || "[]");
+              const oProds = JSON.parse(off.offeredProducts || off.products || "[]");
+              prodMatches = [...tProds, ...oProds].some((p) => p?.id && (orderProductIds.has(String(p.id)) || orderProductIds.has(String(p.id).split("/").pop())));
+            } catch {}
+          }
+          if (pctMatches || prodMatches) matchedOffers.push(off);
         }
       }
 
-      // 2. Identify matching Paired Offer
-      let validPairedOffer = null;
-      for (const off of allPairedOffers) {
-        const title = (off.title || "").toLowerCase().trim();
-        const offerTime = new Date(off.createdAt).getTime() - 5 * 60 * 1000;
-        if (orderCreatedAt < offerTime) continue;
-
-        const titleMatches = appliedTitles.some((t) => t === title || t.includes(title));
-        const pctMatches = hasMasterPaired && appliedPercentages.includes(off.percentage);
-
-        // Check if main or sub products match line items
-        let prodMatches = false;
-        if (hasMasterPaired) {
-          try {
-            const mProds = JSON.parse(off.mainProducts || "[]");
-            const sProds = JSON.parse(off.subProducts || "[]");
-            prodMatches = [...mProds, ...sProds].some((p) => p?.id && (orderProductIds.has(String(p.id)) || orderProductIds.has(String(p.id).split("/").pop())));
-          } catch {
-            prodMatches = false;
-          }
-        }
-
-        if (titleMatches || pctMatches || prodMatches) {
-          validPairedOffer = off;
-          break;
-        }
-      }
-
-      // If neither offer matches this order, skip
-      if (!validSelectedOffer && !validPairedOffer) continue;
+      if (matchedOffers.length === 0) continue;
 
       const totalPrice = parseFloat(order.totalPriceSet?.shopMoney?.amount) || 0;
-      const discountAmount = parseFloat(order.totalDiscountsSet?.shopMoney?.amount) || 0;
+      const totalDiscounts = parseFloat(order.totalDiscountsSet?.shopMoney?.amount) || 0;
       const currency = order.totalPriceSet?.shopMoney?.currencyCode || "USD";
       const customerEmail = "Customer";
 
-      if (existingRecord) {
-        // If order already in DB, check if missing the paired or selected link
-        const needsPairedLink = validPairedOffer && existingRecord.offerId !== validPairedOffer.id;
-        const needsSelectedLink = validSelectedOffer && existingRecord.selectedOfferId !== validSelectedOffer.id;
-
-        if (needsPairedLink || needsSelectedLink) {
-          await db.orderUsage.update({
-            where: { id: existingRecord.id },
-            data: {
-              ...(needsPairedLink ? { offerId: validPairedOffer.id } : {}),
-              ...(needsSelectedLink ? { selectedOfferId: validSelectedOffer.id } : {}),
-            },
+      for (const matchedOffer of matchedOffers) {
+        // Calculate allocated discount for this specific offer if line-item allocations exist
+        let offerDiscount = 0;
+        const targetTitle = (matchedOffer.title || "").toLowerCase().trim();
+        (order.lineItems?.nodes || []).forEach((line) => {
+          (line.discountAllocations || []).forEach((alloc) => {
+            const appTitle = (alloc.discountApplication?.title || alloc.discountApplication?.code || "")?.toLowerCase().trim();
+            if (appTitle && (appTitle === targetTitle || appTitle.includes(targetTitle))) {
+              offerDiscount += parseFloat(alloc.allocatedAmountSet?.shopMoney?.amount) || 0;
+            }
           });
-          console.log(`[OrderSync] 🔗 Updated combined order ${order.name}: Paired=${validPairedOffer?.title || "none"}, Selected=${validSelectedOffer?.title || "none"}`);
+        });
+
+        // Fallback: if not allocated specifically or order discount, divide proportionally or use totalDiscounts
+        if (offerDiscount === 0) {
+          offerDiscount = matchedOffers.length === 1 ? totalDiscounts : (totalDiscounts / matchedOffers.length);
         }
-      } else {
-        // Create new record with BOTH links if combined!
-        await db.orderUsage.create({
-          data: {
-            shop,
+
+        const existingUsage = await db.orderUsage.findFirst({
+          where: {
             orderId: orderIdStr,
-            orderName: order.name,
-            customerEmail,
-            totalPrice,
-            discountAmount,
-            currency,
-            offerId: validPairedOffer?.id || null,
-            selectedOfferId: validSelectedOffer?.id || null,
-            createdAt: order.createdAt ? new Date(order.createdAt) : new Date(),
+            offerId: matchedOffer.id,
           },
         });
+
+        if (existingUsage) {
+          await db.orderUsage.update({
+            where: { id: existingUsage.id },
+            data: {
+              totalPrice,
+              discountAmount: offerDiscount,
+            },
+          });
+        } else {
+          await db.orderUsage.create({
+            data: {
+              shop,
+              orderId: orderIdStr,
+              orderName: order.name,
+              customerEmail,
+              totalPrice,
+              discountAmount: offerDiscount,
+              currency,
+              offerId: matchedOffer.id,
+              createdAt: order.createdAt ? new Date(order.createdAt) : new Date(),
+            },
+          });
+        }
         newlySyncedCount++;
-        console.log(`[OrderSync] 💾 Recorded new order ${order.name} ($${totalPrice}): Paired=${validPairedOffer?.title || "none"}, Selected=${validSelectedOffer?.title || "none"}`);
       }
     }
 
-    // Now recalculate accurate offer stats
+    // Recalculate stats for all offers
     await cleanupMismatchedOrders(shop);
 
     return newlySyncedCount;

@@ -35,7 +35,7 @@ export const loader = async ({ request, params }) => {
     console.log("-------------------> [EditLoader] Loading offer for numericId:", numericId);
 
     const [dbFallback, shopTimezoneRes] = await Promise.all([
-        prisma.pairedOffer.findFirst({
+        prisma.offer.findFirst({
             where: {
                 OR: [
                     { numericId },
@@ -249,7 +249,7 @@ export const loader = async ({ request, params }) => {
     // Query DB analytics for this offer
     let dbOffer = null;
     try {
-        dbOffer = await prisma.pairedOffer.findFirst({
+        dbOffer = await prisma.offer.findFirst({
             where: { numericId },
             include: {
                 orders: {
@@ -337,7 +337,7 @@ export const action = async ({ request, params }) => {
     if (intent === "deactivate") {
         console.log("-------------------> [Deactivate Clicked] Offer ID:", numericId);
         try {
-            await prisma.pairedOffer.updateMany({
+            await prisma.offer.updateMany({
                 where: offerWhere,
                 data: { status: "EXPIRED" },
             });
@@ -369,7 +369,7 @@ export const action = async ({ request, params }) => {
     if (intent === "activate") {
         console.log("-------------------> [Activate Clicked] Offer ID:", numericId);
         try {
-            await prisma.pairedOffer.updateMany({
+            await prisma.offer.updateMany({
                 where: offerWhere,
                 data: { status: "ACTIVE" },
             });
@@ -401,7 +401,7 @@ export const action = async ({ request, params }) => {
     if (intent === "delete") {
         console.log("-------------------> [Delete Clicked] Deleting offer ID:", numericId);
         try {
-            await prisma.pairedOffer.deleteMany({
+            await prisma.offer.deleteMany({
                 where: offerWhere,
             });
             console.log("-------------------> 💾 [Delete] Removed offer from DB for ID:", numericId);
@@ -422,7 +422,7 @@ export const action = async ({ request, params }) => {
             }
 
             console.log("-------------------> 🎉 [EditAction] Offer deleted successfully!");
-            return redirect("/app/paired-products?deleted=true");
+            return redirect("/app/offers?deleted=true");
         } catch (err) {
             console.error("-------------------> [EditAction] Error deleting offer:", err);
             return { error: err instanceof Error ? err.message : "Failed to delete offer." };
@@ -540,7 +540,7 @@ export const action = async ({ request, params }) => {
     console.log("------------------->   Updated Percentage:", percentage + "%");
 
     try {
-        await prisma.pairedOffer.updateMany({
+        await prisma.offer.updateMany({
             where: offerWhere,
             data: {
                 title,
@@ -560,7 +560,7 @@ export const action = async ({ request, params }) => {
         await syncAllActiveOffersToShopMetafield(admin);
 
         console.log("-------------------> 🎉 [Save Edit Success] Offer updated directly in DB and shop metafield!");
-        return redirect("/app/paired-products?updated=true");
+        return redirect("/app/offers?updated=true");
     } catch (err) {
         console.error("-------------------> [Save Edit Failed] Exception:", err);
         return {
@@ -1048,8 +1048,8 @@ export default function PairedProductsEdit() {
 
     return (
         <s-page heading={`Edit Offer: ${title || data.title}`}>
-            <s-link slot="breadcrumb-actions" href="/app/paired-products">
-                Paired Products Offers
+            <s-link slot="breadcrumb-actions" href="/app/offers">
+                All Discounts
             </s-link>
 
             {/* Official Polaris Web Component More Actions Menu */}

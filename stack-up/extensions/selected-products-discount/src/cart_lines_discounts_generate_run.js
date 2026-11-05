@@ -38,7 +38,13 @@ function parseJson(metafieldValue) {
  * @returns {Array<object>}
  */
 function getOffersList(input) {
-  // 1. Try shop-level metafield (Master Engine Architecture)
+  // If this discount node is an old legacy node (not isMaster), ignore it completely
+  const nodeConfig = parseJson(input.discount?.metafield?.value);
+  if (nodeConfig && !nodeConfig.isMaster) {
+    return [];
+  }
+
+  // Retrieve active offers from the master shop metafield
   const shopMetaValue = input.shop?.offersMetafield?.value;
   if (shopMetaValue) {
     const map = parseJson(shopMetaValue);
@@ -56,12 +62,6 @@ function getOffersList(input) {
       }
       if (list.length > 0) return list;
     }
-  }
-
-  // 2. Fallback to discount node metafield (legacy)
-  const legacyConfig = parseJson(input.discount?.metafield?.value);
-  if (legacyConfig && !legacyConfig.isMaster) {
-    return [legacyConfig];
   }
 
   return [];

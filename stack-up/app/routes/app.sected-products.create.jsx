@@ -217,12 +217,13 @@ export const action = async ({ request }) => {
   const discountId = `gid://shopify/SelectedOffer/${numericId}`;
 
   try {
-    await prisma.selectedProductOffer.create({
+    await prisma.offer.create({
       data: {
         shop: session.shop,
         discountId,
         numericId,
         title,
+        type: "SELECTED",
         widgetTitle: widgetTitle || null,
         percentage,
         status: "ACTIVE",
@@ -233,7 +234,6 @@ export const action = async ({ request }) => {
         endsAt: effectiveEndsAt ? new Date(effectiveEndsAt) : null,
         targetProducts: JSON.stringify(sanitizedTargetProducts),
         offeredProducts: JSON.stringify(sanitizedOfferedProducts),
-        products: JSON.stringify(sanitizedOfferedProducts),
       },
     });
     console.log("-------------------> 💾 [SelectedProducts: CreateAction] Saved to DB with ID:", numericId);
@@ -241,7 +241,7 @@ export const action = async ({ request }) => {
     // Sync to Shop Metafield for instant storefront rendering & checkout evaluation
     await syncAllActiveSelectedOffersToShopMetafield(admin);
 
-    return redirect("/app/sected-products?created=true");
+    return redirect("/app/offers?created=true");
   } catch (err) {
     console.error("-------------------> [SelectedProducts: CreateAction] Error saving offer:", err);
     return {
@@ -609,8 +609,8 @@ export default function CreateSelectedProductsOffer() {
 
   return (
     <s-page heading="Create Selected Products Offer">
-      <s-link slot="breadcrumb-actions" href="/app/sected-products">
-        Selected Products Offers
+      <s-link slot="breadcrumb-actions" href="/app/offers">
+        All Discounts
       </s-link>
 
       <SaveBar id="create-selected-offer-save-bar" open={showSaveBar}>

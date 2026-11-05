@@ -47,18 +47,18 @@ export const loader = async ({ request }) => {
 
 const BOTTOM_CARDS = [
   {
-    title: "Product suggestions",
+    title: "All Discounts",
     description:
-      "Uses your store's existing product suggestion metafields without replacing storefront widgets.",
-    buttonText: "View mapping",
-    link: "/app/paired-products",
+      "Manage all your active discount campaigns, bundle pairings, and product add-ons in one central place.",
+    buttonText: "View all offers",
+    link: "/app/offers",
   },
   {
     title: "Automatic by design",
     description:
       "Offers apply at checkout when conditions are met. Customers never need to enter discount codes.",
     buttonText: "Create campaign",
-    link: "/app/paired-products/create",
+    link: "/app/offers/new",
   },
   {
     title: "Stacking & combinations",
@@ -188,7 +188,7 @@ export default function Index() {
               <s-button
                 variant="primary"
                 inlineSize="fill"
-                href="/app/paired-products"
+                href="/app/offers?type=PAIRED"
               >
                 Manage offers
               </s-button>
@@ -219,7 +219,7 @@ export default function Index() {
               <s-button
                 variant="primary"
                 inlineSize="fill"
-                href="/app/sected-products"
+                href="/app/offers?type=SELECTED"
               >
                 Manage offers
               </s-button>

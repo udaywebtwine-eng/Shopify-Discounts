@@ -95,23 +95,12 @@ export const loader = async ({ request }) => {
         { shop: `${shopName}.myshopify.com` },
     ];
 
-    let pairedOffers = [];
-    let selectedOffers = [];
+    let allOffers = [];
     let ordersInRange = [];
 
     try {
-        [pairedOffers, selectedOffers, ordersInRange] = await Promise.all([
-            db.pairedOffer.findMany({
-                where: { OR: shopConditions },
-                include: {
-                    orders: {
-                        where: { createdAt: { gte: startDate } },
-                        orderBy: { createdAt: "desc" },
-                    },
-                },
-                orderBy: { createdAt: "desc" },
-            }),
-            db.selectedProductOffer.findMany({
+        [allOffers, ordersInRange] = await Promise.all([
+            db.offer.findMany({
                 where: { OR: shopConditions },
                 include: {
                     orders: {
@@ -133,9 +122,16 @@ export const loader = async ({ request }) => {
         console.warn("Could not query DB for analytics:", err);
     }
 
-    // 4. Aggregate KPI Summary
-    const totalOrders = ordersInRange.length;
-    const revenueGenerated = ordersInRange.reduce((acc, o) => acc + (o.totalPrice || 0), 0);
+    // 4. Aggregate KPI Summary (deduplicating multi-offer orders)
+    const uniqueOrderMap = new Map();
+    ordersInRange.forEach((o) => {
+        if (!uniqueOrderMap.has(o.orderId)) {
+            uniqueOrderMap.set(o.orderId, o);
+        }
+    });
+
+    const totalOrders = uniqueOrderMap.size;
+    const revenueGenerated = Array.from(uniqueOrderMap.values()).reduce((acc, o) => acc + (o.totalPrice || 0), 0);
     const totalDiscountAmount = ordersInRange.reduce((acc, o) => acc + (o.discountAmount || 0), 0);
     const aov = totalOrders > 0 ? revenueGenerated / totalOrders : 0;
     const roi =
@@ -165,7 +161,7 @@ export const loader = async ({ request }) => {
         bucketMap[b.dateStr] = idx;
     });
 
-    ordersInRange.forEach((order) => {
+    Array.from(uniqueOrderMap.values()).forEach((order) => {
         const orderDateStr = new Date(order.createdAt).toISOString().split("T")[0];
         const idx = bucketMap[orderDateStr];
         if (idx !== undefined) {
@@ -179,85 +175,45 @@ export const loader = async ({ request }) => {
     });
 
     // 6. Build Offers Comparison for Chart 2 & Table 1
-    const pairedOffersData = pairedOffers.map((off) => {
+    const offersData = allOffers.map((off) => {
         const offOrders = off.orders || [];
         const ordersCount = offOrders.length || off.usageCount || 0;
         const salesAmount = offOrders.reduce((sum, o) => sum + (o.totalPrice || 0), 0) || off.totalRevenue || 0;
+
+        let discountType = "Frequently Bought";
+        if (off.type === "SELECTED") discountType = "Product Add-ons";
+        else if (off.type === "VOLUME") discountType = "Volume Discount";
 
         return {
             id: off.id,
             numericId: off.numericId,
             title: off.title,
-            discountType: "Paired Products",
+            discountType,
             percentage: off.percentage,
             status: off.status,
             totalOrders: ordersCount,
             totalSale: salesAmount,
             cartClicks: 0,
             bundleViews: 0,
-            mainProducts: off.mainProducts,
-            subProducts: off.subProducts,
+            mainProducts: off.type === "PAIRED" ? off.mainProducts : (off.targetProducts || "[]"),
+            subProducts: off.type === "PAIRED" ? off.subProducts : (off.offeredProducts || "[]"),
         };
     });
-
-    const selectedOffersData = selectedOffers.map((off) => {
-        const offOrders = off.orders || [];
-        const ordersCount = offOrders.length || off.usageCount || 0;
-        const salesAmount = offOrders.reduce((sum, o) => sum + (o.totalPrice || 0), 0) || off.totalRevenue || 0;
-
-        return {
-            id: off.id,
-            numericId: off.numericId,
-            title: off.title,
-            discountType: "Selected Products",
-            percentage: off.percentage,
-            status: off.status,
-            totalOrders: ordersCount,
-            totalSale: salesAmount,
-            cartClicks: 0,
-            bundleViews: 0,
-            mainProducts: off.targetProducts || "[]",
-            subProducts: off.offeredProducts || off.products || "[]",
-        };
-    });
-
-    const offersData = [...pairedOffersData, ...selectedOffersData];
 
     // 7. Collect unique product GIDs across all active offers
     const allProdIdsSet = new Set();
-    pairedOffers.forEach((off) => {
-        let mProds = [];
-        let sProds = [];
+    allOffers.forEach((off) => {
+        let p1 = [];
+        let p2 = [];
         try {
-            mProds = JSON.parse(off.mainProducts || "[]");
-            sProds = JSON.parse(off.subProducts || "[]");
+            p1 = JSON.parse(off.type === "PAIRED" ? (off.mainProducts || "[]") : (off.targetProducts || "[]"));
+            p2 = JSON.parse(off.type === "PAIRED" ? (off.subProducts || "[]") : (off.offeredProducts || "[]"));
         } catch {
-            mProds = [];
-            sProds = [];
+            p1 = [];
+            p2 = [];
         }
 
-        [...mProds, ...sProds].forEach((p) => {
-            if (p && p.id) {
-                const gid = String(p.id).startsWith("gid://shopify/Product/")
-                    ? String(p.id)
-                    : `gid://shopify/Product/${p.id}`;
-                allProdIdsSet.add(gid);
-            }
-        });
-    });
-
-    selectedOffers.forEach((off) => {
-        let tProds = [];
-        let oProds = [];
-        try {
-            tProds = JSON.parse(off.targetProducts || "[]");
-            oProds = JSON.parse(off.offeredProducts || off.products || "[]");
-        } catch {
-            tProds = [];
-            oProds = [];
-        }
-
-        [...tProds, ...oProds].forEach((p) => {
+        [...p1, ...p2].forEach((p) => {
             if (p && p.id) {
                 const gid = String(p.id).startsWith("gid://shopify/Product/")
                     ? String(p.id)
@@ -364,38 +320,21 @@ export const loader = async ({ request }) => {
         productMap[pid].totalOrders += ordersCount;
     };
 
-    pairedOffers.forEach((off) => {
-        let mProds = [];
-        let sProds = [];
+    allOffers.forEach((off) => {
+        let p1 = [];
+        let p2 = [];
         try {
-            mProds = JSON.parse(off.mainProducts || "[]");
-            sProds = JSON.parse(off.subProducts || "[]");
+            p1 = JSON.parse(off.type === "PAIRED" ? (off.mainProducts || "[]") : (off.targetProducts || "[]"));
+            p2 = JSON.parse(off.type === "PAIRED" ? (off.subProducts || "[]") : (off.offeredProducts || "[]"));
         } catch {
-            mProds = [];
-            sProds = [];
+            p1 = [];
+            p2 = [];
         }
 
         const offOrders = off.orders || [];
         const ordersCount = offOrders.length || off.usageCount || 0;
 
-        [...mProds, ...sProds].forEach((p) => addProductToMap(p, ordersCount));
-    });
-
-    selectedOffers.forEach((off) => {
-        let tProds = [];
-        let oProds = [];
-        try {
-            tProds = JSON.parse(off.targetProducts || "[]");
-            oProds = JSON.parse(off.offeredProducts || off.products || "[]");
-        } catch {
-            tProds = [];
-            oProds = [];
-        }
-
-        const offOrders = off.orders || [];
-        const ordersCount = offOrders.length || off.usageCount || 0;
-
-        [...tProds, ...oProds].forEach((p) => addProductToMap(p, ordersCount));
+        [...p1, ...p2].forEach((p) => addProductToMap(p, ordersCount));
     });
 
     const productsList = Object.values(productMap).sort((a, b) => b.totalOrders - a.totalOrders);

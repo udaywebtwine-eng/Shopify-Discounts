@@ -220,8 +220,8 @@ export default function PairedProductsCustomize() {
 
   return (
     <s-page heading="Paired Products Customization">
-      <s-link slot="breadcrumb-actions" href="/app/paired-products">
-        Paired Products Offers
+      <s-link slot="breadcrumb-actions" href="/app/offers">
+        All Discounts
       </s-link>
 
       {/* SaveBar from App Bridge */}

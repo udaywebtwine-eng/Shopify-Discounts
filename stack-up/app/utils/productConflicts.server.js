@@ -45,9 +45,10 @@ export async function getActiveMainProductsMap({
 
   // 1. Check PairedOffers if requested
   if (offerType === "PAIRED" || offerType === "ALL") {
-    const pairedOffers = await prisma.pairedOffer.findMany({
+    const pairedOffers = await prisma.offer.findMany({
       where: {
         ...shopCondition,
+        type: "PAIRED",
         status: { not: "EXPIRED" },
       },
       select: {
@@ -96,9 +97,10 @@ export async function getActiveMainProductsMap({
 
   // 2. Check SelectedProductOffers if requested
   if (offerType === "SELECTED" || offerType === "ALL") {
-    const selectedOffers = await prisma.selectedProductOffer.findMany({
+    const selectedOffers = await prisma.offer.findMany({
       where: {
         ...shopCondition,
+        type: "SELECTED",
         status: { not: "EXPIRED" },
       },
       select: {
