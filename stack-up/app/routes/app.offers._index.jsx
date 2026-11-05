@@ -197,9 +197,9 @@ export default function AllOffersIndex() {
             shopify.loading(true);
         } catch { }
         if (offer.type === "SELECTED") {
-            navigate(`/app/sected-products/edit/${offer.numericId}`);
+            navigate(`/app/offers/selected/edit/${offer.numericId}`);
         } else {
-            navigate(`/app/paired-products/edit/${offer.numericId}`);
+            navigate(`/app/offers/paired/edit/${offer.numericId}`);
         }
     };
 
@@ -469,11 +469,11 @@ export default function AllOffersIndex() {
                 id="customize-menu"
                 accessibilityLabel="Customize widgets"
             >
-                <s-button href="/app/paired-products/customize">
+                <s-button href="/app/offers/paired/customize">
                     Frequently Bought Widget
                 </s-button>
 
-                <s-button href="/app/sected-products/customize">
+                <s-button href="/app/offers/selected/customize">
                     Product Add-ons Widget
                 </s-button>
             </s-menu>
@@ -661,8 +661,8 @@ export default function AllOffersIndex() {
                             ) : (
                                 paginatedOffers.map((offer) => {
                                     const editUrl = offer.type === "SELECTED"
-                                        ? `/app/sected-products/edit/${offer.numericId}`
-                                        : `/app/paired-products/edit/${offer.numericId}`;
+                                        ? `/app/offers/selected/edit/${offer.numericId}`
+                                        : `/app/offers/paired/edit/${offer.numericId}`;
 
                                     return (
                                         <s-table-row key={offer.id}>

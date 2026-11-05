@@ -281,8 +281,8 @@ export default function OffersTable({ offersData = [], currencySymbol = "$" }) {
                         paginatedOffers.map((offer, index) => {
                             const editUrl =
                                 offer.discountType === "Selected Products"
-                                    ? `/app/sected-products/edit/${offer.numericId}`
-                                    : `/app/paired-products/edit/${offer.numericId}`;
+                                    ? `/app/offers/selected/edit/${offer.numericId}`
+                                    : `/app/offers/paired/edit/${offer.numericId}`;
                             return (
                                 <s-table-row key={offer.id}>
                                     <s-table-cell>{(safeCurrentPage - 1) * PAGE_SIZE + index + 1}</s-table-cell>

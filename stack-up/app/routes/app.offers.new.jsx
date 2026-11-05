@@ -102,7 +102,7 @@ export default function NewOfferSelect() {
                   <s-button
                     variant="primary"
                     inlineSize="fill"
-                    onClick={() => handleSelect("PAIRED", "/app/paired-products/create")}
+                    onClick={() => handleSelect("PAIRED", "/app/offers/paired/create")}
                     loading={selectedType === "PAIRED" ? true : undefined}
                     disabled={isBusy ? true : undefined}
                   >
@@ -154,7 +154,7 @@ export default function NewOfferSelect() {
                   <s-button
                     variant="primary"
                     inlineSize="fill"
-                    onClick={() => handleSelect("SELECTED", "/app/sected-products/create")}
+                    onClick={() => handleSelect("SELECTED", "/app/offers/selected/create")}
                     loading={selectedType === "SELECTED" ? true : undefined}
                     disabled={isBusy ? true : undefined}
                   >

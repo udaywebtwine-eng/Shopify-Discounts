@@ -19,20 +19,27 @@ import {
   dateToShopISO,
   setShopTimezoneCache,
 } from "../utils/timezone";
-import { syncAllActiveSelectedOffersToShopMetafield } from "../utils/selectedOffersMetafields.server";
+import { syncAllActiveOffersToShopMetafield } from "../utils/bundleMetafields.server";
 import { getActiveMainProductsMap, checkMainProductConflicts } from "../utils/productConflicts.server";
-import SelectedWidgetPreview from "./components/Preview/SelectedWidgetPreview";
+import WidgetPreview from "./components/Preview/WidgetPreview";
+
+// In-memory cache for functionId (Shopify Function IDs are static per app installation)
+let cachedFunctionId = null;
 
 export const loader = async ({ request }) => {
+  const t0 = performance.now();
   const { admin, session } = await authenticate.admin(request);
   const shop = session?.shop || "";
 
-  let functionId = null;
+  let functionId = cachedFunctionId;
+  let shopTimezone = "UTC";
   let widgetSettings = null;
+
   try {
+    // Single batched GraphQL request for functions, timezone, and widget settings
     const response = await admin.graphql(
       `#graphql
-      query GetFunctionIdAndWidgetSettings {
+      query GetCreateOfferData {
         shopifyFunctions(first: 25) {
           nodes {
             id
@@ -41,42 +48,68 @@ export const loader = async ({ request }) => {
           }
         }
         shop {
-          metafield(namespace: "stack_up", key: "selected_widget_settings") {
+          ianaTimezone
+          metafield(namespace: "stack_up", key: "paired_widget_settings") {
             value
           }
         }
       }`
     );
     const json = await response.json();
-    const functions = json.data?.shopifyFunctions?.nodes || [];
-    const matched = functions.find(
-      (fn) =>
-        fn.title?.toLowerCase().includes("selected") ||
-        fn.handle?.toLowerCase().includes("selected")
-    );
-    functionId = matched?.id || functions[0]?.id || null;
+    const data = json.data;
 
-    const rawMetafield = json.data?.shop?.metafield?.value;
+    // 1. Resolve functionId
+    if (data?.shopifyFunctions?.nodes) {
+      const functions = data.shopifyFunctions.nodes || [];
+      const matched = functions.find(
+        (fn) =>
+          fn.title?.toLowerCase().includes("paired") ||
+          fn.apiType === "cart_lines_discounts_generate" ||
+          fn.apiType === "order_discounts"
+      );
+      functionId = matched?.id || functions[0]?.id || null;
+      if (functionId) {
+        cachedFunctionId = functionId;
+      }
+    }
+
+    // 2. Resolve shop timezone and prime the cache
+    if (data?.shop?.ianaTimezone) {
+      shopTimezone = data.shop.ianaTimezone;
+      setShopTimezoneCache(shop, shopTimezone);
+    } else {
+      shopTimezone = await getShopTimezone(admin, shop).catch(() => "UTC");
+    }
+
+    // 3. Resolve widget settings
+    const rawMetafield = data?.shop?.metafield?.value;
     if (rawMetafield) {
       try {
         widgetSettings = JSON.parse(rawMetafield);
+        if (
+          !widgetSettings?.content?.heading ||
+          widgetSettings?.content?.heading === "Frequently Bought Together"
+        ) {
+          if (!widgetSettings.content) widgetSettings.content = {};
+          widgetSettings.content.heading = "{widgettitle}";
+        }
       } catch {
         widgetSettings = null;
       }
     }
   } catch (err) {
-    console.warn("Could not query shopifyFunctions:", err);
+    console.warn("Could not query create offer data in single GraphQL call:", err);
+    shopTimezone = await getShopTimezone(admin, shop).catch(() => "UTC");
   }
 
-  const shopTimezone = await getShopTimezone(admin, shop);
-  if (shop && shopTimezone) {
-    setShopTimezoneCache(shop, shopTimezone);
-  }
+  const tEnd = performance.now();
+  console.log(`⏱️ [PairedProducts: Create Loader] Loaded in ${(tEnd - t0).toFixed(0)}ms (Single batched GraphQL call)`);
+
   const timezoneAbbr = getTimezoneAbbr(shopTimezone);
   const currentTime = getShopCurrentTime(shopTimezone);
 
   // Load products already used as Main/Target in other active offers
-  const usedMainMap = await getActiveMainProductsMap({ shop, offerType: "SELECTED" });
+  const usedMainMap = await getActiveMainProductsMap({ shop, offerType: "PAIRED" });
   const usedMainProducts = Array.from(usedMainMap.entries()).map(([numericId, info]) => ({
     numericId,
     offerTitle: info.offerTitle,
@@ -84,11 +117,11 @@ export const loader = async ({ request }) => {
     offerNumericId: info.numericId,
     editUrl:
       info.offerType === "PAIRED"
-        ? `/app/paired-products/edit/${info.numericId}`
-        : `/app/sected-products/edit/${info.numericId}`,
+        ? `/app/offers/paired/edit/${info.numericId}`
+        : `/app/offers/selected/edit/${info.numericId}`,
   }));
 
-  return { functionId, shopTimezone, timezoneAbbr, currentTime, shop, usedMainProducts, widgetSettings };
+  return { functionId: functionId || cachedFunctionId, shopTimezone, timezoneAbbr, currentTime, shop, widgetSettings, usedMainProducts };
 };
 
 export const action = async ({ request }) => {
@@ -99,9 +132,11 @@ export const action = async ({ request }) => {
   const widgetTitle = (formData.get("widgetTitle") || "").trim();
   const percentageStr = formData.get("percentage") || "";
   const percentage = parseFloat(percentageStr);
+  const mainProductIdsRaw = formData.get("mainProductIds") || "[]";
+  const subProductIdsRaw = formData.get("subProductIds") || "[]";
 
-  const targetProductsRaw = formData.get("targetProducts") || "[]";
-  const offeredProductsRaw = formData.get("offeredProducts") || "[]";
+  const mainProductsRaw = formData.get("mainProducts") || "[]";
+  const subProductsRaw = formData.get("subProducts") || "[]";
 
   const combinesWithOrder = formData.get("combinesWithOrder") === "true";
   const combinesWithProduct = formData.get("combinesWithProduct") === "true";
@@ -121,36 +156,42 @@ export const action = async ({ request }) => {
     return { error: "Please enter a valid discount percentage between 1 and 100." };
   }
 
-  let targetProducts = [];
-  let offeredProducts = [];
+  let mainProductIds = [];
+  let subProductIds = [];
+  let mainProducts = [];
+  let subProducts = [];
   try {
-    targetProducts = JSON.parse(targetProductsRaw);
-    offeredProducts = JSON.parse(offeredProductsRaw);
+    mainProductIds = JSON.parse(mainProductIdsRaw);
+    subProductIds = JSON.parse(subProductIdsRaw);
+    mainProducts = JSON.parse(mainProductsRaw);
+    subProducts = JSON.parse(subProductsRaw);
   } catch {
-    targetProducts = [];
-    offeredProducts = [];
+    mainProductIds = [];
+    subProductIds = [];
+    mainProducts = [];
+    subProducts = [];
   }
 
-  if (!Array.isArray(targetProducts) || targetProducts.length === 0) {
-    return { error: "Please select at least one Main / Target Product where this widget will appear." };
+  if (mainProductIds.length === 0) {
+    return { error: "Please select at least one Main Product." };
   }
 
-  if (!Array.isArray(offeredProducts) || offeredProducts.length === 0) {
-    return { error: "Please select at least one Recommended Add-On Product to offer." };
+  if (subProductIds.length === 0) {
+    return { error: "Please select at least one Sub / Add-on Product." };
   }
 
-  // Conflict Guard: Ensure target products are not already used in active offers
+  // Conflict Guard: Ensure main products are not already used in active offers
   const conflictCheck = await checkMainProductConflicts({
-    products: targetProducts,
+    products: mainProducts,
     shop: session?.shop,
-    offerType: "SELECTED",
+    offerType: "PAIRED",
   });
   if (conflictCheck.hasConflict) {
     const names = conflictCheck.conflictingProducts
       .map((cp) => `"${cp.title || cp.numericId}" (in offer: "${cp.offerTitle}")`)
       .join(", ");
     return {
-      error: `${names} already has an active offer. To use it in this offer, please deactivate or remove it from the existing offer first.`,
+      error: `${names} already has an active bundle offer. To use it in this offer, please deactivate or remove it from the existing offer first.`,
     };
   }
 
@@ -171,23 +212,16 @@ export const action = async ({ request }) => {
     }
   }
 
-  const sanitizedTargetProducts = targetProducts.map((p) => ({
+  const sanitizedMainProducts = mainProducts.map((p) => ({
     id: p.id,
-    title: p.title || "",
-    handle: p.handle || "",
-    image: p.image || "",
-    price: p.price || "",
+    quantity: Math.max(1, parseInt(p.quantity, 10) || 1),
     variants: Array.isArray(p.variants)
       ? p.variants.map((v) => ({ id: typeof v === "object" ? v.id : v }))
       : [],
   }));
 
-  const sanitizedOfferedProducts = offeredProducts.map((p) => ({
+  const sanitizedSubProducts = subProducts.map((p) => ({
     id: p.id,
-    title: p.title || "",
-    handle: p.handle || "",
-    image: p.image || "",
-    price: p.price || "",
     quantity: Math.max(1, parseInt(p.quantity, 10) || 1),
     variants: Array.isArray(p.variants)
       ? p.variants.map((v) => ({ id: typeof v === "object" ? v.id : v }))
@@ -195,17 +229,14 @@ export const action = async ({ request }) => {
   }));
 
   const configPayload = {
-    discountType: "SELECTED_PRODUCTS",
+    discountType: "PAIRED_PRODUCTS",
     percentage,
     title,
     widgetTitle,
-    targetProductIds: sanitizedTargetProducts.map((p) => p.id),
-    offeredProductIds: sanitizedOfferedProducts.map((p) => p.id),
-    targetProducts: sanitizedTargetProducts,
-    offeredProducts: sanitizedOfferedProducts,
-    // Backwards compatibility for existing function
-    productIds: sanitizedOfferedProducts.map((p) => p.id),
-    products: sanitizedOfferedProducts,
+    mainProductIds,
+    subProductIds,
+    mainProducts: sanitizedMainProducts,
+    subProducts: sanitizedSubProducts,
   };
 
   const shopTimezone = await getShopTimezone(admin, session?.shop);
@@ -214,7 +245,7 @@ export const action = async ({ request }) => {
 
   // Generate unique internal ID for this offer (Single Master Engine Architecture)
   const numericId = Date.now().toString();
-  const discountId = `gid://shopify/SelectedOffer/${numericId}`;
+  const discountId = `gid://shopify/PairedOffer/${numericId}`;
 
   try {
     await prisma.offer.create({
@@ -223,7 +254,7 @@ export const action = async ({ request }) => {
         discountId,
         numericId,
         title,
-        type: "SELECTED",
+        type: "PAIRED",
         widgetTitle: widgetTitle || null,
         percentage,
         status: "ACTIVE",
@@ -232,18 +263,18 @@ export const action = async ({ request }) => {
         combinesWithShipping,
         startsAt: effectiveStartsAt ? new Date(effectiveStartsAt) : new Date(),
         endsAt: effectiveEndsAt ? new Date(effectiveEndsAt) : null,
-        targetProducts: JSON.stringify(sanitizedTargetProducts),
-        offeredProducts: JSON.stringify(sanitizedOfferedProducts),
+        mainProducts: JSON.stringify(sanitizedMainProducts),
+        subProducts: JSON.stringify(sanitizedSubProducts),
       },
     });
-    console.log("-------------------> 💾 [SelectedProducts: CreateAction] Saved to DB with ID:", numericId);
+    console.log("-------------------> 💾 [PairedProducts: CreateAction] Saved to DB with ID:", numericId);
 
     // Sync to Shop Metafield for instant storefront rendering & checkout evaluation
-    await syncAllActiveSelectedOffersToShopMetafield(admin);
+    await syncAllActiveOffersToShopMetafield(admin);
 
     return redirect("/app/offers?created=true");
   } catch (err) {
-    console.error("-------------------> [SelectedProducts: CreateAction] Error saving offer:", err);
+    console.error("-------------------> [PairedProducts: CreateAction] Error saving offer:", err);
     return {
       error:
         err instanceof Error
@@ -253,8 +284,8 @@ export const action = async ({ request }) => {
   }
 };
 
-export default function CreateSelectedProductsOffer() {
-  const { functionId, shopTimezone, timezoneAbbr, currentTime, usedMainProducts = [], shop, widgetSettings } = useLoaderData();
+export default function CreatePairedProductsOffer() {
+  const { functionId, shopTimezone, timezoneAbbr, currentTime, shop, widgetSettings, usedMainProducts = [] } = useLoaderData();
   const actionData = useActionData();
   const navigation = useNavigation();
   const submit = useSubmit();
@@ -262,15 +293,15 @@ export default function CreateSelectedProductsOffer() {
 
   const DEFAULT_PERCENTAGE = "10";
 
-  const [title, setTitle] = useState("Special Add-Ons Just for You");
+  const [title, setTitle] = useState("");
   const [widgetTitle, setWidgetTitle] = useState("");
   const [percentage, setPercentage] = useState(DEFAULT_PERCENTAGE);
 
-  // 1. Target / Main Products (where the widget appears)
-  const [targetProducts, setTargetProducts] = useState([]);
+  // Main Products list
+  const [mainProducts, setMainProducts] = useState([]);
 
-  // 2. Offered / Add-on Products (the recommended items with checkboxes)
-  const [offeredProducts, setOfferedProducts] = useState([]);
+  // Sub Products list
+  const [subProducts, setSubProducts] = useState([]);
 
   // Combinations
   const [combinesWithOrder, setCombinesWithOrder] = useState(false);
@@ -287,15 +318,11 @@ export default function CreateSelectedProductsOffer() {
   const [endsAtTime, setEndsAtTime] = useState("23:59:59");
   const tzAbbr = timezoneAbbr || getTimezoneAbbr(shopTimezone);
 
-  // Conflict banner state
-  const [conflictBanner, setConflictBanner] = useState(null);
-
   const startTimeOptions = useMemo(() => generateTimeOptions(false, defaultStartTime), [defaultStartTime]);
   const endTimeOptions = useMemo(() => generateTimeOptions(true), []);
 
-  const [isSaving, setIsSaving] = useState(false);
-  const isRedirecting = navigation.state === "loading" && !navigation.location?.pathname?.includes("/create");
-  const isSubmitting = (isSaving || navigation.state === "submitting" || (navigation.state === "loading" && navigation.formMethod?.toLowerCase() === "post")) && !isRedirecting;
+  // Conflict banner state
+  const [conflictBanner, setConflictBanner] = useState(null);
 
   // Helper to format selection IDs and variants for Shopify App Bridge ResourcePicker
   const buildResourceSelection = (products) =>
@@ -307,15 +334,19 @@ export default function CreateSelectedProductsOffer() {
       return item;
     });
 
-  // Resource Picker for 1. Main / Target Products
-  const handleOpenTargetPicker = async () => {
+  // Resource Picker for Main Products
+  const handleOpenMainProductPicker = async () => {
     try {
-      const selection = buildResourceSelection(targetProducts);
+      const selection = buildResourceSelection(mainProducts);
       const selected = await shopify.resourcePicker({
         type: "product",
         multiple: true,
         action: "select",
-        filter: { archived: false, draft: false, query: "status:active" },
+        filter: {
+          archived: false,
+          draft: false,
+          query: "status:active",
+        },
         selectionIds: selection,
         initialSelectionIds: selection,
       });
@@ -342,14 +373,14 @@ export default function CreateSelectedProductsOffer() {
 
         if (conflictingItems.length > 0) {
           setConflictBanner({
-            message: `${conflictingItems.join(", ")} already has an active offer. A product can only have one active offer at a time. To use it here, please remove or deactivate it from the other offer first.`,
+            message: `${conflictingItems.join(", ")} already has an active bundle offer. A product can only have one active bundle at a time. To use it here, please remove or deactivate it from the other offer first.`,
             url: firstConflictLink,
           });
         } else {
           setConflictBanner(null);
         }
 
-        setTargetProducts(
+        setMainProducts(
           validSelected.map((p) => {
             const image =
               p.images?.[0]?.originalSrc ||
@@ -361,56 +392,7 @@ export default function CreateSelectedProductsOffer() {
             const price = rawPrice
               ? (String(rawPrice).startsWith("$") ? String(rawPrice) : `$${rawPrice}`)
               : "";
-            const existing = targetProducts.find((item) => item.id === p.id);
-            return {
-              id: p.id,
-              title: p.title,
-              handle: p.handle || existing?.handle || "",
-              image,
-              price,
-              variants: p.variants
-                ? p.variants.map((v) => ({ id: v.id }))
-                : existing?.variants || [],
-            };
-          })
-        );
-      }
-    } catch (err) {
-      console.error("Error opening target product picker:", err);
-    }
-  };
-
-  const removeTargetProduct = (productId) => {
-    setTargetProducts((prev) => prev.filter((p) => p.id !== productId));
-  };
-
-  // Resource Picker for 2. Recommended / Add-On Products
-  const handleOpenOfferedPicker = async () => {
-    try {
-      const selection = buildResourceSelection(offeredProducts);
-      const selected = await shopify.resourcePicker({
-        type: "product",
-        multiple: true,
-        action: "select",
-        filter: { archived: false, draft: false, query: "status:active" },
-        selectionIds: selection,
-        initialSelectionIds: selection,
-      });
-
-      if (selected && Array.isArray(selected)) {
-        setOfferedProducts(
-          selected.map((p) => {
-            const image =
-              p.images?.[0]?.originalSrc ||
-              p.images?.[0]?.src ||
-              p.featuredImage?.url ||
-              p.image?.src ||
-              "";
-            const rawPrice = p.variants?.[0]?.price ?? p.price ?? "";
-            const price = rawPrice
-              ? (String(rawPrice).startsWith("$") ? String(rawPrice) : `$${rawPrice}`)
-              : "";
-            const existing = offeredProducts.find((item) => item.id === p.id);
+            const existing = mainProducts.find((item) => item.id === p.id);
             return {
               id: p.id,
               title: p.title,
@@ -425,17 +407,71 @@ export default function CreateSelectedProductsOffer() {
           })
         );
       }
-    } catch (err) {
-      console.error("Error opening offered product picker:", err);
+    } catch (e) {
+      console.warn("Main product picker dismissed:", e);
     }
   };
 
-  const removeOfferedProduct = (productId) => {
-    setOfferedProducts((prev) => prev.filter((p) => p.id !== productId));
+  // Resource Picker for Sub Products
+  const handleOpenSubProductPicker = async () => {
+    try {
+      const selection = buildResourceSelection(subProducts);
+      const selected = await shopify.resourcePicker({
+        type: "product",
+        multiple: true,
+        action: "select",
+        filter: {
+          archived: false,
+          draft: false,
+          query: "status:active",
+        },
+        selectionIds: selection,
+        initialSelectionIds: selection,
+      });
+
+      if (selected && Array.isArray(selected)) {
+        setSubProducts(
+          selected.map((p) => {
+            const image =
+              p.images?.[0]?.originalSrc ||
+              p.images?.[0]?.src ||
+              p.featuredImage?.url ||
+              p.image?.src ||
+              "";
+            const rawPrice = p.variants?.[0]?.price ?? p.price ?? "";
+            const price = rawPrice
+              ? (String(rawPrice).startsWith("$") ? String(rawPrice) : `$${rawPrice}`)
+              : "";
+            const existing = subProducts.find((item) => item.id === p.id);
+            return {
+              id: p.id,
+              title: p.title,
+              handle: p.handle || existing?.handle || "",
+              image,
+              price,
+              quantity: existing?.quantity || 1,
+              variants: p.variants
+                ? p.variants.map((v) => ({ id: v.id }))
+                : existing?.variants || [],
+            };
+          })
+        );
+      }
+    } catch (e) {
+      console.warn("Sub product picker dismissed:", e);
+    }
   };
 
-  const updateOfferedQuantity = (productId, newQty) => {
-    setOfferedProducts((prev) =>
+  const removeMainProduct = (productId) => {
+    setMainProducts((prev) => prev.filter((p) => p.id !== productId));
+  };
+
+  const removeSubProduct = (productId) => {
+    setSubProducts((prev) => prev.filter((p) => p.id !== productId));
+  };
+
+  const updateMainProductQuantity = (productId, newQty) => {
+    setMainProducts((prev) =>
       prev.map((p) =>
         p.id === productId
           ? { ...p, quantity: newQty === "" ? "" : Math.max(1, parseInt(newQty, 10) || 1) }
@@ -444,8 +480,8 @@ export default function CreateSelectedProductsOffer() {
     );
   };
 
-  const handleBlurOfferedQuantity = (productId) => {
-    setOfferedProducts((prev) =>
+  const handleBlurMainProductQuantity = (productId) => {
+    setMainProducts((prev) =>
       prev.map((p) =>
         p.id === productId && (!p.quantity || p.quantity < 1)
           ? { ...p, quantity: 1 }
@@ -454,12 +490,36 @@ export default function CreateSelectedProductsOffer() {
     );
   };
 
+  const updateSubProductQuantity = (productId, newQty) => {
+    setSubProducts((prev) =>
+      prev.map((p) =>
+        p.id === productId
+          ? { ...p, quantity: newQty === "" ? "" : Math.max(1, parseInt(newQty, 10) || 1) }
+          : p
+      )
+    );
+  };
+
+  const handleBlurSubProductQuantity = (productId) => {
+    setSubProducts((prev) =>
+      prev.map((p) =>
+        p.id === productId && (!p.quantity || p.quantity < 1)
+          ? { ...p, quantity: 1 }
+          : p
+      )
+    );
+  };
+
+  const [isSaving, setIsSaving] = useState(false);
+  const isRedirecting = navigation.state === "loading" && navigation.location?.pathname !== "/app/offers/paired/create";
+  const isSubmitting = (isSaving || navigation.state === "submitting" || (navigation.state === "loading" && navigation.formMethod?.toLowerCase() === "post")) && !isRedirecting;
+
   const isDirty = Boolean(
-    title.trim() !== "Special Add-Ons Just for You" ||
+    title.trim() !== "" ||
     widgetTitle.trim() !== "" ||
     percentage !== DEFAULT_PERCENTAGE ||
-    targetProducts.length > 0 ||
-    offeredProducts.length > 0 ||
+    mainProducts.length > 0 ||
+    subProducts.length > 0 ||
     combinesWithOrder ||
     combinesWithProduct ||
     combinesWithShipping ||
@@ -475,7 +535,7 @@ export default function CreateSelectedProductsOffer() {
   useEffect(() => {
     if (isRedirecting) {
       setIsSaving(false);
-      shopify.saveBar?.hide("create-selected-offer-save-bar");
+      shopify.saveBar?.hide("create-paired-offer-save-bar");
     }
   }, [isRedirecting, shopify]);
 
@@ -487,18 +547,18 @@ export default function CreateSelectedProductsOffer() {
 
   useEffect(() => {
     return () => {
-      shopify.saveBar?.hide("create-selected-offer-save-bar");
+      shopify.saveBar?.hide("create-paired-offer-save-bar");
     };
   }, [shopify]);
 
   const handleDiscard = (e) => {
     e?.preventDefault?.();
     e?.stopPropagation?.();
-    setTitle("Special Add-Ons Just for You");
+    setTitle("");
     setWidgetTitle("");
     setPercentage(DEFAULT_PERCENTAGE);
-    setTargetProducts([]);
-    setOfferedProducts([]);
+    setMainProducts([]);
+    setSubProducts([]);
     setCombinesWithOrder(false);
     setCombinesWithProduct(false);
     setCombinesWithShipping(false);
@@ -508,7 +568,7 @@ export default function CreateSelectedProductsOffer() {
     setEndsAtDate("");
     setEndsAtTime("23:59:59");
     setIsSaving(false);
-    shopify.saveBar?.hide("create-selected-offer-save-bar");
+    shopify.saveBar?.hide("create-paired-offer-save-bar");
   };
 
   useEffect(() => {
@@ -528,12 +588,12 @@ export default function CreateSelectedProductsOffer() {
       shopify.toast.show("Please enter a valid discount percentage between 1 and 100", { isError: true });
       return;
     }
-    if (targetProducts.length === 0) {
-      shopify.toast.show("Please select at least one Main / Target Product", { isError: true });
+    if (mainProducts.length === 0) {
+      shopify.toast.show("Please select at least one Main Product", { isError: true });
       return;
     }
-    if (offeredProducts.length === 0) {
-      shopify.toast.show("Please select at least one Recommended Add-On Product", { isError: true });
+    if (subProducts.length === 0) {
+      shopify.toast.show("Please select at least one Sub / Add-on Product", { isError: true });
       return;
     }
     if (!startsAtDate || !startsAtDate.trim()) {
@@ -562,27 +622,28 @@ export default function CreateSelectedProductsOffer() {
     formData.append("widgetTitle", widgetTitle);
     formData.append("percentage", percentage);
     formData.append(
-      "targetProducts",
+      "mainProductIds",
+      JSON.stringify(mainProducts.map((p) => p.id))
+    );
+    formData.append(
+      "subProductIds",
+      JSON.stringify(subProducts.map((p) => p.id))
+    );
+    formData.append(
+      "mainProducts",
       JSON.stringify(
-        targetProducts.map((p) => ({
+        mainProducts.map((p) => ({
           id: p.id,
-          title: p.title,
-          handle: p.handle || "",
-          image: p.image || "",
-          price: p.price || "",
+          quantity: Math.max(1, parseInt(p.quantity, 10) || 1),
           variants: (p.variants || []).map((v) => ({ id: typeof v === "object" ? v.id : v })),
         }))
       )
     );
     formData.append(
-      "offeredProducts",
+      "subProducts",
       JSON.stringify(
-        offeredProducts.map((p) => ({
+        subProducts.map((p) => ({
           id: p.id,
-          title: p.title,
-          handle: p.handle || "",
-          image: p.image || "",
-          price: p.price || "",
           quantity: Math.max(1, parseInt(p.quantity, 10) || 1),
           variants: (p.variants || []).map((v) => ({ id: typeof v === "object" ? v.id : v })),
         }))
@@ -608,12 +669,12 @@ export default function CreateSelectedProductsOffer() {
   };
 
   return (
-    <s-page heading="Create Selected Products Offer">
+    <s-page heading="Create Main + Sub Product Offer">
       <s-link slot="breadcrumb-actions" href="/app/offers">
         All Discounts
       </s-link>
 
-      <SaveBar id="create-selected-offer-save-bar" open={showSaveBar}>
+      <SaveBar id="create-paired-offer-save-bar" open={showSaveBar}>
         <button
           type="button"
           variant="primary"
@@ -668,7 +729,7 @@ export default function CreateSelectedProductsOffer() {
                 <s-text-field
                   label="Discount title (Internal & Checkout)"
                   name="title"
-                  placeholder="e.g. Special Add-Ons 10% OFF"
+                  placeholder="e.g. Phone + Charger Bundle 20% OFF"
                   value={title}
                   onInput={(e) => setTitle(e.target.value)}
                   details="Shown at checkout and in Shopify Admin when this discount applies."
@@ -693,124 +754,35 @@ export default function CreateSelectedProductsOffer() {
                 <s-text-field
                   label="Widget title (Displayed on Product Page)"
                   name="widgetTitle"
-                  placeholder="e.g. Special Add-Ons Just for You (leave blank for default)"
+                  placeholder="e.g. Frequently Bought Together (leave blank for default)"
                   value={widgetTitle}
                   onInput={(e) => setWidgetTitle(e.target.value)}
-                  details="Custom heading shown above the add-ons widget on the storefront for this offer."
+                  details="Custom heading shown above the bundle widget on the storefront for this offer."
                 ></s-text-field>
               </s-grid-item>
             </s-grid>
           </s-section>
 
-          {/* 1. Target / Main Products */}
-          <s-section heading="1. Select Main / Target Product(s)">
+          {/* 1. Main Products */}
+          <s-section heading="1. Select Main Product(s)">
             <s-stack gap="base">
               <s-paragraph tone="subdued">
-                Choose the product page(s) where this add-on widget will appear. When a customer views any of these product pages, the add-ons widget will be displayed.
+                Choose the primary product page(s) where this bundle will be displayed. When a customer views any of these product pages, the bundle widget will appear.
               </s-paragraph>
 
               <s-stack gap="base">
-                <s-stack
-                  background="subdued"
-                  padding="small"
-                  borderRadius="base"
-                  direction="inline"
-                  justifyContent="space-between"
-                  alignItems="center"
-                >
+                <s-stack background="subdued" padding="small" borderRadius="base" direction="inline" justifyContent="space-between" alignItems="center">
                   <s-text weight="bold">
-                    {targetProducts.length} Main Product(s) selected
+                    {mainProducts.length} Main Product(s) selected
                   </s-text>
-                  <s-button type="button" variant="primary" onClick={handleOpenTargetPicker}>
+                  <s-button type="button" variant="primary" onClick={handleOpenMainProductPicker}>
                     Browse Main Products
                   </s-button>
                 </s-stack>
 
-                {targetProducts.length > 0 ? (
+                {mainProducts.length > 0 ? (
                   <s-box>
-                    {targetProducts.map((p, idx) => (
-                      <div key={p.id}>
-                        {idx > 0 && <s-divider />}
-                        <s-box padding="small-300">
-                          <s-stack direction="inline" justifyContent="space-between" alignItems="center">
-                            <s-stack direction="inline" gap="base" alignItems="center">
-                              {p.image ? (
-                                <s-thumbnail
-                                  id={idx}
-                                  src={p.image}
-                                  alt={p.title}
-                                  size="small"
-                                />
-                              ) : (
-                                <s-thumbnail
-                                  id={idx}
-                                  alt={p.title}
-                                  size="small"
-                                />
-                              )}
-                              <s-stack gap="extra-tight">
-                                <s-text weight="semibold">{p.title}</s-text>
-                                {p.price && (
-                                  <s-text tone="subdued" size="small">
-                                    {p.price}
-                                  </s-text>
-                                )}
-                              </s-stack>
-                            </s-stack>
-
-                            <s-button
-                              type="button"
-                              variant="primary"
-                              tone="critical"
-                              icon="delete"
-                              accessibilityLabel={`Remove ${p.title}`}
-                              onClick={(e) => {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                removeTargetProduct(p.id);
-                              }}
-                            />
-                          </s-stack>
-                        </s-box>
-                      </div>
-                    ))}
-                  </s-box>
-                ) : (
-                  <s-paragraph tone="subdued">
-                    No main products selected yet. Click &quot;Browse Main Products&quot; to pick which product pages display this widget.
-                  </s-paragraph>
-                )}
-              </s-stack>
-            </s-stack>
-          </s-section>
-
-          {/* 2. Recommended / Add-On Products */}
-          <s-section heading="2. Select Recommended Add-On Product(s)">
-            <s-stack gap="base">
-              <s-paragraph tone="subdued">
-                Choose the companion/add-on products displayed in the widget with checkboxes and discounted prices.
-              </s-paragraph>
-
-              <s-stack gap="base">
-                <s-stack
-                  background="subdued"
-                  padding="small"
-                  borderRadius="base"
-                  direction="inline"
-                  justifyContent="space-between"
-                  alignItems="center"
-                >
-                  <s-text weight="bold">
-                    {offeredProducts.length} Add-On Product(s) selected
-                  </s-text>
-                  <s-button type="button" variant="primary" onClick={handleOpenOfferedPicker}>
-                    Browse Add-On Products
-                  </s-button>
-                </s-stack>
-
-                {offeredProducts.length > 0 ? (
-                  <s-box>
-                    {offeredProducts.map((p, idx) => (
+                    {mainProducts.map((p, idx) => (
                       <div key={p.id}>
                         {idx > 0 && <s-divider />}
                         <s-box padding="small-300">
@@ -842,28 +814,28 @@ export default function CreateSelectedProductsOffer() {
 
                             <s-stack direction="inline" gap="small" alignItems="center">
                               <s-text tone="subdued" size="small" weight="medium">
-                                Min Qty:
+                                Qty:
                               </s-text>
-                              <div style={{ width: "90px" }}>
+                              <div style={{ width: "80px" }}>
                                 <s-number-field
+                                  // label="Quantity"
                                   label-hidden
                                   min="1"
                                   step="1"
                                   value={String(p.quantity ?? 1)}
-                                  onInput={(e) => updateOfferedQuantity(p.id, e.target.value)}
-                                  onBlur={() => handleBlurOfferedQuantity(p.id)}
+                                  onInput={(e) => updateMainProductQuantity(p.id, e.target.value)}
+                                  onBlur={() => handleBlurMainProductQuantity(p.id)}
                                 ></s-number-field>
                               </div>
                               <s-button
                                 type="button"
-                                variant="primary"
-                                tone="critical"
+                                variant="primary" tone="critical"
                                 icon="delete"
                                 accessibilityLabel={`Remove ${p.title}`}
                                 onClick={(e) => {
                                   e.preventDefault();
                                   e.stopPropagation();
-                                  removeOfferedProduct(p.id);
+                                  removeMainProduct(p.id);
                                 }}
                               />
                             </s-stack>
@@ -874,12 +846,103 @@ export default function CreateSelectedProductsOffer() {
                   </s-box>
                 ) : (
                   <s-paragraph tone="subdued">
-                    No add-on products selected yet. Click &quot;Browse Add-On Products&quot; to pick items.
+                    No main products selected yet. Click &quot;Browse Main Products&quot; to pick.
                   </s-paragraph>
                 )}
               </s-stack>
             </s-stack>
           </s-section>
+
+          {/* 2. Sub Products */}
+          <s-section heading="2. Select Sub / Add-on Product(s)">
+            <s-stack gap="base">
+              <s-paragraph tone="subdued">
+                Choose the companion/accessory product(s) bundled with the main product. All selected companion products will be displayed together in the storefront bundle widget.
+              </s-paragraph>
+
+              <s-stack gap="base">
+                <s-stack background="subdued" padding="small" borderRadius="base" direction="inline" justifyContent="space-between" alignItems="center">
+                  <s-text weight="bold">
+                    {subProducts.length} Sub Product(s) selected
+                  </s-text>
+                  <s-button type="button" variant="primary" onClick={handleOpenSubProductPicker}>
+                    Browse Sub Products
+                  </s-button>
+                </s-stack>
+
+                {subProducts.length > 0 ? (
+                  <s-box>
+                    {subProducts.map((p, idx) => (
+                      <div key={p.id}>
+                        {idx > 0 && <s-divider />}
+                        <s-box padding="small-300">
+                          <s-stack direction="inline" justifyContent="space-between" alignItems="center">
+                            <s-stack direction="inline" gap="base" alignItems="center">
+                              {p.image ? (
+                                <s-thumbnail
+                                  id={idx}
+                                  src={p.image}
+                                  alt={p.title}
+                                  size="small"
+                                />
+                              ) : (
+                                <s-thumbnail
+                                  id={idx}
+                                  alt={p.title}
+                                  size="small"
+                                />
+                              )}
+                              <s-stack gap="extra-tight">
+                                <s-text weight="semibold">{p.title}</s-text>
+                                {p.price && (
+                                  <s-text tone="subdued" size="small">
+                                    {p.price}
+                                  </s-text>
+                                )}
+                              </s-stack>
+                            </s-stack>
+
+                            <s-stack direction="inline" gap="small" alignItems="center">
+                              <s-text tone="subdued" size="small" weight="medium">
+                                Qty:
+                              </s-text>
+                              <div style={{ width: "80px" }}>
+                                <s-number-field
+                                  // label="Quantity"
+                                  label-hidden
+                                  min="1"
+                                  step="1"
+                                  value={String(p.quantity ?? 1)}
+                                  onInput={(e) => updateSubProductQuantity(p.id, e.target.value)}
+                                  onBlur={() => handleBlurSubProductQuantity(p.id)}
+                                ></s-number-field>
+                              </div>
+                              <s-button
+                                type="button"
+                                variant="primary" tone="critical"
+                                icon="delete"
+                                accessibilityLabel={`Remove ${p.title}`}
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  removeSubProduct(p.id);
+                                }}
+                              />
+                            </s-stack>
+                          </s-stack>
+                        </s-box>
+                      </div>
+                    ))}
+                  </s-box>
+                ) : (
+                  <s-paragraph tone="subdued">
+                    No sub products selected yet. Click &quot;Browse Sub Products&quot; to pick.
+                  </s-paragraph>
+                )}
+              </s-stack>
+            </s-stack>
+          </s-section>
+
 
           {/* Active Dates */}
           <s-section heading="Active dates">
@@ -889,7 +952,10 @@ export default function CreateSelectedProductsOffer() {
                   Times are based on your store timezone ({shopTimezone}).
                 </s-paragraph>
               )}
-              <s-grid gridTemplateColumns="repeat(2, 1fr)" gap="base">
+              <s-grid
+                gridTemplateColumns="repeat(2, 1fr)"
+                gap="base"
+              >
                 <s-grid-item gridColumn="span 1">
                   <s-date-field
                     label="Start date"
@@ -992,6 +1058,8 @@ export default function CreateSelectedProductsOffer() {
         </s-stack>
       </form>
 
+
+
       {/* Right side Sidebar: Summary in slot="aside" */}
       <s-section slot="aside" heading="Summary">
         <s-stack gap="base">
@@ -1005,49 +1073,33 @@ export default function CreateSelectedProductsOffer() {
           <s-stack gap="tight">
             <s-text weight="bold">Discount value</s-text>
             <s-paragraph tone="subdued">
-              • {percentage ? `${percentage}% off add-on products` : "No discount value set"}
+              • {percentage ? `${percentage}% off order subtotal` : "No discount value set"}
             </s-paragraph>
           </s-stack>
 
           <s-stack gap="tight">
-            <s-text weight="bold">Main / Target product(s)</s-text>
-            {targetProducts.length > 0 ? (
-              targetProducts.map((p) => (
-                <s-paragraph key={p.id} tone="subdued">
-                  • {p.title}
-                </s-paragraph>
-              ))
-            ) : (
-              <s-paragraph tone="subdued">
-                • No main products selected
-              </s-paragraph>
-            )}
-          </s-stack>
-
-          <s-stack gap="tight">
-            <s-text weight="bold">Recommended add-ons</s-text>
-            {offeredProducts.length > 0 ? (
-              offeredProducts.map((p) => (
+            <s-text weight="bold">Target products (Main)</s-text>
+            {mainProducts.length > 0 ? (
+              mainProducts.map((p) => (
                 <s-paragraph key={p.id} tone="subdued">
                   • {p.quantity || 1}x {p.title}
                 </s-paragraph>
               ))
             ) : (
-              <s-paragraph tone="subdued">
-                • No add-on products selected
-              </s-paragraph>
+              <s-paragraph tone="subdued">• No main products selected</s-paragraph>
             )}
           </s-stack>
 
           <s-stack gap="tight">
-            <s-text weight="bold">Active dates</s-text>
-            <s-paragraph tone="subdued">
-              • Starts {startsAtDate || todayStr} at {formatTime12h(startsAtTime)} ({tzAbbr})
-            </s-paragraph>
-            {hasEndDate && endsAtDate && (
-              <s-paragraph tone="subdued">
-                • Ends {endsAtDate} at {formatTime12h(endsAtTime)} ({tzAbbr})
-              </s-paragraph>
+            <s-text weight="bold">Offer products (Sub / Add-on)</s-text>
+            {subProducts.length > 0 ? (
+              subProducts.map((p) => (
+                <s-paragraph key={p.id} tone="subdued">
+                  • {p.quantity || 1}x {p.title}
+                </s-paragraph>
+              ))
+            ) : (
+              <s-paragraph tone="subdued">• No sub products selected</s-paragraph>
             )}
           </s-stack>
 
@@ -1057,17 +1109,31 @@ export default function CreateSelectedProductsOffer() {
               • Managed store-wide in <s-link href="/app/settings">Settings</s-link>
             </s-paragraph>
           </s-stack>
+
+          <s-stack gap="tight">
+            <s-text weight="bold">Active dates</s-text>
+            <s-paragraph tone="subdued">
+              • Starts {startsAtDate || todayStr} at {formatTime12h(startsAtTime)} ({tzAbbr})
+              {hasEndDate && endsAtDate ? ` • Ends ${endsAtDate} at ${formatTime12h(endsAtTime)} (${tzAbbr})` : ""}
+            </s-paragraph>
+          </s-stack>
+
+          <s-stack background="subdued" padding="small" borderRadius="base" gap="small">
+            <s-text size="small" weight="bold">How it applies:</s-text>
+            <s-paragraph size="small" tone="subdued">
+              When a customer adds the required quantity of Main and Sub products to cart, {percentage || "0"}% discount will be applied automatically at checkout.
+            </s-paragraph>
+          </s-stack>
         </s-stack>
       </s-section>
 
       {/* Right side Sidebar: Live Widget Preview */}
-      <SelectedWidgetPreview
-        asSection={true}
+      <WidgetPreview
         title={title}
         widgetTitle={widgetTitle}
         percentage={percentage}
-        targetProducts={targetProducts}
-        offeredProducts={offeredProducts}
+        mainProducts={mainProducts}
+        subProducts={subProducts}
         shopDomain={shop}
         widgetSettings={widgetSettings}
       />

@@ -194,8 +194,8 @@ export async function checkMainProductConflicts({
         offerNumericId: match.numericId,
         editUrl:
           match.offerType === "PAIRED"
-            ? `/app/paired-products/edit/${match.numericId}`
-            : `/app/sected-products/edit/${match.numericId}`,
+            ? `/app/offers/paired/edit/${match.numericId}`
+            : `/app/offers/selected/edit/${match.numericId}`,
       });
     }
   }
