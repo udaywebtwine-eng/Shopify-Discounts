@@ -254,7 +254,7 @@ export const action = async ({ request }) => {
 };
 
 export default function CreateSelectedProductsOffer() {
-  const { functionId, shopTimezone, timezoneAbbr, currentTime, usedMainProducts = [] } = useLoaderData();
+  const { functionId, shopTimezone, timezoneAbbr, currentTime, usedMainProducts = [], shop, widgetSettings } = useLoaderData();
   const actionData = useActionData();
   const navigation = useNavigation();
   const submit = useSubmit();
@@ -1059,6 +1059,18 @@ export default function CreateSelectedProductsOffer() {
           </s-stack>
         </s-stack>
       </s-section>
+
+      {/* Right side Sidebar: Live Widget Preview */}
+      <SelectedWidgetPreview
+        asSection={true}
+        title={title}
+        widgetTitle={widgetTitle}
+        percentage={percentage}
+        targetProducts={targetProducts}
+        offeredProducts={offeredProducts}
+        shopDomain={shop}
+        widgetSettings={widgetSettings}
+      />
     </s-page>
   );
 }

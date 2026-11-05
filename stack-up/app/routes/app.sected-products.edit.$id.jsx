@@ -24,6 +24,7 @@ import {
 import { syncAllActiveSelectedOffersToShopMetafield } from "../utils/selectedOffersMetafields.server";
 import { getActiveMainProductsMap, checkMainProductConflicts } from "../utils/productConflicts.server";
 import { syncRecentOrdersFromShopify } from "../utils/orders.server";
+import SelectedWidgetPreview from "./components/Preview/SelectedWidgetPreview";
 
 export const loader = async ({ request, params }) => {
     const t0 = performance.now();
@@ -1418,6 +1419,18 @@ export default function EditSelectedProductOffer() {
                     </s-stack>
                 </s-stack>
             </s-section>
+
+            {/* Live Widget Preview */}
+            <SelectedWidgetPreview
+                asSection={true}
+                title={title}
+                widgetTitle={widgetTitle}
+                percentage={percentage}
+                targetProducts={targetProducts}
+                offeredProducts={offeredProducts}
+                shopDomain={data.shop}
+                widgetSettings={data.widgetSettings}
+            />
 
             {/* Performance Card */}
             <s-section slot="aside" heading="Performance">

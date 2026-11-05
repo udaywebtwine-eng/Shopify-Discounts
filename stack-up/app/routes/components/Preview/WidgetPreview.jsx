@@ -133,37 +133,26 @@ export default function WidgetPreview({
     <s-section slot="aside" heading="How widget looks">
       <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
         {/* Top Reference Bar: Page selector & View on Store link */}
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            gap: "8px",
-          }}
+        <s-stack
+          direction="inline"
+          alignItems={mainProducts.length > 1 ? "end" : "center"}
+          justifyContent="space-between"
         >
           {mainProducts.length > 1 ? (
-            <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
-              <span style={{ fontSize: "11px", color: "#64748b", fontWeight: 600 }}>Page:</span>
-              <select
-                value={selectedMainIndex}
+            <s-box inlineSize="48%">
+              <s-select
+                label="Page:"
+                value={String(selectedMainIndex)}
                 onChange={(e) => setSelectedMainIndex(Number(e.target.value))}
-                style={{
-                  fontSize: "11px",
-                  padding: "2px 6px",
-                  borderRadius: "4px",
-                  border: "1px solid #cbd5e1",
-                  background: "#ffffff",
-                  color: "#0f172a",
-                  maxWidth: "140px",
-                }}
+                accessibilityLabel="Select product page preview"
               >
                 {mainProducts.map((p, idx) => (
-                  <option key={p.id || idx} value={idx}>
+                  <s-option key={p.id || idx} value={String(idx)}>
                     {p.title}
-                  </option>
+                  </s-option>
                 ))}
-              </select>
-            </div>
+              </s-select>
+            </s-box>
           ) : (
             <span style={{ fontSize: "11px", color: "#64748b", fontWeight: 500 }}>
               {activeMain.isSample ? "✨ Showing sample preview" : "✨ Live widget preview"}
@@ -171,57 +160,22 @@ export default function WidgetPreview({
           )}
 
           {viewOnStoreUrl ? (
-            <a
+            <s-button
               href={viewOnStoreUrl}
               target="_blank"
-              rel="noreferrer"
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: "4px",
-                fontSize: "11px",
-                fontWeight: 600,
-                color: "#4338ca",
-                background: "#eef2ff",
-                border: "1px solid #c7d2fe",
-                padding: "3px 8px",
-                borderRadius: "5px",
-                textDecoration: "none",
-                whiteSpace: "nowrap",
-                flexShrink: 0,
-              }}
+              icon="view"
             >
-              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
-                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
-                <circle cx="12" cy="12" r="3" />
-              </svg>
               View on Store
-            </a>
+            </s-button>
           ) : (
-            <span
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: "4px",
-                fontSize: "11px",
-                fontWeight: 500,
-                color: "#94a3b8",
-                background: "#f1f5f9",
-                border: "1px solid #e2e8f0",
-                padding: "3px 8px",
-                borderRadius: "5px",
-                whiteSpace: "nowrap",
-                flexShrink: 0,
-              }}
+            <s-button
+              disabled
+              icon="view"
             >
-              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
-                <circle cx="12" cy="12" r="3" />
-              </svg>
               View on Store
-            </span>
+            </s-button>
           )}
-        </div>
+        </s-stack>
 
         {/* Storefront Widget Card (Matches saved styling, compact reference) */}
         <div
@@ -607,25 +561,13 @@ export default function WidgetPreview({
         </div>
 
         {/* Widget Settings link */}
-        <div style={{ textAlign: "center" }}>
-          <a
-            href="/app/paired-products/customize"
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: "4px",
-              fontSize: "11px",
-              fontWeight: 600,
-              color: "#4f46e5",
-              textDecoration: "none",
-            }}
-          >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2">
-              <path d="M12 20h9" />
-              <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
-            </svg>
-            Widget Settings
-          </a>
+        <div style={{ textAlign: "center", display: "flex", justifyContent: "center" }}>
+          <s-link href="/app/paired-products/customize">
+            <s-stack direction="inline" alignItems="center" gap="small-400">
+              <s-icon type="edit" size="small" />
+              Widget Settings
+            </s-stack>
+          </s-link>
         </div>
       </div>
     </s-section>

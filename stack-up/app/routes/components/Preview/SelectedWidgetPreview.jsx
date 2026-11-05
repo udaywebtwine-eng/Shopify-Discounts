@@ -27,6 +27,7 @@ export default function SelectedWidgetPreview({
   offeredProducts = [],
   shopDomain = "",
   widgetSettings = null,
+  asSection = false,
 }) {
   const [selectedTargetIndex, setSelectedTargetIndex] = useState(0);
 
@@ -124,283 +125,412 @@ export default function SelectedWidgetPreview({
     String(discPct)
   );
 
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-      {/* Target Product Switcher (if multiple target products) */}
-      {targetProducts.length > 1 && (
-        <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap", fontSize: "12px" }}>
-          <span style={{ fontWeight: 600, color: "#64748b" }}>Preview on Product:</span>
-          {targetProducts.slice(0, 4).map((tp, idx) => (
-            <button
-              key={tp.id || idx}
-              type="button"
-              onClick={() => setSelectedTargetIndex(idx)}
+  const currentTargetHandle = currentTarget?.handle;
+  const cleanShop = shopDomain ? shopDomain.replace(/^https?:\/\//, "") : "";
+  const viewOnStoreUrl = cleanShop && currentTargetHandle
+    ? `https://${cleanShop}/products/${currentTargetHandle}`
+    : cleanShop
+      ? `https://${cleanShop}`
+      : null;
+
+  const cardContent = (
+    <div
+      style={{
+        background: styles.cardSurface,
+        border: `1px solid ${styles.borderColor}`,
+        borderRadius: `${Math.max(8, styles.borderRadius - 2)}px`,
+        padding: "10px",
+        display: "flex",
+        flexDirection: "column",
+        gap: "6px",
+        boxSizing: "border-box",
+        fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
+      }}
+    >
+      {/* Widget Heading & Badge */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: "6px",
+          paddingBottom: "1px",
+        }}
+      >
+        {display.showWidgetTitle && (
+          <div
+            style={{
+              fontSize: "12px",
+              fontWeight: 700,
+              color: "#0f172a",
+              display: "flex",
+              alignItems: "center",
+              gap: "5px",
+            }}
+          >
+            <span style={{ fontSize: "11px" }}>✨</span>
+            <span>{resolvedHeading}</span>
+          </div>
+        )}
+
+        {display.showSaleBadge && discPct > 0 && (
+          <span
+            style={{
+              background: styles.badgeBg,
+              color: styles.badgeTextColor,
+              fontSize: "9px",
+              fontWeight: 700,
+              padding: "2px 6px",
+              borderRadius: "12px",
+              border: "1px solid rgba(16, 185, 129, 0.25)",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "3px",
+              whiteSpace: "nowrap",
+            }}
+          >
+            <span>⚡</span>
+            <span>{badgeLabel}</span>
+          </span>
+        )}
+      </div>
+
+      {/* Subheading */}
+      {display.showSubheading && content.subheading && (
+        <div
+          style={{
+            fontSize: "10px",
+            color: "#64748b",
+            lineHeight: 1.3,
+            marginBottom: "2px",
+          }}
+        >
+          {content.subheading}
+        </div>
+      )}
+
+      {/* Add-ons list */}
+      <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+        {effectiveAddons.map((item, idx) => {
+          const checked = isChecked(item.id || idx, idx);
+          const origPrice = parsePrice(item.price) || 20.0;
+          const discPrice = origPrice * (1 - discPct / 100);
+
+          return (
+            <div
+              key={item.id || idx}
+              onClick={() => toggleCheck(item.id || idx, idx)}
               style={{
-                border: selectedTargetIndex === idx ? "1px solid #0f172a" : "1px solid #cbd5e1",
-                background: selectedTargetIndex === idx ? "#0f172a" : "#ffffff",
-                color: selectedTargetIndex === idx ? "#ffffff" : "#334155",
-                borderRadius: "6px",
-                padding: "3px 8px",
-                fontSize: "11px",
-                fontWeight: 600,
+                display: "flex",
+                alignItems: "center",
+                gap: "7px",
+                padding: "6px 8px",
+                background: "#ffffff",
+                border: `1px solid ${checked ? "#cbd5e1" : styles.borderColor}`,
+                borderRadius: `${Math.max(5, styles.borderRadius - 6)}px`,
                 cursor: "pointer",
-                maxWidth: "140px",
-                whiteSpace: "nowrap",
-                overflow: "hidden",
-                textOverflow: "ellipsis",
+                transition: "all 0.15s ease",
               }}
             >
-              {tp.title || `Product ${idx + 1}`}
-            </button>
-          ))}
-          {targetProducts.length > 4 && (
-            <span style={{ color: "#94a3b8", fontSize: "11px" }}>+{targetProducts.length - 4} more</span>
+              {/* Checkbox */}
+              <div
+                style={{
+                  width: "15px",
+                  height: "15px",
+                  borderRadius: "3px",
+                  background: checked ? styles.buttonBg : "#ffffff",
+                  border: checked ? `1px solid ${styles.buttonBg}` : "1px solid #cbd5e1",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  color: styles.buttonTextColor,
+                  flexShrink: 0,
+                }}
+              >
+                {checked && (
+                  <svg width="8" height="6" viewBox="0 0 11 9" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="1.5 4.5 4 7 9.5 1.5" />
+                  </svg>
+                )}
+              </div>
+
+              {/* Thumb */}
+              <div
+                style={{
+                  width: "34px",
+                  height: "34px",
+                  borderRadius: "5px",
+                  border: "1px solid #f1f5f9",
+                  background: "#f8fafc",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  overflow: "hidden",
+                  flexShrink: 0,
+                }}
+              >
+                {item.image ? (
+                  <img
+                    src={item.image}
+                    alt={item.title}
+                    style={{ width: "100%", height: "100%", objectFit: "contain" }}
+                  />
+                ) : (
+                  <span style={{ fontSize: "14px" }}>🎁</span>
+                )}
+              </div>
+
+              {/* Title & Qty Pill */}
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div
+                  style={{
+                    fontSize: "11px",
+                    fontWeight: 600,
+                    color: "#0f172a",
+                    lineHeight: 1.25,
+                    wordBreak: "break-word",
+                  }}
+                  title={item.title}
+                >
+                  {item.title}
+                </div>
+                {item.quantity && item.quantity > 1 && (
+                  <div style={{ marginTop: "2px" }}>
+                    <span
+                      style={{
+                        fontSize: "9px",
+                        fontWeight: 600,
+                        background: "#f1f5f9",
+                        color: "#475569",
+                        padding: "1px 5px",
+                        borderRadius: "8px",
+                        border: "1px solid #e2e8f0",
+                      }}
+                    >
+                      Qty: {item.quantity}
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              {/* Price */}
+              <div style={{ textAlign: "right", flexShrink: 0 }}>
+                <div style={{ fontSize: "11px", fontWeight: 700, color: discPct > 0 ? "#059669" : "#0f172a" }}>
+                  {formatMoney(discPrice)}
+                </div>
+                {discPct > 0 && (
+                  <div style={{ fontSize: "9px", color: "#94a3b8", textDecoration: "line-through", marginTop: "1px" }}>
+                    {formatMoney(origPrice)}
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Total Box */}
+      {display.showTotalBox && (
+        <div
+          style={{
+            padding: "8px 10px",
+            background: styles.totalBoxBg,
+            border: `1px solid ${styles.borderColor}`,
+            borderRadius: `${Math.max(6, styles.borderRadius - 4)}px`,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: "8px",
+            marginTop: "2px",
+          }}
+        >
+          <div>
+            <div
+              style={{
+                fontSize: "9px",
+                fontWeight: 600,
+                color: "#64748b",
+                textTransform: "uppercase",
+                letterSpacing: "0.04em",
+              }}
+            >
+              TOTAL WITH {checkedCount} ADD-ON{checkedCount !== 1 ? "S" : ""}
+            </div>
+            <div style={{ display: "flex", alignItems: "baseline", gap: "5px", marginTop: "1px" }}>
+              <span style={{ fontSize: "14px", fontWeight: 800, color: "#0f172a" }}>
+                {formatMoney(finalTotal)}
+              </span>
+              {totalSavings > 0 && (
+                <span
+                  style={{
+                    fontSize: "10px",
+                    color: "#94a3b8",
+                    textDecoration: "line-through",
+                  }}
+                >
+                  {formatMoney(mainPrice + addonsOriginal)}
+                </span>
+              )}
+            </div>
+          </div>
+
+          {totalSavings > 0 && (
+            <span
+              style={{
+                background: styles.badgeBg,
+                color: styles.badgeTextColor,
+                fontSize: "9px",
+                fontWeight: 700,
+                padding: "3px 6px",
+                borderRadius: "12px",
+                border: "1px solid rgba(16, 185, 129, 0.25)",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "3px",
+                whiteSpace: "nowrap",
+              }}
+            >
+              <span>⚡</span>
+              <span>Save {formatMoney(totalSavings)}</span>
+            </span>
           )}
         </div>
       )}
 
-      {/* Widget Card Container */}
-      <div
+      {/* Add to Cart Button */}
+      <button
+        type="button"
         style={{
-          background: styles.cardSurface,
-          borderRadius: `${styles.borderRadius}px`,
-          border: `1px solid ${styles.borderColor}`,
-          padding: "18px",
-          boxShadow: "0 4px 20px -2px rgba(0,0,0,0.05), 0 2px 6px -1px rgba(0,0,0,0.02)",
-          fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
+          width: "100%",
+          height: "32px",
+          padding: "0 12px",
+          background: styles.buttonBg,
+          color: styles.buttonTextColor,
+          borderRadius: `${Math.max(6, styles.borderRadius - 4)}px`,
+          border: "none",
+          fontWeight: 700,
+          fontSize: "11px",
+          cursor: "pointer",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: "5px",
+          boxShadow: "0 1px 4px rgba(0, 0, 0, 0.08)",
+          marginTop: "2px",
         }}
       >
-        {/* Header */}
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            gap: "10px",
-            marginBottom: "6px",
-            flexWrap: "wrap",
-          }}
-        >
-          {display.showWidgetTitle && (
-            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-              <span style={{ fontSize: "16px" }}>✨</span>
-              <h3
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z" />
+          <line x1="3" y1="6" x2="21" y2="6" />
+          <path d="M16 10a4 4 0 0 1-8 0" />
+        </svg>
+        <span>{content.buttonText || "Add to Cart with Add-Ons"}</span>
+      </button>
+    </div>
+  );
+
+  if (!asSection) {
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+        {/* Target Product Switcher (if multiple target products) */}
+        {targetProducts.length > 1 && (
+          <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap", fontSize: "12px" }}>
+            <span style={{ fontWeight: 600, color: "#64748b" }}>Preview on Product:</span>
+            {targetProducts.slice(0, 4).map((tp, idx) => (
+              <button
+                key={tp.id || idx}
+                type="button"
+                onClick={() => setSelectedTargetIndex(idx)}
                 style={{
-                  fontSize: "15px",
-                  fontWeight: 700,
-                  color: "#0f172a",
-                  margin: 0,
-                  letterSpacing: "-0.01em",
-                }}
-              >
-                {title || content.heading}
-              </h3>
-            </div>
-          )}
-
-          {display.showSaleBadge && discPct > 0 && (
-            <div
-              style={{
-                background: styles.badgeBg,
-                color: styles.badgeTextColor,
-                fontSize: "11px",
-                fontWeight: 700,
-                padding: "4px 10px",
-                borderRadius: "20px",
-                border: "1px solid rgba(16, 185, 129, 0.25)",
-                display: "inline-flex",
-                alignItems: "center",
-                gap: "4px",
-              }}
-            >
-              <span>⚡</span>
-              <span>{badgeLabel}</span>
-            </div>
-          )}
-        </div>
-
-        {/* Subheading */}
-        {display.showSubheading && content.subheading && (
-          <div style={{ fontSize: "12px", color: "#64748b", marginBottom: "12px" }}>
-            {content.subheading}
-          </div>
-        )}
-
-        {/* Add-ons list */}
-        <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-          {effectiveAddons.map((item, idx) => {
-            const checked = isChecked(item.id || idx, idx);
-            const origPrice = parsePrice(item.price) || 20.0;
-            const discPrice = origPrice * (1 - discPct / 100);
-
-            return (
-              <div
-                key={item.id || idx}
-                onClick={() => toggleCheck(item.id || idx, idx)}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "12px",
-                  padding: "10px 12px",
-                  background: "#ffffff",
-                  border: `1px solid ${checked ? "#cbd5e1" : styles.borderColor}`,
-                  borderRadius: `${Math.max(6, styles.borderRadius - 4)}px`,
-                  cursor: "pointer",
-                  transition: "all 0.15s ease",
-                  boxShadow: checked ? "0 2px 6px rgba(0,0,0,0.03)" : "none",
-                }}
-              >
-                {/* Custom Checkbox */}
-                <div
-                  style={{
-                    width: "18px",
-                    height: "18px",
-                    borderRadius: "4px",
-                    background: checked ? styles.buttonBg : "#ffffff",
-                    border: checked ? `1px solid ${styles.buttonBg}` : "1px solid #cbd5e1",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    color: styles.buttonTextColor,
-                    flexShrink: 0,
-                    transition: "all 0.15s ease",
-                  }}
-                >
-                  {checked && (
-                    <svg width="10" height="8" viewBox="0 0 11 9" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                      <polyline points="1.5 4.5 4 7 9.5 1.5" />
-                    </svg>
-                  )}
-                </div>
-
-                {/* Thumbnail */}
-                <div
-                  style={{
-                    width: "44px",
-                    height: "44px",
-                    background: "#f8fafc",
-                    border: "1px solid #f1f5f9",
-                    borderRadius: "6px",
-                    overflow: "hidden",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    flexShrink: 0,
-                  }}
-                >
-                  {item.image ? (
-                    <img src={item.image} alt={item.title} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                  ) : (
-                    <span style={{ fontSize: "20px" }}>🎁</span>
-                  )}
-                </div>
-
-                {/* Info */}
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: "13px", fontWeight: 600, color: "#0f172a", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                    {item.title}
-                  </div>
-                  {item.quantity && item.quantity > 1 && (
-                    <span style={{ fontSize: "10px", fontWeight: 600, background: "#f1f5f9", color: "#334155", padding: "1px 6px", borderRadius: "8px" }}>
-                      Qty: {item.quantity}
-                    </span>
-                  )}
-                </div>
-
-                {/* Price */}
-                <div style={{ textAlign: "right", flexShrink: 0 }}>
-                  <div style={{ fontSize: "14px", fontWeight: 700, color: "#059669" }}>
-                    {formatMoney(discPrice)}
-                  </div>
-                  <div style={{ fontSize: "11px", color: "#94a3b8", textDecoration: "line-through", marginTop: "1px" }}>
-                    {formatMoney(origPrice)}
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-
-        {/* Total & Summary Box */}
-        {display.showTotalBox && (
-          <div
-            style={{
-              marginTop: "14px",
-              padding: "12px 14px",
-              background: styles.totalBoxBg,
-              border: `1px solid ${styles.borderColor}`,
-              borderRadius: `${Math.max(6, styles.borderRadius - 4)}px`,
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              gap: "12px",
-              flexWrap: "wrap",
-            }}
-          >
-            <div>
-              <div style={{ fontSize: "11px", color: "#64748b", fontWeight: 500, marginBottom: "2px" }}>
-                Total with {checkedCount} add-on{checkedCount !== 1 ? "s" : ""}:
-              </div>
-              <div style={{ display: "flex", alignItems: "baseline", gap: "8px" }}>
-                <span style={{ fontSize: "18px", fontWeight: 800, color: "#0f172a" }}>
-                  {formatMoney(finalTotal)}
-                </span>
-                {totalSavings > 0 && (
-                  <span style={{ fontSize: "13px", color: "#94a3b8", textDecoration: "line-through" }}>
-                    {formatMoney(mainPrice + addonsOriginal)}
-                  </span>
-                )}
-              </div>
-            </div>
-
-            {totalSavings > 0 && (
-              <div
-                style={{
-                  background: styles.badgeBg,
-                  color: styles.badgeTextColor,
-                  border: "1px solid rgba(16, 185, 129, 0.25)",
+                  border: selectedTargetIndex === idx ? "1px solid #0f172a" : "1px solid #cbd5e1",
+                  background: selectedTargetIndex === idx ? "#0f172a" : "#ffffff",
+                  color: selectedTargetIndex === idx ? "#ffffff" : "#334155",
+                  borderRadius: "6px",
+                  padding: "3px 8px",
                   fontSize: "11px",
-                  fontWeight: 700,
-                  padding: "4px 10px",
-                  borderRadius: "20px",
+                  fontWeight: 600,
+                  cursor: "pointer",
+                  maxWidth: "140px",
+                  whiteSpace: "nowrap",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
                 }}
               >
-                Save {formatMoney(totalSavings)}
-              </div>
+                {tp.title || `Product ${idx + 1}`}
+              </button>
+            ))}
+            {targetProducts.length > 4 && (
+              <span style={{ color: "#94a3b8", fontSize: "11px" }}>+{targetProducts.length - 4} more</span>
             )}
           </div>
         )}
-
-        {/* 1-Click Action Button */}
-        <button
-          type="button"
-          style={{
-            width: "100%",
-            marginTop: "12px",
-            padding: "12px 18px",
-            background: styles.buttonBg,
-            color: styles.buttonTextColor,
-            border: "none",
-            borderRadius: `${styles.borderRadius}px`,
-            fontSize: "14px",
-            fontWeight: 700,
-            cursor: "pointer",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: "8px",
-            boxShadow: "0 4px 12px rgba(15, 23, 42, 0.12)",
-          }}
-        >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"></path>
-            <line x1="3" y1="6" x2="21" y2="6"></line>
-            <path d="M16 10a4 4 0 0 1-8 0"></path>
-          </svg>
-          <span>{content.buttonText}</span>
-        </button>
+        {cardContent}
       </div>
-    </div>
+    );
+  }
+
+  return (
+    <s-section slot="aside" heading="How widget looks">
+      <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+        {/* Top Reference Bar: Page selector & View on Store link */}
+        <s-stack
+          direction="inline"
+          alignItems={targetProducts.length > 1 ? "end" : "center"}
+          justifyContent="space-between"
+        >
+          {targetProducts.length > 1 ? (
+            <s-box inlineSize="48%">
+              <s-select
+                label="Page:"
+                value={String(selectedTargetIndex)}
+                onChange={(e) => setSelectedTargetIndex(Number(e.target.value))}
+                accessibilityLabel="Select product page preview"
+              >
+                {targetProducts.map((p, idx) => (
+                  <s-option key={p.id || idx} value={String(idx)}>
+                    {p.title}
+                  </s-option>
+                ))}
+              </s-select>
+            </s-box>
+          ) : (
+            <span style={{ fontSize: "11px", color: "#64748b", fontWeight: 500 }}>
+              {targetProducts.length === 0 ? "✨ Showing sample preview" : "✨ Live widget preview"}
+            </span>
+          )}
+
+          {viewOnStoreUrl ? (
+            <s-button
+              href={viewOnStoreUrl}
+              target="_blank"
+              icon="view"
+            >
+              View on Store
+            </s-button>
+          ) : (
+            <s-button
+              disabled
+              icon="view"
+            >
+              View on Store
+            </s-button>
+          )}
+        </s-stack>
+
+        {/* Preview Card */}
+        {cardContent}
+
+        {/* Widget Settings link */}
+        <div style={{ textAlign: "center", display: "flex", justifyContent: "center" }}>
+          <s-link href="/app/sected-products/customize">
+            <s-stack direction="inline" alignItems="center" gap="small-400">
+              <s-icon type="edit" size="small" />
+              Widget Settings
+            </s-stack>
+          </s-link>
+        </div>
+      </div>
+    </s-section>
   );
 }
 
