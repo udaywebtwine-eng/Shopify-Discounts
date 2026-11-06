@@ -22,6 +22,8 @@ export default function NewOfferSelect() {
       shopify.saveBar?.hide("edit-paired-offer-save-bar");
       shopify.saveBar?.hide("create-selected-offer-save-bar");
       shopify.saveBar?.hide("edit-selected-offer-save-bar");
+      shopify.saveBar?.hide("create-volume-offer-save-bar");
+      shopify.saveBar?.hide("edit-volume-offer-save-bar");
     } catch { }
   }, [shopify]);
 
@@ -57,7 +59,7 @@ export default function NewOfferSelect() {
       <s-section padding="none">
         <s-box padding="base">
           <s-grid
-            gridTemplateColumns="@container (inline-size <= 720px) 1fr, 1fr 1fr"
+            gridTemplateColumns="@container (inline-size <= 900px) 1fr, 1fr 1fr 1fr"
             gap="base"
           >
             {/* Option 1: Frequently Bought Together */}
@@ -87,10 +89,10 @@ export default function NewOfferSelect() {
 
                   {/* Badge, Title & Description */}
                   <s-stack gap="small">
-                    <s-stack direction="inline" justifyContent="space-between">
+                    <s-stack direction="inline" justifyContent="space-between" alignItems="center">
                       <s-badge tone="info">Frequently Bought</s-badge>
-                      <s-heading size="medium">Frequently Bought Together</s-heading>
                     </s-stack>
+                    <s-heading size="medium">Frequently Bought Together</s-heading>
                     <s-text tone="subdued">
                       Pair complementary products together on your product page. When customers add both to cart, they get an exclusive bundle discount at checkout.
                     </s-text>
@@ -139,10 +141,10 @@ export default function NewOfferSelect() {
 
                   {/* Badge, Title & Description */}
                   <s-stack gap="small">
-                    <s-stack direction="inline" justifyContent="space-between">
-                      <s-heading size="medium">Product Add-ons</s-heading>
+                    <s-stack direction="inline" justifyContent="space-between" alignItems="center">
                       <s-badge tone="caution">Product Add-ons</s-badge>
                     </s-stack>
+                    <s-heading size="medium">Product Add-ons</s-heading>
                     <s-text tone="subdued">
                       Recommend high-converting add-on products with checkboxes directly on the product page. Customers get a special discounted price only on the add-on items.
                     </s-text>
@@ -159,6 +161,58 @@ export default function NewOfferSelect() {
                     disabled={isBusy ? true : undefined}
                   >
                     Create Product Add-on Offer
+                  </s-button>
+                </s-box>
+              </s-stack>
+            </s-box>
+
+            {/* Option 3: Quantity Breaks / Volume Discount */}
+            <s-box
+              background="subdued"
+              border="small"
+              borderRadius="base"
+              padding="base"
+            >
+              <s-stack gap="base" justifyContent="space-between">
+                <s-stack gap="base">
+                  {/* Preview Image */}
+                  <s-box
+                    borderRadius="base"
+                    overflow="hidden"
+                    border="small"
+                    background="surface"
+                  >
+                    <s-image
+                      src="/img3.svg"
+                      alt="Quantity Breaks Volume Discount Preview"
+                      aspectRatio="16/9"
+                      objectFit="contain"
+                      inlineSize="fill"
+                    />
+                  </s-box>
+
+                  {/* Badge, Title & Description */}
+                  <s-stack gap="small">
+                    <s-stack direction="inline" justifyContent="space-between" alignItems="center">
+                      <s-badge tone="success">Volume Discount</s-badge>
+                    </s-stack>
+                    <s-heading size="medium">Quantity Breaks</s-heading>
+                    <s-text tone="subdued">
+                      Motivate customers to buy higher quantities with tiered discounts (e.g. Buy 2 get 10% OFF, Buy 3 get 20% OFF). Automatically applied at checkout.
+                    </s-text>
+                  </s-stack>
+                </s-stack>
+
+                {/* Action Button */}
+                <s-box paddingBlockStart="base">
+                  <s-button
+                    variant="primary"
+                    inlineSize="fill"
+                    onClick={() => handleSelect("VOLUME", "/app/offers/volume/create")}
+                    loading={selectedType === "VOLUME" ? true : undefined}
+                    disabled={isBusy ? true : undefined}
+                  >
+                    Create Volume Offer
                   </s-button>
                 </s-box>
               </s-stack>

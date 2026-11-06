@@ -158,6 +158,7 @@ export async function syncRecentOrdersFromShopify(admin, shop) {
       const orderCreatedAt = new Date(order.createdAt).getTime();
       const hasMasterSelected = appliedTitles.some((t) => (t.includes("stackup") || t.includes("stack-up")) && t.includes("selected"));
       const hasMasterPaired = appliedTitles.some((t) => (t.includes("stackup") || t.includes("stack-up")) && t.includes("paired"));
+      const hasMasterVolume = appliedTitles.some((t) => ((t.includes("stackup") || t.includes("stack-up")) && (t.includes("volume") || t.includes("quantity"))) || t.includes("volume discount") || t.includes("buy more") || t.includes("quantity break"));
 
       const matchedOffers = [];
 
@@ -195,6 +196,20 @@ export async function syncRecentOrdersFromShopify(admin, shop) {
             } catch {}
           }
           if (pctMatches || prodMatches) matchedOffers.push(off);
+        } else if (off.type === "VOLUME") {
+          let prodMatches = false;
+          if (hasMasterVolume) {
+            try {
+              let vProds = [];
+              if (off.volumeProducts) {
+                vProds = JSON.parse(off.volumeProducts);
+              } else if (off.configuration) {
+                vProds = JSON.parse(off.configuration)?.volumeProducts || [];
+              }
+              prodMatches = vProds.some((p) => p?.id && (orderProductIds.has(String(p.id)) || orderProductIds.has(String(p.id).split("/").pop())));
+            } catch {}
+          }
+          if (prodMatches) matchedOffers.push(off);
         }
       }
 

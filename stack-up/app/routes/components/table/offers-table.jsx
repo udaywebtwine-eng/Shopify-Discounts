@@ -117,6 +117,7 @@ export default function OffersTable({ offersData = [], currencySymbol = "$" }) {
                         <s-option value="ALL">All Types</s-option>
                         <s-option value="Paired Products">Paired Products</s-option>
                         <s-option value="Selected Products">Selected Products</s-option>
+                        <s-option value="Volume Discount">Volume Discount</s-option>
                     </s-select>
 
                     <s-box>
@@ -280,8 +281,10 @@ export default function OffersTable({ offersData = [], currencySymbol = "$" }) {
                     ) : (
                         paginatedOffers.map((offer, index) => {
                             const editUrl =
-                                offer.discountType === "Selected Products"
+                                offer.discountType === "Selected Products" || offer.type === "SELECTED"
                                     ? `/app/offers/selected/edit/${offer.numericId}`
+                                    : offer.discountType === "Volume Discount" || offer.type === "VOLUME"
+                                    ? `/app/offers/volume/edit/${offer.numericId}`
                                     : `/app/offers/paired/edit/${offer.numericId}`;
                             return (
                                 <s-table-row key={offer.id}>
@@ -298,7 +301,13 @@ export default function OffersTable({ offersData = [], currencySymbol = "$" }) {
                                     </s-table-cell>
                                     <s-table-cell>
                                         <s-badge
-                                            tone={offer.discountType === "Paired Products" ? "info" : "warning"}
+                                            tone={
+                                                offer.discountType === "Paired Products"
+                                                    ? "info"
+                                                    : offer.discountType === "Volume Discount"
+                                                    ? "success"
+                                                    : "warning"
+                                            }
                                         >{offer.discountType}</s-badge>
                                     </s-table-cell>
                                     <s-table-cell>

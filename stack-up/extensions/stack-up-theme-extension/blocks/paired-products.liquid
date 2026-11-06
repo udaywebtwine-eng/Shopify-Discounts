@@ -10,9 +10,6 @@
 {% endif %}
 
 {% if is_app_enabled %}
-  {% render 'stack-up-styles' %}
-  {% render 'stack-up-scripts' %}
-
   {% assign custom_settings = shop.metafields.stack_up.paired_widget_settings.value %}
 
   {% comment %} Look up bundle offer for current product {% endcomment %}

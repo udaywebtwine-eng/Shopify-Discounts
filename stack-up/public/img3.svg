@@ -1,0 +1,81 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 450" width="800" height="450">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0a1f14" />
+      <stop offset="100%" stop-color="#05140b" />
+    </linearGradient>
+    <linearGradient id="cardGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#143322" />
+      <stop offset="100%" stop-color="#0c2317" />
+    </linearGradient>
+    <linearGradient id="activeCardGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#1d4830" />
+      <stop offset="100%" stop-color="#113320" />
+    </linearGradient>
+  </defs>
+
+  <!-- Background Canvas -->
+  <rect width="800" height="450" rx="20" fill="url(#bgGrad)" stroke="#1a4d31" stroke-width="2"/>
+
+  <!-- Header Section -->
+  <text x="45" y="60" fill="#ffffff" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="24" font-weight="700">Quantity Breaks Offer</text>
+  
+  <!-- Header Badge -->
+  <rect x="620" y="38" width="135" height="30" rx="15" fill="#a3e635"/>
+  <text x="687" y="58" fill="#0f291e" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="12" font-weight="800" text-anchor="middle">Volume Discount</text>
+
+  <!-- Tier 1 Card -->
+  <g transform="translate(45, 95)">
+    <rect width="215" height="280" rx="14" fill="url(#cardGrad)" stroke="#1f4e34" stroke-width="1.5"/>
+    <circle cx="35" cy="40" r="12" fill="#1b452e" stroke="#2a6645" stroke-width="2"/>
+    <text x="60" y="46" fill="#e2e8f0" font-family="sans-serif" font-size="16" font-weight="700">Buy 1</text>
+    <text x="35" y="80" fill="#94a3b8" font-family="sans-serif" font-size="12">Standard pack</text>
+    
+    <rect x="25" y="105" width="165" height="75" rx="8" fill="#09180e"/>
+    <text x="107" y="140" fill="#ffffff" font-family="sans-serif" font-size="22" font-weight="800" text-anchor="middle">$30.00</text>
+    <text x="107" y="162" fill="#64748b" font-family="sans-serif" font-size="12" text-anchor="middle">Regular Price</text>
+
+    <text x="107" y="225" fill="#94a3b8" font-family="sans-serif" font-size="13" text-anchor="middle">Total: $30.00</text>
+    <rect x="40" y="245" width="135" height="24" rx="12" fill="#1b432e"/>
+    <text x="107" y="261" fill="#86efac" font-family="sans-serif" font-size="11" font-weight="700" text-anchor="middle">0% OFF</text>
+  </g>
+
+  <!-- Tier 2 Card -->
+  <g transform="translate(292, 95)">
+    <rect width="215" height="280" rx="14" fill="url(#cardGrad)" stroke="#1f4e34" stroke-width="1.5"/>
+    <circle cx="35" cy="40" r="12" fill="#1b452e" stroke="#2a6645" stroke-width="2"/>
+    <text x="60" y="46" fill="#e2e8f0" font-family="sans-serif" font-size="16" font-weight="700">Buy 2</text>
+    <text x="35" y="80" fill="#94a3b8" font-family="sans-serif" font-size="12">Save 10% today</text>
+    
+    <rect x="25" y="105" width="165" height="75" rx="8" fill="#09180e"/>
+    <text x="107" y="140" fill="#a3e635" font-family="sans-serif" font-size="22" font-weight="800" text-anchor="middle">$27.00<tspan font-size="12" fill="#94a3b8">/ea</tspan></text>
+    <text x="107" y="162" fill="#64748b" font-family="sans-serif" font-size="12" text-decoration="line-through" text-anchor="middle">$30.00 each</text>
+
+    <text x="107" y="225" fill="#f8fafc" font-family="sans-serif" font-size="14" font-weight="700" text-anchor="middle">Total: $54.00</text>
+    <rect x="40" y="245" width="135" height="24" rx="12" fill="#225237"/>
+    <text x="107" y="261" fill="#4ade80" font-family="sans-serif" font-size="11" font-weight="800" text-anchor="middle">SAVE 10%</text>
+  </g>
+
+  <!-- Tier 3 Card (Active / Most Popular) -->
+  <g transform="translate(540, 95)">
+    <rect width="215" height="280" rx="14" fill="url(#activeCardGrad)" stroke="#4ade80" stroke-width="2"/>
+    
+    <!-- Most Popular Badge Top Banner -->
+    <rect x="45" y="-12" width="125" height="24" rx="12" fill="#4ade80"/>
+    <text x="107" y="4" fill="#052e16" font-family="sans-serif" font-size="11" font-weight="900" text-anchor="middle">MOST POPULAR</text>
+
+    <circle cx="35" cy="40" r="12" fill="#4ade80"/>
+    <circle cx="35" cy="40" r="5" fill="#052e16"/>
+    <text x="60" y="46" fill="#ffffff" font-family="sans-serif" font-size="16" font-weight="800">Buy 3</text>
+    <text x="35" y="80" fill="#a7f3d0" font-family="sans-serif" font-size="12">Save 20% + Best Value</text>
+    
+    <rect x="25" y="105" width="165" height="75" rx="8" fill="#041f12" stroke="#22c55e" stroke-width="1"/>
+    <text x="107" y="140" fill="#4ade80" font-family="sans-serif" font-size="24" font-weight="900" text-anchor="middle">$24.00<tspan font-size="12" fill="#a7f3d0">/ea</tspan></text>
+    <text x="107" y="162" fill="#6ee7b7" font-family="sans-serif" font-size="12" text-decoration="line-through" text-anchor="middle">$30.00 each</text>
+
+    <text x="107" y="225" fill="#ffffff" font-family="sans-serif" font-size="15" font-weight="800" text-anchor="middle">Total: $72.00</text>
+    <rect x="35" y="245" width="145" height="24" rx="12" fill="#15803d"/>
+    <text x="107" y="261" fill="#ffffff" font-family="sans-serif" font-size="11" font-weight="900" text-anchor="middle">SAVE 20% ($18 OFF)</text>
+  </g>
+</svg>
+

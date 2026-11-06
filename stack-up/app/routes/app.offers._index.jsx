@@ -6,6 +6,7 @@ import prisma from "../db.server";
 import { getShopTimezone, formatDateInShopTimezone, computeOfferStatus } from "../utils/timezone";
 import { syncAllActiveOffersToShopMetafield } from "../utils/bundleMetafields.server";
 import { syncAllActiveSelectedOffersToShopMetafield } from "../utils/selectedOffersMetafields.server";
+import { syncAllActiveVolumeOffersToShopMetafield } from "../utils/volumeMetafields.server";
 import { ensureMasterDiscounts, cleanupLegacyDiscounts } from "../utils/masterDiscount.server";
 
 export const loader = async ({ request }) => {
@@ -32,6 +33,7 @@ export const loader = async ({ request }) => {
         cleanupLegacyDiscounts(admin).catch(() => { }),
         syncAllActiveOffersToShopMetafield(admin).catch(() => { }),
         syncAllActiveSelectedOffersToShopMetafield(admin).catch(() => { }),
+        syncAllActiveVolumeOffersToShopMetafield(admin).catch(() => { }),
     ]);
 
     const formattedOffers = dbOffers.map((dbo) => {
@@ -41,9 +43,24 @@ export const loader = async ({ request }) => {
             if (dbo.type === "PAIRED") {
                 mainCount = JSON.parse(dbo.mainProducts || "[]").length;
                 subCount = JSON.parse(dbo.subProducts || "[]").length;
-            } else {
+            } else if (dbo.type === "SELECTED") {
                 mainCount = JSON.parse(dbo.targetProducts || "[]").length;
                 subCount = JSON.parse(dbo.offeredProducts || "[]").length;
+            } else if (dbo.type === "VOLUME") {
+                let prods = [];
+                let tiers = [];
+                if (dbo.volumeProducts) {
+                    prods = JSON.parse(dbo.volumeProducts);
+                } else if (dbo.configuration) {
+                    prods = JSON.parse(dbo.configuration)?.volumeProducts || [];
+                }
+                if (dbo.volumeTiers) {
+                    tiers = JSON.parse(dbo.volumeTiers);
+                } else if (dbo.configuration) {
+                    tiers = JSON.parse(dbo.configuration)?.volumeTiers || [];
+                }
+                mainCount = prods.length;
+                subCount = tiers.length;
             }
         } catch {
             mainCount = 0;
@@ -65,11 +82,26 @@ export const loader = async ({ request }) => {
         }
 
         const isPaired = dbo.type === "PAIRED";
-        const typeLabel = isPaired ? "Frequently Bought" : "Product Add-ons";
-        const typeBadgeTone = isPaired ? "info" : "caution";
+        const isSelected = dbo.type === "SELECTED";
+        const isVolume = dbo.type === "VOLUME";
+
+        const typeLabel = isPaired
+            ? "Frequently Bought"
+            : isSelected
+            ? "Product Add-ons"
+            : "Quantity Breaks";
+
+        const typeBadgeTone = isPaired
+            ? "info"
+            : isSelected
+            ? "caution"
+            : "success";
+
         const productSummary = isPaired
             ? `${mainCount} Main + ${subCount} Sub`
-            : `${mainCount} Target + ${subCount} Add-on`;
+            : isSelected
+            ? `${mainCount} Target + ${subCount} Add-on`
+            : `${mainCount} Product${mainCount === 1 ? "" : "s"} (${subCount} Tiers)`;
 
         return {
             id: dbo.discountId,
@@ -121,10 +153,11 @@ export const action = async ({ request }) => {
                 },
             });
 
-            // Resync both metafields immediately to Shopify to prevent any phantom discounts
+            // Resync all metafields immediately to Shopify to prevent any phantom discounts
             await Promise.all([
                 syncAllActiveOffersToShopMetafield(admin),
                 syncAllActiveSelectedOffersToShopMetafield(admin),
+                syncAllActiveVolumeOffersToShopMetafield(admin),
             ]);
 
             return { success: true };
@@ -198,6 +231,8 @@ export default function AllOffersIndex() {
         } catch { }
         if (offer.type === "SELECTED") {
             navigate(`/app/offers/selected/edit/${offer.numericId}`);
+        } else if (offer.type === "VOLUME") {
+            navigate(`/app/offers/volume/edit/${offer.numericId}`);
         } else {
             navigate(`/app/offers/paired/edit/${offer.numericId}`);
         }
@@ -527,6 +562,7 @@ export default function AllOffersIndex() {
                                 <s-option value="ALL">All Discount Types</s-option>
                                 <s-option value="PAIRED">Frequently Bought</s-option>
                                 <s-option value="SELECTED">Product Add-ons</s-option>
+                                <s-option value="VOLUME">Quantity Breaks</s-option>
                             </s-select>
 
                             <s-box>
@@ -662,6 +698,8 @@ export default function AllOffersIndex() {
                                 paginatedOffers.map((offer) => {
                                     const editUrl = offer.type === "SELECTED"
                                         ? `/app/offers/selected/edit/${offer.numericId}`
+                                        : offer.type === "VOLUME"
+                                        ? `/app/offers/volume/edit/${offer.numericId}`
                                         : `/app/offers/paired/edit/${offer.numericId}`;
 
                                     return (

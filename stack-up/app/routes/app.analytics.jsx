@@ -174,15 +174,43 @@ export const loader = async ({ request }) => {
         b.aov = b.orders > 0 ? b.sales / b.orders : 0;
     });
 
+    // Helper to safely extract products from any offer type
+    const getOfferProductsList = (off) => {
+        try {
+            if (off.type === "PAIRED") {
+                const p1 = JSON.parse(off.mainProducts || "[]");
+                const p2 = JSON.parse(off.subProducts || "[]");
+                return { p1, p2, all: [...p1, ...p2] };
+            }
+            if (off.type === "VOLUME") {
+                let vProds = [];
+                if (off.volumeProducts) {
+                    vProds = JSON.parse(off.volumeProducts);
+                } else if (off.configuration) {
+                    vProds = JSON.parse(off.configuration)?.volumeProducts || [];
+                }
+                return { p1: vProds, p2: [], all: vProds };
+            }
+            // SELECTED
+            const p1 = JSON.parse(off.targetProducts || "[]");
+            const p2 = JSON.parse(off.offeredProducts || off.products || "[]");
+            return { p1, p2, all: [...p1, ...p2] };
+        } catch {
+            return { p1: [], p2: [], all: [] };
+        }
+    };
+
     // 6. Build Offers Comparison for Chart 2 & Table 1
     const offersData = allOffers.map((off) => {
         const offOrders = off.orders || [];
         const ordersCount = offOrders.length || off.usageCount || 0;
         const salesAmount = offOrders.reduce((sum, o) => sum + (o.totalPrice || 0), 0) || off.totalRevenue || 0;
 
-        let discountType = "Frequently Bought";
-        if (off.type === "SELECTED") discountType = "Product Add-ons";
+        let discountType = "Paired Products";
+        if (off.type === "SELECTED") discountType = "Selected Products";
         else if (off.type === "VOLUME") discountType = "Volume Discount";
+
+        const prods = getOfferProductsList(off);
 
         return {
             id: off.id,
@@ -195,25 +223,16 @@ export const loader = async ({ request }) => {
             totalSale: salesAmount,
             cartClicks: 0,
             bundleViews: 0,
-            mainProducts: off.type === "PAIRED" ? off.mainProducts : (off.targetProducts || "[]"),
-            subProducts: off.type === "PAIRED" ? off.subProducts : (off.offeredProducts || "[]"),
+            mainProducts: JSON.stringify(prods.p1),
+            subProducts: JSON.stringify(prods.p2),
         };
     });
 
     // 7. Collect unique product GIDs across all active offers
     const allProdIdsSet = new Set();
     allOffers.forEach((off) => {
-        let p1 = [];
-        let p2 = [];
-        try {
-            p1 = JSON.parse(off.type === "PAIRED" ? (off.mainProducts || "[]") : (off.targetProducts || "[]"));
-            p2 = JSON.parse(off.type === "PAIRED" ? (off.subProducts || "[]") : (off.offeredProducts || "[]"));
-        } catch {
-            p1 = [];
-            p2 = [];
-        }
-
-        [...p1, ...p2].forEach((p) => {
+        const prods = getOfferProductsList(off);
+        prods.all.forEach((p) => {
             if (p && p.id) {
                 const gid = String(p.id).startsWith("gid://shopify/Product/")
                     ? String(p.id)
@@ -321,20 +340,11 @@ export const loader = async ({ request }) => {
     };
 
     allOffers.forEach((off) => {
-        let p1 = [];
-        let p2 = [];
-        try {
-            p1 = JSON.parse(off.type === "PAIRED" ? (off.mainProducts || "[]") : (off.targetProducts || "[]"));
-            p2 = JSON.parse(off.type === "PAIRED" ? (off.subProducts || "[]") : (off.offeredProducts || "[]"));
-        } catch {
-            p1 = [];
-            p2 = [];
-        }
-
+        const prods = getOfferProductsList(off);
         const offOrders = off.orders || [];
         const ordersCount = offOrders.length || off.usageCount || 0;
 
-        [...p1, ...p2].forEach((p) => addProductToMap(p, ordersCount));
+        prods.all.forEach((p) => addProductToMap(p, ordersCount));
     });
 
     const productsList = Object.values(productMap).sort((a, b) => b.totalOrders - a.totalOrders);

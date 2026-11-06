@@ -51,6 +51,8 @@ model Offer {
   subProducts          String?      // For PAIRED: JSON array of { id, title, image, price, quantity, variants }
   targetProducts       String?      // For SELECTED: JSON array of { id, title, handle, image, price }
   offeredProducts      String?      // For SELECTED: JSON array of { id, title, handle, image, price, quantity, variants }
+  volumeProducts       String?      // For VOLUME: JSON array of { id, title, handle, image, price, variants }
+  volumeTiers          String?      // For VOLUME: JSON array of tiers [{ mq: minQty, d: discount, t: type, b: badge, s: subtitle }]
   configuration        String?      // Extensible JSON for future function parameters
 
   // Analytics & performance tracking

@@ -753,7 +753,7 @@
 
   function initStackUpWidgets() {
     const isEmbedActive = checkIsAppEnabled();
-    const widgets = document.querySelectorAll('.stackup-paired-widget, .stackup-addons-widget');
+    const widgets = document.querySelectorAll('.stackup-paired-widget, .stackup-addons-widget, .stackup-volume-widget');
 
     if (!isEmbedActive) {
       widgets.forEach((w) => {

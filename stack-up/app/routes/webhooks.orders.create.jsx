@@ -64,6 +64,7 @@ export const action = async ({ request }) => {
   const orderTime = payload.created_at ? new Date(payload.created_at).getTime() : Date.now();
   const hasMasterSelected = appliedTitles.some((t) => (t.includes("stackup") || t.includes("stack-up")) && t.includes("selected"));
   const hasMasterPaired = appliedTitles.some((t) => (t.includes("stackup") || t.includes("stack-up")) && t.includes("paired"));
+  const hasMasterVolume = appliedTitles.some((t) => ((t.includes("stackup") || t.includes("stack-up")) && (t.includes("volume") || t.includes("quantity"))) || t.includes("volume discount") || t.includes("buy more") || t.includes("quantity break"));
 
   const matchedOffers = [];
 
@@ -101,6 +102,20 @@ export const action = async ({ request }) => {
         } catch {}
       }
       if (pctMatches || prodMatches) matchedOffers.push(off);
+    } else if (off.type === "VOLUME") {
+      let prodMatches = false;
+      if (hasMasterVolume) {
+        try {
+          let vProds = [];
+          if (off.volumeProducts) {
+            vProds = JSON.parse(off.volumeProducts);
+          } else if (off.configuration) {
+            vProds = JSON.parse(off.configuration)?.volumeProducts || [];
+          }
+          prodMatches = vProds.some((p) => p?.id && (orderProductIds.has(String(p.id)) || orderProductIds.has(String(p.id).split("/").pop())));
+        } catch {}
+      }
+      if (prodMatches) matchedOffers.push(off);
     }
   }
 
