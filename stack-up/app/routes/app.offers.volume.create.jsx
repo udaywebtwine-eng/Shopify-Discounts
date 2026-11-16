@@ -52,7 +52,32 @@ export const loader = async ({ request }) => {
     editUrl: `/app/offers/volume/edit/${info.numericId}`,
   }));
 
-  return { shopTimezone, timezoneAbbr, currentTime, shop, usedMainProducts };
+  // Fetch saved widget settings for live preview sync
+  let widgetSettings = null;
+  try {
+    const metaRes = await admin.graphql(
+      `#graphql
+      query GetVolumeWidgetSettings {
+        shop {
+          metafield(namespace: "stack_up", key: "volume_widget_settings") {
+            value
+        }
+      }`
+    );
+    const metaJson = await metaRes.json();
+    const rawVal = metaJson.data?.shop?.metafield?.value;
+    if (rawVal) {
+      try {
+        widgetSettings = JSON.parse(rawVal);
+      } catch (e) {
+        console.warn("[VolumeCreate:Loader] Failed to parse volume_widget_settings:", e);
+      }
+    }
+  } catch (err) {
+    console.warn("[VolumeCreate:Loader] Could not fetch volume_widget_settings:", err);
+  }
+
+  return { shopTimezone, timezoneAbbr, currentTime, shop, usedMainProducts, widgetSettings };
 };
 
 export const action = async ({ request }) => {
@@ -237,7 +262,7 @@ export const action = async ({ request }) => {
 };
 
 export default function VolumeCreate() {
-  const { shopTimezone, timezoneAbbr, currentTime, shop, usedMainProducts } = useLoaderData();
+  const { shopTimezone, timezoneAbbr, currentTime, shop, usedMainProducts, widgetSettings } = useLoaderData();
   const actionData = useActionData();
   const navigation = useNavigation();
   const submit = useSubmit();
@@ -1070,6 +1095,7 @@ export default function VolumeCreate() {
         products={products}
         tiers={tiers}
         shopDomain={shop}
+        widgetSettings={widgetSettings}
       />
     </s-page>
   );

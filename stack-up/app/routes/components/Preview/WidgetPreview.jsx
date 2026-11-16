@@ -65,6 +65,14 @@ export default function WidgetPreview({
     buttonText: widgetSettings?.content?.buttonText || "Add in cart",
   };
 
+  const display = {
+    showWidgetTitle: widgetSettings?.display?.showWidgetTitle !== false,
+    showTotalBox: widgetSettings?.display?.showTotalBox !== false,
+    showPlusIcon: widgetSettings?.display?.showPlusIcon !== false,
+    showSaleBadge: widgetSettings?.display?.showSaleBadge !== false,
+    showAddToCart: widgetSettings?.display?.showAddToCart !== false,
+  };
+
   const discountVal = Math.min(100, Math.max(0, parseFloat(percentage) || 0));
 
   // Active Main Product
@@ -191,20 +199,22 @@ export default function WidgetPreview({
           }}
         >
           {/* Widget Heading */}
-          <div
-            style={{
-              fontSize: "12px",
-              fontWeight: 700,
-              color: "#0f172a",
-              display: "flex",
-              alignItems: "center",
-              gap: "5px",
-              paddingBottom: "1px",
-            }}
-          >
-            <span style={{ fontSize: "11px" }}>✨</span>
-            <span>{content.heading}</span>
-          </div>
+          {display.showWidgetTitle && (
+            <div
+              style={{
+                fontSize: "12px",
+                fontWeight: 700,
+                color: "#0f172a",
+                display: "flex",
+                alignItems: "center",
+                gap: "5px",
+                paddingBottom: "1px",
+              }}
+            >
+              <span style={{ fontSize: "11px" }}>✨</span>
+              <span>{content.heading}</span>
+            </div>
+          )}
 
           {/* Product Stack */}
           <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
@@ -312,7 +322,7 @@ export default function WidgetPreview({
             </div>
 
             {/* Single Plus Separator between Main and Sub Products */}
-            {activeSubs.length > 0 && (
+            {activeSubs.length > 0 && display.showPlusIcon && (
               <div
                 style={{
                   display: "flex",
@@ -459,105 +469,109 @@ export default function WidgetPreview({
           </div>
 
           {/* BUNDLE SUBTOTAL Box */}
-          <div
-            style={{
-              padding: "7px 9px",
-              background: styles.totalBoxBg,
-              border: `1px solid ${styles.totalBoxBorderColor}`,
-              borderRadius: `${Math.max(5, styles.borderRadius - 6)}px`,
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              gap: "4px",
-              marginTop: "2px",
-            }}
-          >
-            <div>
-              <div
-                style={{
-                  fontSize: "9px",
-                  fontWeight: 600,
-                  color: "#64748b",
-                  textTransform: "uppercase",
-                  letterSpacing: "0.04em",
-                }}
-              >
-                BUNDLE SUBTOTAL
-              </div>
-              <div style={{ display: "flex", alignItems: "baseline", gap: "5px", marginTop: "1px" }}>
-                <span style={{ fontSize: "14px", fontWeight: 800, color: "#0f172a" }}>
-                  {formatMoney(finalTotal)}
-                </span>
-                {discountVal > 0 && (
-                  <span
-                    style={{
-                      fontSize: "10px",
-                      color: "#94a3b8",
-                      textDecoration: "line-through",
-                    }}
-                  >
-                    {formatMoney(originalTotal)}
+          {display.showTotalBox && (
+            <div
+              style={{
+                padding: "7px 9px",
+                background: styles.totalBoxBg,
+                border: `1px solid ${styles.totalBoxBorderColor}`,
+                borderRadius: `${Math.max(5, styles.borderRadius - 6)}px`,
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                gap: "4px",
+                marginTop: "2px",
+              }}
+            >
+              <div>
+                <div
+                  style={{
+                    fontSize: "9px",
+                    fontWeight: 600,
+                    color: "#64748b",
+                    textTransform: "uppercase",
+                    letterSpacing: "0.04em",
+                  }}
+                >
+                  BUNDLE SUBTOTAL
+                </div>
+                <div style={{ display: "flex", alignItems: "baseline", gap: "5px", marginTop: "1px" }}>
+                  <span style={{ fontSize: "14px", fontWeight: 800, color: "#0f172a" }}>
+                    {formatMoney(finalTotal)}
                   </span>
-                )}
+                  {discountVal > 0 && (
+                    <span
+                      style={{
+                        fontSize: "10px",
+                        color: "#94a3b8",
+                        textDecoration: "line-through",
+                      }}
+                    >
+                      {formatMoney(originalTotal)}
+                    </span>
+                  )}
+                </div>
               </div>
-            </div>
 
-            {discountVal > 0 && (
-              <span
-                style={{
-                  background: styles.badgeBg,
-                  color: styles.badgeTextColor,
-                  fontSize: "9px",
-                  fontWeight: 700,
-                  padding: "3px 6px",
-                  borderRadius: "12px",
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: "3px",
-                  whiteSpace: "nowrap",
-                }}
-              >
-                <span>⚡</span>
-                <span>
-                  Save {formatMoney(savings)} ({discountVal}% OFF)
+              {discountVal > 0 && display.showSaleBadge && (
+                <span
+                  style={{
+                    background: styles.badgeBg,
+                    color: styles.badgeTextColor,
+                    fontSize: "9px",
+                    fontWeight: 700,
+                    padding: "3px 6px",
+                    borderRadius: "12px",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "3px",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  <span>⚡</span>
+                  <span>
+                    Save {formatMoney(savings)} ({discountVal}% OFF)
+                  </span>
                 </span>
-              </span>
-            )}
-          </div>
+              )}
+            </div>
+          )}
 
           {/* Add to Cart Button */}
-          <button
-            type="button"
-            style={{
-              width: "100%",
-              height: "32px",
-              padding: "0 12px",
-              background: styles.buttonBg,
-              color: styles.buttonTextColor,
-              borderRadius: `${Math.max(6, styles.borderRadius - 4)}px`,
-              border: "none",
-              fontWeight: 700,
-              fontSize: "11px",
-              cursor: "pointer",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: "5px",
-              boxShadow: "0 1px 4px rgba(0, 0, 0, 0.08)",
-              marginTop: "2px",
-            }}
-          >
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z" />
-              <line x1="3" y1="6" x2="21" y2="6" />
-              <path d="M16 10a4 4 0 0 1-8 0" />
-            </svg>
-            <span>
-              {content.buttonText && content.buttonText !== "Add Both to Cart"
-                ? content.buttonText
-                : `Add ${totalItemsCount} items in cart`}
-            </span>
-          </button>
+          {display.showAddToCart && (
+            <button
+              type="button"
+              style={{
+                width: "100%",
+                height: "32px",
+                padding: "0 12px",
+                background: styles.buttonBg,
+                color: styles.buttonTextColor,
+                borderRadius: `${Math.max(6, styles.borderRadius - 4)}px`,
+                border: "none",
+                fontWeight: 700,
+                fontSize: "11px",
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: "5px",
+                boxShadow: "0 1px 4px rgba(0, 0, 0, 0.08)",
+                marginTop: "2px",
+              }}
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z" />
+                <line x1="3" y1="6" x2="21" y2="6" />
+                <path d="M16 10a4 4 0 0 1-8 0" />
+              </svg>
+              <span>
+                {content.buttonText && content.buttonText !== "Add Both to Cart"
+                  ? content.buttonText
+                  : `Add ${totalItemsCount} items in cart`}
+              </span>
+            </button>
+          )}
         </div>
 
         {/* Widget Settings link */}

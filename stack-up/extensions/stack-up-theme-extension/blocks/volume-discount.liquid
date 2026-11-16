@@ -50,6 +50,8 @@
     {% assign badge_color = custom_settings.styles.badgeTextColor | default: '#ffffff' %}
     {% assign btn_bg = custom_settings.styles.buttonBg | default: '#111827' %}
     {% assign btn_color = custom_settings.styles.buttonTextColor | default: '#ffffff' %}
+    {% assign savings_bg = custom_settings.styles.savingsBg | default: '#ecfdf5' %}
+    {% assign savings_color = custom_settings.styles.savingsTextColor | default: '#059669' %}
 
     {% assign show_title = true %}
     {% if custom_settings.display.showWidgetTitle == false %}
@@ -64,6 +66,11 @@
     {% assign show_badge = true %}
     {% if custom_settings.display.showBadge == false %}
       {% assign show_badge = false %}
+    {% endif %}
+
+    {% assign show_savings = true %}
+    {% if custom_settings.display.showSavings == false %}
+      {% assign show_savings = false %}
     {% endif %}
 
     {% assign show_atc = true %}
@@ -84,6 +91,58 @@
     {% assign btn_template = custom_settings.content.buttonText | default: 'Add {quantity} to Cart' %}
     {% assign tiers_list = volume_data.tiers %}
     {% assign base_unit_price = product.selected_or_first_available_variant.price | default: 12540 %}
+
+    {% assign has_explicit_default = false %}
+    {% if is_active %}
+      {% for t in tiers_list %}
+        {% if t.df == true or t.df == 'true' or t.isDefault == true or t.isDefault == 'true' %}
+          {% assign has_explicit_default = true %}
+          {% break %}
+        {% endif %}
+      {% endfor %}
+    {% endif %}
+
+    {% assign default_qty = 1 %}
+    {% assign default_total_price = base_unit_price %}
+    {% assign default_orig_price = base_unit_price %}
+    {% assign default_discount_val = 0 %}
+
+    {% if is_active %}
+      {% for tier in tiers_list %}
+        {% assign is_def = false %}
+        {% if tier.df == true or tier.df == 'true' or tier.isDefault == true or tier.isDefault == 'true' %}
+          {% assign is_def = true %}
+        {% elsif has_explicit_default == false and forloop.first %}
+          {% assign is_def = true %}
+        {% endif %}
+
+        {% if is_def %}
+          {% assign default_qty = tier.mq | default: tier.quantity | default: 1 | times: 1 %}
+          {% assign default_discount_val = tier.d | default: tier.value | default: 0 | times: 1 %}
+          {% assign default_orig_price = base_unit_price | times: default_qty %}
+          {% if default_discount_val > 0 %}
+            {% if tier.t == 'F' or tier.discountType == 'fixed' %}
+              {% assign fixed_c = default_discount_val | times: 100 %}
+              {% assign d_unit = base_unit_price | minus: fixed_c %}
+              {% assign default_total_price = d_unit | times: default_qty %}
+            {% else %}
+              {% assign d_factor = 100 | minus: default_discount_val %}
+              {% assign default_total_price = base_unit_price | times: default_qty | times: d_factor | divided_by: 100 %}
+            {% endif %}
+          {% else %}
+            {% assign default_total_price = default_orig_price %}
+          {% endif %}
+          {% break %}
+        {% endif %}
+      {% endfor %}
+    {% else %}
+      {% assign default_qty = 1 %}
+      {% assign default_total_price = base_unit_price %}
+      {% assign default_orig_price = base_unit_price %}
+      {% assign default_discount_val = 0 %}
+    {% endif %}
+
+    {% assign initial_btn_text = btn_template | replace: '{quantity}', default_qty %}
 
     <div
       class="stackup-volume-widget"
@@ -166,15 +225,18 @@
             {% assign tier_label = tier.s | default: tier.label | default: '' %}
             {% assign tier_badge = tier.b | default: tier.badge | default: '' %}
 
+            {% assign orig_total = base_unit_price | times: qty %}
+
             <div
               class="stackup-volume-tier-card {% if is_default %}active{% endif %}"
               data-is-default="{% if is_default %}true{% else %}false{% endif %}"
               data-qty="{{ qty }}"
               data-discount="{{ discount_val }}"
+              data-orig-price="{{ orig_total }}"
               data-type="{{ tier.t | default: 'P' }}"
               data-unit-price="{{ tier_unit_price }}"
               data-total-price="{{ tier_total_price }}"
-              style="position: relative; display: flex; align-items: center; justify-content: space-between; padding: 16px 18px; border-radius: 12px; border: {% if is_default %}{{ active_border_width }}px solid {{ active_border_color }}{% else %}1px solid {{ border_color }}{% endif %}; background: #ffffff; cursor: pointer; transition: all 0.15s ease;"
+              style="position: relative; display: flex; align-items: center; justify-content: space-between; padding: 16px 18px; border-radius: {{ border_radius | minus: 2 | at_least: 6 }}px; border: {% if is_default %}{{ active_border_width }}px solid {{ active_border_color }}{% else %}{{ active_border_width }}px solid {{ border_color }}{% endif %}; background: #ffffff; cursor: pointer; transition: all 0.15s ease;"
             >
               <!-- Optional Red Ribbon for Badge -->
               {% if show_badge and tier_badge != blank %}
@@ -187,8 +249,10 @@
               <div style="display: flex; align-items: center; gap: 12px;">
                 <div
                   class="stackup-tier-radio"
-                  style="width: 20px; height: 20px; border-radius: 50%; border: {% if is_default %}6px solid {{ active_border_color }}{% else %}2px solid #9ca3af{% endif %}; background: #ffffff; box-sizing: border-box; flex-shrink: 0; transition: border 0.15s ease;"
-                ></div>
+                  style="display: flex !important; align-items: center !important; justify-content: center !important; width: 20px !important; height: 20px !important; min-width: 20px !important; min-height: 20px !important; border-radius: 50% !important; border: {% if is_default %}6px solid {{ active_border_color }}{% else %}2px solid #9ca3af{% endif %} !important; background: #ffffff !important; box-sizing: border-box !important; flex-shrink: 0 !important; transition: border 0.15s ease;"
+                >
+                  <span style="display: block; width: 0; height: 0; visibility: hidden; line-height: 0;">&nbsp;</span>
+                </div>
                 <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
                   <span style="font-size: 15px; font-weight: 700; color: #111827;">
                     {{ tier_title }}
@@ -203,11 +267,10 @@
 
               <!-- Right Side: Total Price + Original Struck Price -->
               <div style="text-align: right;">
-                <div style="font-size: 16px; font-weight: 700; color: #111827; letter-spacing: -0.01em;">
+                <div class="stackup-tier-price" style="font-size: 16px; font-weight: 700; color: #111827; letter-spacing: -0.01em;">
                   {{ tier_total_price | money }}
                 </div>
                 {% if discount_val > 0 %}
-                  {% assign orig_total = base_unit_price | times: qty %}
                   <div style="font-size: 13px; color: #9ca3af; text-decoration: line-through; margin-top: 1px;">
                     {{ orig_total | money }}
                   </div>
@@ -228,32 +291,35 @@
             class="stackup-volume-tier-card active"
             data-qty="1"
             data-discount="0"
+            data-orig-price="{{ mock_p1 }}"
             data-type="P"
             data-unit-price="{{ mock_p1 }}"
             data-total-price="{{ mock_p1 }}"
-            style="position: relative; display: flex; align-items: center; justify-content: space-between; padding: 16px 18px; border-radius: 12px; border: 2px solid #111827; background: #ffffff; cursor: pointer; transition: all 0.15s ease;"
+            style="position: relative; display: flex; align-items: center; justify-content: space-between; padding: 16px 18px; border-radius: {{ border_radius | minus: 2 | at_least: 6 }}px; border: {{ active_border_width }}px solid {{ active_border_color }}; background: #ffffff; cursor: pointer; transition: all 0.15s ease;"
           >
             <div style="display: flex; align-items: center; gap: 12px;">
-              <div class="stackup-tier-radio" style="width: 20px; height: 20px; border-radius: 50%; border: 6px solid #111827; background: #ffffff; box-sizing: border-box; flex-shrink: 0;"></div>
+              <div class="stackup-tier-radio" style="display: flex !important; align-items: center !important; justify-content: center !important; width: 20px !important; height: 20px !important; min-width: 20px !important; min-height: 20px !important; border-radius: 50% !important; border: 6px solid {{ active_border_color }} !important; background: #ffffff !important; box-sizing: border-box !important; flex-shrink: 0 !important;"><span style="display: block; width: 0; height: 0; visibility: hidden; line-height: 0;">&nbsp;</span></div>
               <div style="display: flex; align-items: center; gap: 8px;">
                 <span style="font-size: 15px; font-weight: 700; color: #111827;">Buy 1</span>
                 <span style="background: #f3f4f6; color: #374151; padding: 2px 10px; border-radius: 9999px; font-size: 12px; font-weight: 500;">Standard</span>
               </div>
             </div>
             <div style="text-align: right;">
-              <div style="font-size: 16px; font-weight: 700; color: #111827;">{{ mock_p1 | money }}</div>
+              <div class="stackup-tier-price" style="font-size: 16px; font-weight: 700; color: #111827;">{{ mock_p1 | money }}</div>
             </div>
           </div>
 
           <!-- Option 2: Buy 2 (Save 10%, Most popular ribbon) -->
+          {% assign orig2 = mock_p1 | times: 2 %}
           <div
             class="stackup-volume-tier-card"
             data-qty="2"
             data-discount="10"
+            data-orig-price="{{ orig2 }}"
             data-type="P"
             data-unit-price="{{ mock_p2 }}"
             data-total-price="{{ mock_t2 }}"
-            style="position: relative; display: flex; align-items: center; justify-content: space-between; padding: 16px 18px; border-radius: 12px; border: 1px solid {{ border_color }}; background: #ffffff; cursor: pointer; transition: all 0.15s ease;"
+            style="position: relative; display: flex; align-items: center; justify-content: space-between; padding: 16px 18px; border-radius: {{ border_radius | minus: 2 | at_least: 6 }}px; border: {{ active_border_width }}px solid {{ border_color }}; background: #ffffff; cursor: pointer; transition: all 0.15s ease;"
           >
             {% if show_badge %}
               <div style="position: absolute; top: -10px; right: 18px; background: {{ badge_bg }}; color: {{ badge_color }}; font-size: 11px; font-weight: 700; padding: 2px 10px; border-radius: 4px 4px 0 0; letter-spacing: 0.02em; box-shadow: 0 2px 4px rgba(0, 0, 0, 0.18); z-index: 2;">
@@ -261,39 +327,39 @@
               </div>
             {% endif %}
             <div style="display: flex; align-items: center; gap: 12px;">
-              <div class="stackup-tier-radio" style="width: 20px; height: 20px; border-radius: 50%; border: 2px solid #9ca3af; background: #ffffff; box-sizing: border-box; flex-shrink: 0;"></div>
+              <div class="stackup-tier-radio" style="display: flex !important; align-items: center !important; justify-content: center !important; width: 20px !important; height: 20px !important; min-width: 20px !important; min-height: 20px !important; border-radius: 50% !important; border: 2px solid #9ca3af !important; background: #ffffff !important; box-sizing: border-box !important; flex-shrink: 0 !important;"><span style="display: block; width: 0; height: 0; visibility: hidden; line-height: 0;">&nbsp;</span></div>
               <div style="display: flex; align-items: center; gap: 8px;">
                 <span style="font-size: 15px; font-weight: 700; color: #111827;">Buy 2</span>
                 <span style="background: #f3f4f6; color: #374151; padding: 2px 10px; border-radius: 9999px; font-size: 12px; font-weight: 500;">Save 10%</span>
               </div>
             </div>
             <div style="text-align: right;">
-              <div style="font-size: 16px; font-weight: 700; color: #111827;">{{ mock_t2 | money }}</div>
-              {% assign orig2 = mock_p1 | times: 2 %}
+              <div class="stackup-tier-price" style="font-size: 16px; font-weight: 700; color: #111827;">{{ mock_t2 | money }}</div>
               <div style="font-size: 13px; color: #9ca3af; text-decoration: line-through; margin-top: 1px;">{{ orig2 | money }}</div>
             </div>
           </div>
 
           <!-- Option 3: Buy 3+ (Save 20%) -->
+          {% assign orig3 = mock_p1 | times: 3 %}
           <div
             class="stackup-volume-tier-card"
             data-qty="3"
             data-discount="20"
+            data-orig-price="{{ orig3 }}"
             data-type="P"
             data-unit-price="{{ mock_p3 }}"
             data-total-price="{{ mock_t3 }}"
-            style="position: relative; display: flex; align-items: center; justify-content: space-between; padding: 16px 18px; border-radius: 12px; border: 1px solid {{ border_color }}; background: #ffffff; cursor: pointer; transition: all 0.15s ease;"
+            style="position: relative; display: flex; align-items: center; justify-content: space-between; padding: 16px 18px; border-radius: {{ border_radius | minus: 2 | at_least: 6 }}px; border: {{ active_border_width }}px solid {{ border_color }}; background: #ffffff; cursor: pointer; transition: all 0.15s ease;"
           >
             <div style="display: flex; align-items: center; gap: 12px;">
-              <div class="stackup-tier-radio" style="width: 20px; height: 20px; border-radius: 50%; border: 2px solid #9ca3af; background: #ffffff; box-sizing: border-box; flex-shrink: 0;"></div>
+              <div class="stackup-tier-radio" style="display: flex !important; align-items: center !important; justify-content: center !important; width: 20px !important; height: 20px !important; min-width: 20px !important; min-height: 20px !important; border-radius: 50% !important; border: 2px solid #9ca3af !important; background: #ffffff !important; box-sizing: border-box !important; flex-shrink: 0 !important;"><span style="display: block; width: 0; height: 0; visibility: hidden; line-height: 0;">&nbsp;</span></div>
               <div style="display: flex; align-items: center; gap: 8px;">
                 <span style="font-size: 15px; font-weight: 700; color: #111827;">Buy 3+</span>
                 <span style="background: #f3f4f6; color: #374151; padding: 2px 10px; border-radius: 9999px; font-size: 12px; font-weight: 500;">Save 20%</span>
               </div>
             </div>
             <div style="text-align: right;">
-              <div style="font-size: 16px; font-weight: 700; color: #111827;">{{ mock_t3 | money }}</div>
-              {% assign orig3 = mock_p1 | times: 3 %}
+              <div class="stackup-tier-price" style="font-size: 16px; font-weight: 700; color: #111827;">{{ mock_t3 | money }}</div>
               <div style="font-size: 13px; color: #9ca3af; text-decoration: line-through; margin-top: 1px;">{{ orig3 | money }}</div>
             </div>
           </div>
@@ -324,7 +390,7 @@
                 <path d="M16 10a4 4 0 0 1-8 0"></path>
               </svg>
             </span>
-            <span class="stackup-atc-text">Add to Cart</span>
+            <span class="stackup-atc-text">{{ initial_btn_text }} • {{ default_total_price | money }}</span>
             <span class="stackup-btn-spinner" style="display: none; align-items: center;">
               <svg
                 class="stackup-spin"
@@ -354,6 +420,19 @@
           <span class="stackup-volume-alert-text">Could not add items to cart. Please try again.</span>
         </div>
       {% endif %}
+
+      <!-- Total Savings Banner -->
+      {% if show_savings %}
+        {% assign default_savings = default_orig_price | minus: default_total_price %}
+        <div
+          class="stackup-volume-savings-banner"
+          style="{% if default_savings > 0 and default_discount_val > 0 %}display: flex;{% else %}display: none;{% endif %} margin-top: 8px; padding: 6px 8px; background: {{ savings_bg }}; border-radius: 6px; text-align: center; font-size: 11px; font-weight: 700; color: {{ savings_color }}; align-items: center; justify-content: center; gap: 4px;"
+        >
+          <span>🎉 Total Savings:</span>
+          <span class="stackup-volume-savings-amount">{% if default_savings > 0 %}{{ default_savings | money }}{% endif %}</span>
+          <span class="stackup-volume-savings-pct">{% if default_discount_val > 0 %}({{ default_discount_val }}% OFF){% endif %}</span>
+        </div>
+      {% endif %}
     </div>
 
     <script>
@@ -368,6 +447,9 @@
         const btnSpinner = widget.querySelector(".stackup-btn-spinner");
         const stockAlert = widget.querySelector(".stackup-volume-stock-alert");
         const alertText = widget.querySelector(".stackup-volume-alert-text");
+        const savingsBanner = widget.querySelector(".stackup-volume-savings-banner");
+        const savingsAmount = widget.querySelector(".stackup-volume-savings-amount");
+        const savingsPct = widget.querySelector(".stackup-volume-savings-pct");
         const btnTemplate = widget.getAttribute("data-btn-template") || "Add {quantity} to Cart";
         const activeBorder = widget.getAttribute("data-active-border") || "#111827";
         const activeWidth = widget.getAttribute("data-active-border-width") || "2";
@@ -382,16 +464,47 @@
 
           cards.forEach(c => {
             const isSel = c === activeCard;
-            c.style.border = isSel ? (activeWidth + "px solid " + activeBorder) : ("1px solid " + normalBorder);
+            c.style.setProperty("border", isSel ? (activeWidth + "px solid " + activeBorder) : (activeWidth + "px solid " + normalBorder), "important");
             const radio = c.querySelector(".stackup-tier-radio");
             if (radio) {
-              radio.style.border = isSel ? ("6px solid " + activeBorder) : "2px solid #9ca3af";
+              radio.style.setProperty("border", isSel ? ("6px solid " + activeBorder) : "2px solid #9ca3af", "important");
+              radio.style.setProperty("display", "flex", "important");
+              radio.style.setProperty("width", "20px", "important");
+              radio.style.setProperty("height", "20px", "important");
+              radio.style.setProperty("min-width", "20px", "important");
+              radio.style.setProperty("min-height", "20px", "important");
+              radio.style.setProperty("border-radius", "50%", "important");
+              radio.style.setProperty("background", "#ffffff", "important");
+              radio.style.setProperty("box-sizing", "border-box", "important");
+              radio.style.setProperty("flex-shrink", "0", "important");
             }
           });
 
           const qty = activeCard.getAttribute("data-qty") || "1";
+          const priceSpan = activeCard.querySelector(".stackup-tier-price");
+          const formattedPrice = priceSpan ? priceSpan.textContent.trim() : "";
+
           if (atcText) {
-            atcText.textContent = btnTemplate.replace("{quantity}", qty);
+            const baseTxt = btnTemplate.replace(/\{quantity\}/gi, qty);
+            atcText.textContent = formattedPrice ? `${baseTxt} • ${formattedPrice}` : baseTxt;
+          }
+
+          // Dynamic Savings Banner
+          if (savingsBanner) {
+            const discountVal = parseFloat(activeCard.getAttribute("data-discount") || "0");
+            const origPrice = parseFloat(activeCard.getAttribute("data-orig-price") || "0");
+            const totalPrice = parseFloat(activeCard.getAttribute("data-total-price") || "0");
+            const savedCents = Math.max(0, origPrice - totalPrice);
+
+            if (savedCents > 0 && discountVal > 0) {
+              const currencyPrefix = (formattedPrice.match(/^[^0-9]+/) || ["$"])[0];
+              const savedFmt = currencyPrefix + (savedCents / 100).toFixed(2);
+              if (savingsAmount) savingsAmount.textContent = savedFmt;
+              if (savingsPct) savingsPct.textContent = `(${Math.round(discountVal)}% OFF)`;
+              savingsBanner.style.setProperty("display", "flex", "important");
+            } else {
+              savingsBanner.style.setProperty("display", "none", "important");
+            }
           }
 
           // Sync with theme quantity input if present on the page
@@ -466,7 +579,14 @@
           });
         }
 
-        updateUI();
+        // Initialize UI
+        if (document.readyState === "loading") {
+          document.addEventListener("DOMContentLoaded", updateUI);
+        } else {
+          updateUI();
+        }
+        window.addEventListener("load", updateUI);
+        document.addEventListener("shopify:section:load", updateUI);
       })();
     </script>
   {% endif %}

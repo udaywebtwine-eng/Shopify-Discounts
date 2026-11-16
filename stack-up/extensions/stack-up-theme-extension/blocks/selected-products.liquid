@@ -97,6 +97,11 @@
       {% assign show_badge = false %}
     {% endif %}
 
+    {% assign show_atc = true %}
+    {% if custom_settings.display.showAddToCart == false %}
+      {% assign show_atc = false %}
+    {% endif %}
+
     {% assign check_default = custom_settings.display.checkByDefault %}
     {% if check_default == null %}
       {% assign check_default = true %}
@@ -457,46 +462,48 @@
         <span class="stackup-addons-alert-text">This product is out of stock, not available</span>
       </div>
 
-      <!-- 1-Click Action Button -->
-      <button
-        type="button"
-        class="stackup-addons-add-btn"
-        data-main-variant="{{ main_variant.id | default: 'preview' }}"
-      >
-        <span class="stackup-addons-btn-icon">
-          <svg
-            width="18"
-            height="18"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-          >
-            <path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"></path>
-            <line x1="3" y1="6" x2="21" y2="6"></line>
-            <path d="M16 10a4 4 0 0 1-8 0"></path>
-          </svg>
-        </span>
-        <span class="stackup-addons-btn-text">
-          {{ button_text | default: 'Add to Cart with Add-Ons' }}
-        </span>
-        <span class="stackup-addons-btn-spinner" style="display: none;">
-          <svg
-            class="stackup-spin"
-            width="16"
-            height="16"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2.5"
-          >
-            <circle cx="12" cy="12" r="10" stroke-opacity="0.25"></circle>
-            <path d="M12 2a10 10 0 0 1 10 10" stroke-linecap="round"></path>
-          </svg>
-        </span>
-      </button>
+      {% if show_atc %}
+        <!-- 1-Click Action Button -->
+        <button
+          type="button"
+          class="stackup-addons-add-btn"
+          data-main-variant="{{ main_variant.id | default: 'preview' }}"
+        >
+          <span class="stackup-addons-btn-icon">
+            <svg
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"></path>
+              <line x1="3" y1="6" x2="21" y2="6"></line>
+              <path d="M16 10a4 4 0 0 1-8 0"></path>
+            </svg>
+          </span>
+          <span class="stackup-addons-btn-text">
+            {{ button_text | default: 'Add to Cart with Add-Ons' }}
+          </span>
+          <span class="stackup-addons-btn-spinner" style="display: none;">
+            <svg
+              class="stackup-spin"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2.5"
+            >
+              <circle cx="12" cy="12" r="10" stroke-opacity="0.25"></circle>
+              <path d="M12 2a10 10 0 0 1 10 10" stroke-linecap="round"></path>
+            </svg>
+          </span>
+        </button>
+      {% endif %}
     </div>
   {% endif %}
 {% endif %}

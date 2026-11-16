@@ -27,6 +27,7 @@ const DEFAULT_SETTINGS = {
     showTotalBox: true,
     showPlusIcon: true,
     showSaleBadge: true,
+    showAddToCart: true,
   },
 };
 
@@ -485,6 +486,12 @@ export default function PairedProductsCustomize() {
                     checked={Boolean(display.showSaleBadge)}
                     onChange={(e) => setDisplay({ ...display, showSaleBadge: e.target.checked })}
                   ></s-checkbox>
+
+                  <s-checkbox
+                    label="Show Add to Cart button inside widget"
+                    checked={Boolean(display.showAddToCart !== false)}
+                    onChange={(e) => setDisplay({ ...display, showAddToCart: e.target.checked })}
+                  ></s-checkbox>
                 </s-grid>
               </>
             )}
@@ -797,34 +804,36 @@ export default function PairedProductsCustomize() {
                 )}
 
                 {/* Primary Add to Cart Action */}
-                <button
-                  type="button"
-                  style={{
-                    width: "100%",
-                    marginTop: "14px",
-                    padding: "14px 20px",
-                    background: styles.buttonBg,
-                    color: styles.buttonTextColor,
-                    borderRadius: `${styles.borderRadius}px`,
-                    border: "none",
-                    fontWeight: 700,
-                    fontSize: "15px",
-                    cursor: "pointer",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    gap: "8px",
-                    boxShadow: "0 4px 12px rgba(0,0,0,0.12)",
-                    transition: "all 0.15s ease",
-                  }}
-                >
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z" />
-                    <line x1="3" y1="6" x2="21" y2="6" />
-                    <path d="M16 10a4 4 0 0 1-8 0" />
-                  </svg>
-                  <span>{content.buttonText || "Add Both to Cart"}</span>
-                </button>
+                {display.showAddToCart !== false && (
+                  <button
+                    type="button"
+                    style={{
+                      width: "100%",
+                      marginTop: "14px",
+                      padding: "14px 20px",
+                      background: styles.buttonBg,
+                      color: styles.buttonTextColor,
+                      borderRadius: `${styles.borderRadius}px`,
+                      border: "none",
+                      fontWeight: 700,
+                      fontSize: "15px",
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      gap: "8px",
+                      boxShadow: "0 4px 12px rgba(0,0,0,0.12)",
+                      transition: "all 0.15s ease",
+                    }}
+                  >
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z" />
+                      <line x1="3" y1="6" x2="21" y2="6" />
+                      <path d="M16 10a4 4 0 0 1-8 0" />
+                    </svg>
+                    <span>{content.buttonText || "Add Both to Cart"}</span>
+                  </button>
+                )}
               </div>
 
               {/* Helper Footer Note */}

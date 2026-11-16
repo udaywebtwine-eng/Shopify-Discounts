@@ -418,6 +418,28 @@ html:has([data-stackup-embed-active]) .stackup-addons-widget,
   transform: none !important;
 }
 
+/* Volume Discounts Tier Radio Button */
+.stackup-tier-radio {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 20px !important;
+  height: 20px !important;
+  min-width: 20px !important;
+  min-height: 20px !important;
+  border-radius: 50% !important;
+  background: #ffffff !important;
+  box-sizing: border-box !important;
+  flex-shrink: 0 !important;
+  position: relative !important;
+  margin: 0 !important;
+  padding: 0 !important;
+}
+
+.stackup-tier-radio:empty {
+  display: flex !important;
+}
+
 /* Stock Badges & Out of Stock States */
 .stackup-item-title-wrap {
   display: flex;

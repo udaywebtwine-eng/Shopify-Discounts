@@ -29,6 +29,7 @@ const DEFAULT_SETTINGS = {
     showSaleBadge: true,
     showTotalBox: true,
     checkByDefault: true,
+    showAddToCart: true,
   },
 };
 
@@ -489,6 +490,12 @@ export default function SelectedProductsCustomize() {
                     label="Check add-on items by default"
                     checked={Boolean(display.checkByDefault)}
                     onChange={(e) => setDisplay({ ...display, checkByDefault: e.target.checked })}
+                  ></s-checkbox>
+
+                  <s-checkbox
+                    label="Show Add to Cart button inside widget"
+                    checked={Boolean(display.showAddToCart !== false)}
+                    onChange={(e) => setDisplay({ ...display, showAddToCart: e.target.checked })}
                   ></s-checkbox>
                 </s-grid>
               </>

@@ -67,6 +67,7 @@ export default function SelectedWidgetPreview({
     showSaleBadge: widgetSettings?.display?.showSaleBadge !== false,
     showTotalBox: widgetSettings?.display?.showTotalBox !== false,
     checkByDefault: widgetSettings?.display?.checkByDefault !== false,
+    showAddToCart: widgetSettings?.display?.showAddToCart !== false,
   };
 
   const currentTarget = targetProducts[selectedTargetIndex] || targetProducts[0] || {
@@ -398,34 +399,36 @@ export default function SelectedWidgetPreview({
       )}
 
       {/* Add to Cart Button */}
-      <button
-        type="button"
-        style={{
-          width: "100%",
-          height: "32px",
-          padding: "0 12px",
-          background: styles.buttonBg,
-          color: styles.buttonTextColor,
-          borderRadius: `${Math.max(6, styles.borderRadius - 4)}px`,
-          border: "none",
-          fontWeight: 700,
-          fontSize: "11px",
-          cursor: "pointer",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          gap: "5px",
-          boxShadow: "0 1px 4px rgba(0, 0, 0, 0.08)",
-          marginTop: "2px",
-        }}
-      >
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z" />
-          <line x1="3" y1="6" x2="21" y2="6" />
-          <path d="M16 10a4 4 0 0 1-8 0" />
-        </svg>
-        <span>{content.buttonText || "Add to Cart with Add-Ons"}</span>
-      </button>
+      {display.showAddToCart && (
+        <button
+          type="button"
+          style={{
+            width: "100%",
+            height: "32px",
+            padding: "0 12px",
+            background: styles.buttonBg,
+            color: styles.buttonTextColor,
+            borderRadius: `${Math.max(6, styles.borderRadius - 4)}px`,
+            border: "none",
+            fontWeight: 700,
+            fontSize: "11px",
+            cursor: "pointer",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: "5px",
+            boxShadow: "0 1px 4px rgba(0, 0, 0, 0.08)",
+            marginTop: "2px",
+          }}
+        >
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z" />
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <path d="M16 10a4 4 0 0 1-8 0" />
+          </svg>
+          <span>{content.buttonText || "Add to Cart with Add-Ons"}</span>
+        </button>
+      )}
     </div>
   );
 

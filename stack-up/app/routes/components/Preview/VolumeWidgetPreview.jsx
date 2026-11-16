@@ -281,7 +281,7 @@ export default function VolumeWidgetPreview({
                 borderRadius: `${Math.max(6, styles.borderRadius - 2)}px`,
                 border: isSelected
                   ? `${styles.activeBorderWidth}px solid ${styles.activeBorderColor}`
-                  : `1px solid ${styles.borderColor}`,
+                  : `${styles.activeBorderWidth}px solid ${styles.borderColor}`,
                 background: "#ffffff",
                 cursor: "pointer",
                 transition: "all 0.15s ease",
