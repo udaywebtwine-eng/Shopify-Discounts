@@ -1094,197 +1094,143 @@ export default function VolumeEdit() {
           {/* Section: Discount options */}
           <s-section heading="Discount options">
             <s-stack gap="base">
-              <div>
+              <s-box borderRadius="base" border="base" background="base">
                 {tiers.map((tier, idx) => {
                   const isExpanded = Boolean(expandedIndices[idx]);
                   return (
-                    <div
-                      key={idx}
-                      style={{
-                        background: "#f6f6f7",
-                        border: "1px solid #e1e3e5",
-                        borderRadius: "12px",
-                        marginBottom: "12px",
-                        overflow: "hidden",
-                        transition: "all 0.15s ease",
-                      }}
-                    >
-                      {/* Header: Clickable to expand/collapse */}
-                      <div
+                    <s-box key={idx}>
+                      {idx > 0 && <s-divider color="strong" />}
+
+                      {/* Header Row */}
+                      <s-clickable
                         onClick={() => toggleAccordion(idx)}
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "space-between",
-                          padding: "14px 18px",
-                          cursor: "pointer",
-                          userSelect: "none",
-                        }}
+                        accessibilityLabel={`Toggle Option ${idx + 1}`}
+                        padding="base"
                       >
-                        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-                          <span style={{ fontSize: "12px", color: "#475569", display: "flex", alignItems: "center" }}>
-                            {isExpanded ? (
-                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                                <polyline points="18 15 12 9 6 15" />
-                              </svg>
-                            ) : (
-                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                                <polyline points="6 9 12 15 18 9" />
-                              </svg>
+                        <s-stack direction="inline" gap="small" alignItems="center" justifyContent="space-between">
+                          <s-stack direction="inline" gap="small-300" alignItems="center">
+                            <s-icon type={isExpanded ? "chevron-up" : "chevron-down"} />
+                            <s-text weight="bold" size="small">
+                              Option {idx + 1}
+                            </s-text>
+                            {tier.isDefault && (
+                              <s-badge tone="info">Default</s-badge>
                             )}
-                          </span>
-                          <span
-                            style={{
-                              fontSize: "13px",
-                              fontWeight: 700,
-                              letterSpacing: "0.05em",
-                              color: "#111827",
-                              textTransform: "uppercase",
+                          </s-stack>
+                          <s-button
+                            accessibilityLabel={`Remove Option ${idx + 1}`}
+                            variant="primary"
+                            tone="critical"
+                            icon="delete"
+                            disabled={tiers.length <= 1 ? "true" : undefined}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleRemoveTier(idx);
                             }}
-                          >
-                            OPTION {idx + 1}
-                          </span>
-                        </div>
+                          />
+                        </s-stack>
+                      </s-clickable>
+                      {/* Collapsible Content */}
+                      <s-box
+                        padding="base"
+                        paddingBlockStart="none"
+                        display={isExpanded ? "auto" : "none"}
+                      >
+                        <s-box paddingBlockStart="small">
+                          <s-box padding="base" background="subdued" borderRadius="base">
+                            <s-stack gap="base">
+                              {/* Row 1: Quantity, Discount type, Value */}
+                              <s-grid gridTemplateColumns="1fr 1fr 1fr" gap="base">
+                                <s-number-field
+                                  label="Quantity"
+                                  min="1"
+                                  step="1"
+                                  value={String(tier.quantity || tier.mq || 1)}
+                                  onInput={(e) => handleUpdateTier(idx, "quantity", parseInt(e.target.value, 10) || 1)}
+                                ></s-number-field>
 
-                        <s-button
-                          type="button"
-                          variant="primary"
-                          tone="critical"
-                          icon="delete"
-                          accessibilityLabel={`Remove Option ${idx + 1}`}
-                          disabled={tiers.length <= 1 ? "true" : undefined}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleRemoveTier(idx);
-                          }}
-                        />
-                      </div>
+                                <s-select
+                                  label="Discount type"
+                                  value={tier.discountType || (tier.t === "F" ? "fixed" : (tier.d === 0 || tier.t === "N" ? "none" : "percent"))}
+                                  onChange={(e) => {
+                                    const newType = e.target.value;
+                                    handleUpdateTier(idx, "discountType", newType);
+                                    if (newType === "none") {
+                                      handleUpdateTier(idx, "value", 0);
+                                      handleUpdateTier(idx, "d", 0);
+                                      handleUpdateTier(idx, "t", "N");
+                                    } else if (newType === "fixed") {
+                                      handleUpdateTier(idx, "t", "F");
+                                    } else {
+                                      handleUpdateTier(idx, "t", "P");
+                                    }
+                                  }}
+                                >
+                                  <s-option value="none">No discount</s-option>
+                                  <s-option value="percent">% discount</s-option>
+                                  <s-option value="fixed">Fixed amount discount</s-option>
+                                </s-select>
 
-                      {/* Expanded Content */}
-                      {isExpanded && (
-                        <div
-                          style={{
-                            padding: "0 18px 18px 18px",
-                            display: "flex",
-                            flexDirection: "column",
-                            gap: "14px",
-                            borderTop: "1px solid #e5e7eb",
-                            paddingTop: "16px",
-                          }}
-                        >
-                          {/* Row 1: Quantity, Discount type, Value */}
-                          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "14px" }}>
-                            <s-number-field
-                              label="Quantity"
-                              min="1"
-                              step="1"
-                              value={String(tier.quantity || tier.mq || 1)}
-                              onInput={(e) => handleUpdateTier(idx, "quantity", parseInt(e.target.value, 10) || 1)}
-                            ></s-number-field>
+                                <s-number-field
+                                  label="Value"
+                                  min="0"
+                                  max={tier.discountType === "percent" ? "100" : undefined}
+                                  step="1"
+                                  value={String(tier.value ?? tier.d ?? 0)}
+                                  disabled={tier.discountType === "none" ? "true" : undefined}
+                                  onInput={(e) => {
+                                    const val = parseFloat(e.target.value) || 0;
+                                    handleUpdateTier(idx, "value", val);
+                                    handleUpdateTier(idx, "d", val);
+                                  }}
+                                ></s-number-field>
+                              </s-grid>
 
-                            <s-select
-                              label="Discount type"
-                              value={tier.discountType || (tier.t === "F" ? "fixed" : (tier.d === 0 || tier.t === "N" ? "none" : "percent"))}
-                              onChange={(e) => {
-                                const newType = e.target.value;
-                                handleUpdateTier(idx, "discountType", newType);
-                                if (newType === "none") {
-                                  handleUpdateTier(idx, "value", 0);
-                                  handleUpdateTier(idx, "d", 0);
-                                  handleUpdateTier(idx, "t", "N");
-                                } else if (newType === "fixed") {
-                                  handleUpdateTier(idx, "t", "F");
-                                } else {
-                                  handleUpdateTier(idx, "t", "P");
-                                }
-                              }}
-                            >
-                              <s-option value="none">No discount</s-option>
-                              <s-option value="percent">% discount</s-option>
-                              <s-option value="fixed">Fixed amount discount</s-option>
-                            </s-select>
+                              {/* Row 2: Title, Label, Badge */}
+                              <s-grid gridTemplateColumns="1fr 1fr 1fr" gap="base">
+                                <s-text-field
+                                  label="Title"
+                                  placeholder="Buy {quantity}"
+                                  value={tier.title || `Buy {quantity}`}
+                                  onInput={(e) => handleUpdateTier(idx, "title", e.target.value)}
+                                ></s-text-field>
 
-                            <s-number-field
-                              label="Value"
-                              min="0"
-                              max={tier.discountType === "percent" ? "100" : undefined}
-                              step="1"
-                              value={String(tier.value ?? tier.d ?? 0)}
-                              disabled={tier.discountType === "none" ? "true" : undefined}
-                              onInput={(e) => {
-                                const val = parseFloat(e.target.value) || 0;
-                                handleUpdateTier(idx, "value", val);
-                                handleUpdateTier(idx, "d", val);
-                              }}
-                            ></s-number-field>
-                          </div>
+                                <s-text-field
+                                  label="Label"
+                                  placeholder="Standard"
+                                  value={tier.label ?? tier.s ?? ""}
+                                  onInput={(e) => {
+                                    handleUpdateTier(idx, "label", e.target.value);
+                                    handleUpdateTier(idx, "s", e.target.value);
+                                  }}
+                                ></s-text-field>
 
-                          {/* Row 2: Title, Label, Badge */}
-                          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "14px" }}>
-                            <s-text-field
-                              label="Title"
-                              placeholder="Buy {quantity}"
-                              value={tier.title || `Buy {quantity}`}
-                              onInput={(e) => handleUpdateTier(idx, "title", e.target.value)}
-                            ></s-text-field>
+                                <s-text-field
+                                  label="Badge"
+                                  placeholder="e.g. Most popular"
+                                  value={tier.badge ?? tier.b ?? ""}
+                                  onInput={(e) => {
+                                    handleUpdateTier(idx, "badge", e.target.value);
+                                    handleUpdateTier(idx, "b", e.target.value);
+                                  }}
+                                ></s-text-field>
+                              </s-grid>
 
-                            <s-text-field
-                              label="Label"
-                              placeholder="Standard"
-                              value={tier.label ?? tier.s ?? ""}
-                              onInput={(e) => {
-                                handleUpdateTier(idx, "label", e.target.value);
-                                handleUpdateTier(idx, "s", e.target.value);
-                              }}
-                            ></s-text-field>
-
-                            <s-text-field
-                              label="Badge"
-                              placeholder="e.g. Most popular"
-                              value={tier.badge ?? tier.b ?? ""}
-                              onInput={(e) => {
-                                handleUpdateTier(idx, "badge", e.target.value);
-                                handleUpdateTier(idx, "b", e.target.value);
-                              }}
-                            ></s-text-field>
-                          </div>
-
-                          {/* Row 3: Selected by default checkbox */}
-                          <div style={{ display: "flex", alignItems: "center", gap: "8px", marginTop: "4px" }}>
-                            <input
-                              type="checkbox"
-                              id={`tier-default-${idx}`}
-                              checked={Boolean(tier.isDefault)}
-                              onChange={(e) => handleSetDefaultTier(idx, e.target.checked)}
-                              style={{ width: "16px", height: "16px", accentColor: "#0f172a", cursor: "pointer" }}
-                            />
-                            <label
-                              htmlFor={`tier-default-${idx}`}
-                              style={{
-                                fontSize: "13px",
-                                fontWeight: 500,
-                                color: "#1e293b",
-                                cursor: "pointer",
-                                display: "flex",
-                                alignItems: "center",
-                                gap: "5px",
-                              }}
-                            >
-                              Selected by default
-                              <span
-                                title="When customers view the product page, this tier option will be pre-selected."
-                                style={{ color: "#64748b", cursor: "help", fontSize: "14px" }}
-                              >
-                                ⓘ
-                              </span>
-                            </label>
-                          </div>
-                        </div>
-                      )}
-                    </div>
+                              {/* Row 3: Selected by default checkbox */}
+                              <s-checkbox
+                                label="Selected by default"
+                                checked={Boolean(tier.isDefault)}
+                                onChange={(e) => handleSetDefaultTier(idx, e.target.checked)}
+                                details="When customers view the product page, this tier option will be pre-selected."
+                              />
+                            </s-stack>
+                          </s-box>
+                        </s-box>
+                      </s-box>
+                    </s-box>
                   );
                 })}
-              </div>
+              </s-box>
 
               <div>
                 <s-button type="button" onClick={handleAddTier} variant="secondary">
