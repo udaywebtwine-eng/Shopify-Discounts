@@ -215,7 +215,7 @@ export async function syncAllActiveVolumeOffersToShopMetafield(admin) {
       }
     }
 
-    const productMetafieldsToSet = [];
+    const productMetafieldMap = new Map();
     const activeProductGids = new Set();
 
     // 3. Prepare product-level metafields for active offers
@@ -247,15 +247,17 @@ export async function syncAllActiveVolumeOffersToShopMetafield(admin) {
         if (!productGid) continue;
 
         activeProductGids.add(productGid);
-        productMetafieldsToSet.push({
-          ownerId: productGid,
-          namespace: "stack_up",
-          key: "volume_tiers",
-          type: "json",
-          value: payloadJson,
-        });
+        productMetafieldMap.set(productGid, payloadJson);
       }
     }
+
+    const productMetafieldsToSet = Array.from(productMetafieldMap.entries()).map(([ownerId, value]) => ({
+      ownerId,
+      namespace: "stack_up",
+      key: "volume_tiers",
+      type: "json",
+      value,
+    }));
 
     // 4. Automatically clean up any products from expired/inactive offers
     // that are NOT part of any other active offer

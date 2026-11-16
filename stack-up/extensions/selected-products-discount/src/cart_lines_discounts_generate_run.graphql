@@ -22,6 +22,9 @@ query CartInput {
           id
           product {
             id
+            selectedOffers: metafield(namespace: "stack_up", key: "selected_offers") {
+              value
+            }
           }
         }
       }

@@ -21,7 +21,12 @@ import {
     computeOfferStatus,
     setShopTimezoneCache,
 } from "../utils/timezone";
-import { syncAllActiveSelectedOffersToShopMetafield } from "../utils/selectedOffersMetafields.server";
+import {
+    syncAllActiveSelectedOffersToShopMetafield,
+    removeSelectedMetafieldFromProducts,
+    getSelectedTargetProductsFromOffer,
+    toProductGid,
+} from "../utils/selectedOffersMetafields.server";
 import { getActiveMainProductsMap, checkMainProductConflicts } from "../utils/productConflicts.server";
 import { syncRecentOrdersFromShopify } from "../utils/orders.server";
 import SelectedWidgetPreview from "./components/Preview/SelectedWidgetPreview";
@@ -268,6 +273,13 @@ export const action = async ({ request, params }) => {
     // Deactivate offer
     if (intent === "deactivate") {
         try {
+            const existing = await prisma.offer.findFirst({ where: offerWhere });
+            if (existing) {
+                const targets = getSelectedTargetProductsFromOffer(existing);
+                if (targets.length > 0) {
+                    await removeSelectedMetafieldFromProducts(admin, targets.map((p) => p.id));
+                }
+            }
             await prisma.offer.updateMany({
                 where: offerWhere,
                 data: { status: "EXPIRED" },
@@ -296,6 +308,13 @@ export const action = async ({ request, params }) => {
     // Delete offer
     if (intent === "delete") {
         try {
+            const existing = await prisma.offer.findFirst({ where: offerWhere });
+            if (existing) {
+                const targets = getSelectedTargetProductsFromOffer(existing);
+                if (targets.length > 0) {
+                    await removeSelectedMetafieldFromProducts(admin, targets.map((p) => p.id));
+                }
+            }
             await prisma.offer.deleteMany({
                 where: offerWhere,
             });
@@ -409,6 +428,16 @@ export const action = async ({ request, params }) => {
         const effectiveEndsAt = hasEndDate && endsAtDate ? dateToShopISO(endsAtDate, endsAtTime, shopTimezone) : null;
 
         try {
+            const existing = await prisma.offer.findFirst({ where: offerWhere });
+            if (existing) {
+                const oldTargets = getSelectedTargetProductsFromOffer(existing);
+                const newTargetGids = new Set(sanitizedTargetProducts.map((p) => toProductGid(p.id)));
+                const removedGids = oldTargets.map((p) => toProductGid(p.id)).filter((gid) => !newTargetGids.has(gid));
+                if (removedGids.length > 0) {
+                    await removeSelectedMetafieldFromProducts(admin, removedGids);
+                }
+            }
+
             await prisma.offer.updateMany({
                 where: offerWhere,
                 data: {

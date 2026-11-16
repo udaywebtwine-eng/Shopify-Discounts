@@ -3,13 +3,38 @@ import {
 } from '../generated/api';
 
 /**
+ * ============================================================================
+ * STACKUP SELECTED PRODUCTS / SPECIAL ADD-ONS ENGINE (SHARDED ARCHITECTURE)
+ * ============================================================================
+ * 
+ * Evaluates companion add-on discounts at checkout:
+ * - When the Target / Main Product is in the cart,
+ * - Any qualifying Recommended Add-On items in the cart receive the discount.
+ * 
+ * SCHEMA DICTIONARY (Reused across StackUp):
+ * ----------------------------------------------------------------------------
+ * id    -> Unique offer numeric ID
+ * t     -> Offer Title (shown on checkout discount pill)
+ * wt    -> Storefront Widget Title
+ * d     -> Discount percentage value (e.g. 15 for 15% OFF)
+ * items -> List of companion add-on items:
+ *          - id: Product ID
+ *          - vid: Default Variant ID
+ *          - vids: Array of specific allowed variant IDs (optional)
+ *          - t: Product title
+ *          - p: Price in cents
+ *          - dp: Discounted price in cents
+ *          - q: Required quantity (default 1)
+ *          - df: true if default checked
+ * ----------------------------------------------------------------------------
+ * 
  * @typedef {import("../generated/api").CartInput} RunInput
  * @typedef {import("../generated/api").CartLinesDiscountsGenerateRunResult} CartLinesDiscountsGenerateRunResult
  */
 
 /**
  * Extracts numeric ID from a Shopify GID or string ID.
- * @param {string} id
+ * @param {string|null|undefined} id
  * @returns {string}
  */
 function getNumericId(id) {
@@ -19,7 +44,7 @@ function getNumericId(id) {
 
 /**
  * Parses JSON configuration stored in a metafield.
- * @param {string|null} metafieldValue
+ * @param {string|null|undefined} metafieldValue
  * @returns {object|null}
  */
 function parseJson(metafieldValue) {
@@ -32,49 +57,33 @@ function parseJson(metafieldValue) {
 }
 
 /**
- * Extracts active selected product offers from shop metafield (Master Engine)
- * or fallback discount node metafield (legacy).
+ * Extracts active selected product offers from shop metafield (Legacy fallback).
  * @param {RunInput} input
  * @returns {Array<object>}
  */
-function getOffersList(input) {
-  // If this discount node is an old legacy node (not isMaster), ignore it completely
-  const nodeConfig = parseJson(input.discount?.metafield?.value);
-  if (nodeConfig && !nodeConfig.isMaster) {
-    return [];
-  }
-
-  // Retrieve active offers from the master shop metafield
+function getLegacyShopOffersList(input) {
   const shopMetaValue = input.shop?.offersMetafield?.value;
-  if (shopMetaValue) {
-    const map = parseJson(shopMetaValue);
-    if (map && typeof map === 'object') {
-      const seen = new Set();
-      const list = [];
-      for (const key of Object.keys(map)) {
-        const offer = map[key];
-        if (!offer || typeof offer !== 'object') continue;
-        const idKey = offer.numericId || offer.offerId || key;
-        if (!seen.has(idKey)) {
-          seen.add(idKey);
-          list.push(offer);
-        }
-      }
-      if (list.length > 0) return list;
+  if (!shopMetaValue) return [];
+
+  const map = parseJson(shopMetaValue);
+  if (!map || typeof map !== 'object') return [];
+
+  const seen = new Set();
+  const list = [];
+  for (const key of Object.keys(map)) {
+    const offer = map[key];
+    if (!offer || typeof offer !== 'object') continue;
+    const idKey = offer.id || offer.numericId || offer.offerId || key;
+    if (!seen.has(idKey)) {
+      seen.add(idKey);
+      list.push(offer);
     }
   }
-
-  return [];
+  return list;
 }
 
 /**
  * Main discount evaluation function for Special Add-Ons / Selected Products.
- * 
- * Rules:
- * 1. Checks if the Target / Main Product is in the cart.
- * 2. Checks if any Recommended Add-On Product is in the cart with required minimum quantity.
- * 3. Applies the percentage discount specifically to the qualifying Add-On product lines (Target product remains at regular price).
- * 4. Displays the offer's custom title at checkout dynamically via candidate `message`.
  * 
  * @param {RunInput} input
  * @returns {CartLinesDiscountsGenerateRunResult}
@@ -86,145 +95,176 @@ export function cartLinesDiscountsGenerateRun(input) {
   }
 
   // 2. Guard: Cart must have items
-  if (!input.cart.lines.length) {
+  if (!input.cart?.lines?.length) {
     return { operations: [] };
   }
 
-  // 3. Retrieve active offers
-  const offers = getOffersList(input);
-  if (offers.length === 0) {
-    return { operations: [] };
-  }
+  // 3. Pre-index cart lines by product ID and variant ID
+  const cartLinesByProduct = new Map(); // Map<prodNumId, Array<entry>>
+  const cartProductQuantities = new Map(); // Map<prodNumId, totalQty>
 
-  // Pre-calculate cart product & variant quantities
-  const cartProductQuantities = new Map();
   for (const line of input.cart.lines) {
     if (line.merchandise?.__typename === 'ProductVariant') {
       const prod = line.merchandise.product;
-      if (prod?.id) {
-        const fullId = String(prod.id).trim();
-        const numId = getNumericId(fullId);
-        const qty = line.quantity || 1;
+      const variantId = line.merchandise.id ? String(line.merchandise.id).trim() : '';
+      if (!prod?.id) continue;
 
-        cartProductQuantities.set(fullId, (cartProductQuantities.get(fullId) || 0) + qty);
-        cartProductQuantities.set(numId, (cartProductQuantities.get(numId) || 0) + qty);
+      const fullProdId = String(prod.id).trim();
+      const numProdId = getNumericId(fullProdId);
+      const numVarId = variantId ? getNumericId(variantId) : '';
+      const qty = Number(line.quantity) || 1;
+
+      // Track total quantities
+      cartProductQuantities.set(numProdId, (cartProductQuantities.get(numProdId) || 0) + qty);
+      cartProductQuantities.set(fullProdId, (cartProductQuantities.get(fullProdId) || 0) + qty);
+
+      if (!cartLinesByProduct.has(numProdId)) {
+        cartLinesByProduct.set(numProdId, []);
       }
+      cartLinesByProduct.get(numProdId).push({
+        line,
+        qty,
+        variantId,
+        numVarId,
+        product: prod,
+      });
     }
   }
 
   const candidates = [];
+  const processedOfferIds = new Set();
 
-  for (const offer of offers) {
-    const percentage = Number(offer.percentage);
-    if (isNaN(percentage) || percentage <= 0) continue;
+  // 4. Priority A: Evaluate Product-level sharded metafields on Target Products in cart
+  for (const line of input.cart.lines) {
+    if (line.merchandise?.__typename === 'ProductVariant') {
+      const prod = line.merchandise.product;
+      const metaVal = prod?.selectedOffers?.value;
+      if (!metaVal) continue;
 
-    // 4. Map Target / Main products
-    const targetProductIds = new Set();
-    const rawTargets = Array.isArray(offer.targetProducts)
-      ? offer.targetProducts
-      : Array.isArray(offer.targetProductIds)
-      ? offer.targetProductIds.map((id) => ({ id }))
-      : offer.targetProductId
-      ? [{ id: offer.targetProductId }]
-      : [];
+      const offer = parseJson(metaVal);
+      if (!offer || typeof offer !== 'object') continue;
 
-    rawTargets.forEach((p) => {
-      if (p?.id) {
-        const fullId = String(p.id).trim();
-        targetProductIds.add(fullId);
-        targetProductIds.add(getNumericId(fullId));
+      const offerId = String(offer.id || offer.numericId || offer.offerId || '');
+      if (offerId && processedOfferIds.has(offerId)) {
+        continue;
       }
-    });
 
-    // Target product must be present in cart (if target products were configured)
-    let foundTargetInCart = targetProductIds.size === 0;
-    for (const targetId of targetProductIds) {
-      if ((cartProductQuantities.get(targetId) || 0) > 0) {
-        foundTargetInCart = true;
-        break;
-      }
-    }
-    if (!foundTargetInCart) continue;
+      const discountPercentage = Number(offer.d ?? offer.percentage ?? 0);
+      if (discountPercentage <= 0) continue;
 
-    // 5. Map Recommended / Offered Add-On products & their required minimum quantities
-    const offeredQuantities = new Map();
-    const offeredProductIds = new Set();
-    const offeredVariantIds = new Set();
-    let hasSpecificOfferedVariants = false;
+      const items = offer.items || offer.offeredProducts || [];
+      if (!Array.isArray(items) || items.length === 0) continue;
 
-    const rawOffered = Array.isArray(offer.offeredProducts)
-      ? offer.offeredProducts
-      : Array.isArray(offer.products)
-      ? offer.products
-      : [];
+      const qualifyingLineIds = [];
 
-    rawOffered.forEach((item) => {
-      if (item?.id) {
-        const fullId = String(item.id).trim();
-        const numId = getNumericId(fullId);
-        const reqQty = Math.max(1, parseInt(item.quantity, 10) || 1);
-        offeredQuantities.set(fullId, reqQty);
-        offeredQuantities.set(numId, reqQty);
-        offeredProductIds.add(fullId);
-        offeredProductIds.add(numId);
+      for (const item of items) {
+        if (!item?.id) continue;
 
-        if (Array.isArray(item.variants) && item.variants.length > 0) {
-          hasSpecificOfferedVariants = true;
-          item.variants.forEach((v) => {
-            const vId = String(typeof v === 'object' ? v.id : v).trim();
-            offeredVariantIds.add(vId);
-            offeredVariantIds.add(getNumericId(vId));
-          });
-        }
-      }
-    });
+        const itemNumId = getNumericId(item.id || item.numericId);
+        const reqQty = Math.max(1, parseInt(item.q ?? item.quantity ?? 1, 10) || 1);
+        const totalAddonInCart = cartProductQuantities.get(itemNumId) || 0;
 
-    if (offeredProductIds.size === 0) continue;
+        if (totalAddonInCart >= reqQty) {
+          const addonLines = cartLinesByProduct.get(itemNumId) || [];
+          const specificVarIds = Array.isArray(item.vids) && item.vids.length > 0
+            ? new Set(item.vids.map((v) => getNumericId(v)))
+            : null;
 
-    // 6. Partition cart lines: Qualifying Add-Ons get discount
-    const qualifyingLineIds = [];
+          for (const entry of addonLines) {
+            // Target product is sold at regular price; only companion add-on lines qualify
+            if (entry.line.id === line.id) continue;
 
-    for (const line of input.cart.lines) {
-      if (line.merchandise?.__typename === 'ProductVariant') {
-        const prod = line.merchandise.product;
-        const variantId = line.merchandise.id ? String(line.merchandise.id).trim() : null;
-        const variantNumId = variantId ? getNumericId(variantId) : null;
-
-        if (prod?.id) {
-          const fullId = String(prod.id).trim();
-          const numId = getNumericId(fullId);
-
-          if (offeredProductIds.has(fullId) || offeredProductIds.has(numId)) {
-            const variantMatches = !hasSpecificOfferedVariants ||
-              (variantId && (offeredVariantIds.has(variantId) || offeredVariantIds.has(variantNumId)));
-
-            if (variantMatches) {
-              const reqQty = offeredQuantities.get(fullId) || offeredQuantities.get(numId) || 1;
-              const totalInCart = cartProductQuantities.get(fullId) || cartProductQuantities.get(numId) || 0;
-
-              if (totalInCart >= reqQty) {
-                qualifyingLineIds.push(line.id);
-              }
+            const matchesVariant = !specificVarIds || specificVarIds.size === 0 || specificVarIds.has(entry.numVarId);
+            if (matchesVariant) {
+              qualifyingLineIds.push(entry.line.id);
             }
           }
         }
       }
-    }
 
-    if (qualifyingLineIds.length > 0) {
-      candidates.push({
-        message: offer.title || `${percentage}% OFF`,
-        targets: qualifyingLineIds.map((lineId) => ({
-          cartLine: {
-            id: lineId,
+      if (qualifyingLineIds.length > 0) {
+        if (offerId) processedOfferIds.add(offerId);
+        candidates.push({
+          message: offer.t || offer.title || `${discountPercentage}% OFF Add-on`,
+          targets: qualifyingLineIds.map((id) => ({
+            cartLine: { id },
+          })),
+          value: {
+            percentage: {
+              value: discountPercentage,
+            },
           },
-        })),
-        value: {
-          percentage: {
-            value: percentage,
-          },
-        },
+        });
+      }
+    }
+  }
+
+  // 5. Priority B: Fallback to Shop-level legacy map (if no product candidates found)
+  if (candidates.length === 0) {
+    const legacyOffers = getLegacyShopOffersList(input);
+    for (const offer of legacyOffers) {
+      const percentage = Number(offer.percentage || offer.d || 0);
+      if (percentage <= 0) continue;
+
+      const targetProductIds = new Set();
+      const rawTargets = Array.isArray(offer.targetProducts)
+        ? offer.targetProducts
+        : offer.targetProductId
+        ? [{ id: offer.targetProductId }]
+        : [];
+
+      rawTargets.forEach((p) => {
+        if (p?.id) {
+          targetProductIds.add(getNumericId(p.id));
+        }
       });
+
+      let foundTargetInCart = targetProductIds.size === 0;
+      for (const targetId of targetProductIds) {
+        if ((cartProductQuantities.get(targetId) || 0) > 0) {
+          foundTargetInCart = true;
+          break;
+        }
+      }
+      if (!foundTargetInCart) continue;
+
+      const rawOffered = Array.isArray(offer.offeredProducts)
+        ? offer.offeredProducts
+        : Array.isArray(offer.products)
+        ? offer.products
+        : Array.isArray(offer.items)
+        ? offer.items
+        : [];
+
+      const qualifyingLineIds = [];
+
+      for (const item of rawOffered) {
+        if (!item?.id) continue;
+        const itemNumId = getNumericId(item.id);
+        const reqQty = Math.max(1, parseInt(item.quantity ?? item.q ?? 1, 10) || 1);
+        const totalInCart = cartProductQuantities.get(itemNumId) || 0;
+
+        if (totalInCart >= reqQty) {
+          const addonLines = cartLinesByProduct.get(itemNumId) || [];
+          for (const entry of addonLines) {
+            qualifyingLineIds.push(entry.line.id);
+          }
+        }
+      }
+
+      if (qualifyingLineIds.length > 0) {
+        candidates.push({
+          message: offer.title || offer.t || `${percentage}% OFF`,
+          targets: qualifyingLineIds.map((id) => ({
+            cartLine: { id },
+          })),
+          value: {
+            percentage: {
+              value: percentage,
+            },
+          },
+        });
+      }
     }
   }
 

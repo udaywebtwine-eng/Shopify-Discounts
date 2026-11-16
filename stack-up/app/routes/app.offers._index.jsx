@@ -5,7 +5,11 @@ import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import { getShopTimezone, formatDateInShopTimezone, computeOfferStatus } from "../utils/timezone";
 import { syncAllActiveOffersToShopMetafield } from "../utils/bundleMetafields.server";
-import { syncAllActiveSelectedOffersToShopMetafield } from "../utils/selectedOffersMetafields.server";
+import {
+    syncAllActiveSelectedOffersToShopMetafield,
+    removeSelectedMetafieldFromProducts,
+    getSelectedTargetProductsFromOffer,
+} from "../utils/selectedOffersMetafields.server";
 import {
     syncAllActiveVolumeOffersToShopMetafield,
     removeVolumeMetafieldFromProducts,
@@ -160,6 +164,11 @@ export const action = async ({ request }) => {
                 const prods = getVolumeProductsFromOffer(offerToDelete);
                 if (prods.length > 0) {
                     await removeVolumeMetafieldFromProducts(admin, prods.map((p) => p.id));
+                }
+            } else if (offerToDelete && offerToDelete.type === "SELECTED") {
+                const targets = getSelectedTargetProductsFromOffer(offerToDelete);
+                if (targets.length > 0) {
+                    await removeSelectedMetafieldFromProducts(admin, targets.map((p) => p.id));
                 }
             }
 

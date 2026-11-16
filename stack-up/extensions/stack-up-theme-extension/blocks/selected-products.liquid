@@ -12,30 +12,35 @@
 {% if is_app_enabled %}
   {% assign current_id = product.id | append: '' %}
   {% assign prefixed_id = 'id_' | append: current_id %}
-  {% assign all_offers = shop.metafields.stack_up.selected_offers.value %}
   {% assign custom_settings = shop.metafields.stack_up.selected_widget_settings.value %}
-  {% assign selected_offer = all_offers[current_id] | default: all_offers[prefixed_id] %}
+  {% assign selected_offer = product.metafields.stack_up.selected_offers.value %}
 
-  {% if selected_offer == blank and all_offers != blank %}
-    {% for item in all_offers %}
-      {% assign offer_key = item[0] | append: '' %}
-      {% if offer_key == current_id or offer_key == prefixed_id %}
-        {% assign selected_offer = item[1] %}
-        {% break %}
-      {% endif %}
-    {% endfor %}
+  {% if selected_offer == blank %}
+    {% assign all_offers = shop.metafields.stack_up.selected_offers.value %}
+    {% assign selected_offer = all_offers[current_id] | default: all_offers[prefixed_id] %}
+
+    {% if selected_offer == blank and all_offers != blank %}
+      {% for item in all_offers %}
+        {% assign offer_key = item[0] | append: '' %}
+        {% if offer_key == current_id or offer_key == prefixed_id %}
+          {% assign selected_offer = item[1] %}
+          {% break %}
+        {% endif %}
+      {% endfor %}
+    {% endif %}
   {% endif %}
 
+  {% assign add_ons_list = selected_offer.items | default: selected_offer.offeredProducts %}
   {% assign is_editor = request.design_mode %}
   {% assign is_active_offer = false %}
-  {% if selected_offer != blank and selected_offer.offeredProducts.size > 0 %}
+  {% if selected_offer != blank and add_ons_list.size > 0 %}
     {% assign is_active_offer = true %}
   {% endif %}
 
   {% if is_active_offer or is_editor %}
     {% if is_active_offer %}
-      {% assign discount_pct = selected_offer.percentage | default: 10 %}
-      {% assign offer_custom_heading = selected_offer.widgetTitle | default: '' %}
+      {% assign discount_pct = selected_offer.d | default: selected_offer.percentage | default: 10 %}
+      {% assign offer_custom_heading = selected_offer.wt | default: selected_offer.widgetTitle | default: '' %}
       {% assign global_heading = custom_settings.content.heading | default: '{widgettitle}' %}
       {% if global_heading contains '{widgettitle}' %}
         {% assign resolved_offer_title = offer_custom_heading %}
@@ -48,8 +53,8 @@
       {% else %}
         {% assign heading_text = global_heading %}
       {% endif %}
-      {% assign heading_text = heading_text | replace: '{widgetname}', selected_offer.title | replace: '{offername}', selected_offer.title | replace: '{percentage}', discount_pct %}
-      {% assign add_ons_list = selected_offer.offeredProducts %}
+      {% assign offer_display_title = selected_offer.t | default: selected_offer.title %}
+      {% assign heading_text = heading_text | replace: '{widgetname}', offer_display_title | replace: '{offername}', offer_display_title | replace: '{percentage}', discount_pct %}
     {% else %}
       {% comment %} Sample Data for Theme Editor Preview {% endcomment %}
       {% assign discount_pct = 15 %}
@@ -113,10 +118,10 @@
 
     {% if is_active_offer %}
       {% for item in add_ons_list %}
-        {% assign item_qty = item.quantity | default: 1 %}
-        {% assign item_price = item.variants[0].price | default: item.price %}
+        {% assign item_qty = item.q | default: item.quantity | default: 1 %}
+        {% assign item_price = item.p | default: item.variants[0].price | default: item.price %}
         {% assign item_discount_mult = 100 | minus: discount_pct %}
-        {% assign item_discounted_price = item.discountedPrice %}
+        {% assign item_discounted_price = item.dp | default: item.discountedPrice %}
         {% if item_discounted_price == blank or item_discounted_price == 0 %}
           {% assign item_discounted_price = item_price | times: item_discount_mult | divided_by: 100 %}
         {% endif %}
@@ -190,16 +195,16 @@
       <div class="stackup-addons-list">
         {% if is_active_offer %}
           {% for item in add_ons_list %}
-            {% assign item_qty = item.quantity | default: 1 %}
-            {% assign item_title = item.title %}
-            {% assign item_img = item.image %}
-            {% assign item_handle = item.handle %}
+            {% assign item_qty = item.q | default: item.quantity | default: 1 %}
+            {% assign item_title = item.t | default: item.title %}
+            {% assign item_img = item.img | default: item.image %}
+            {% assign item_handle = item.h | default: item.handle %}
             {% assign item_prod = all_products[item_handle] %}
             {% assign item_variants = item.variants %}
-            {% assign item_first_variant_id = item_prod.selected_or_first_available_variant.id | default: item.variants[0].id | default: item.variantId | default: item.numericId %}
-            {% assign item_price = item_prod.selected_or_first_available_variant.price | default: item.variants[0].price | default: item.price %}
+            {% assign item_first_variant_id = item_prod.selected_or_first_available_variant.id | default: item.vid | default: item.variants[0].id | default: item.variantId | default: item.id | default: item.numericId %}
+            {% assign item_price = item_prod.selected_or_first_available_variant.price | default: item.p | default: item.variants[0].price | default: item.price %}
             {% assign item_discount_mult = 100 | minus: discount_pct %}
-            {% assign item_discounted_price = item.discountedPrice %}
+            {% assign item_discounted_price = item.dp | default: item.discountedPrice %}
             {% if item_discounted_price == blank or item_discounted_price == 0 %}
               {% assign item_discounted_price = item_price | times: item_discount_mult | divided_by: 100 %}
             {% endif %}
@@ -216,7 +221,7 @@
 
             <div
               class="stackup-addon-item{% if item_available == false %} is-out-of-stock{% endif %}"
-              data-product-id="{{ item.numericId }}"
+              data-product-id="{{ item.id | default: item.numericId }}"
               data-variant-id="{{ item_first_variant_id }}"
               data-quantity="{{ item_qty }}"
               data-title="{{ item_title | escape }}"
