@@ -61,6 +61,7 @@ export const loader = async ({ request }) => {
         shop {
           metafield(namespace: "stack_up", key: "volume_widget_settings") {
             value
+          }
         }
       }`
     );

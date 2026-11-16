@@ -9,6 +9,7 @@ import DailyTrendChart from "./components/chart/daily-trend-chart";
 import OffersComparisonChart from "./components/chart/offers-comparison-chart";
 import OffersTable from "./components/table/offers-table";
 import ProductsTable from "./components/table/products-table";
+import DatePicker from "./components/DatePicker"
 
 // In-memory currency cache per shop domain to avoid redundant GraphQL roundtrips
 const currencyCache = new Map();
@@ -56,13 +57,22 @@ export const loader = async ({ request }) => {
     const shop = session?.shop || "";
     const url = new URL(request.url);
     const range = url.searchParams.get("range") || "30d";
+    const startDateParam = url.searchParams.get("startDate");
+    const endDateParam = url.searchParams.get("endDate");
 
     // 1. Calculate date range boundaries
     const now = new Date();
-    const startDate = new Date();
+    let startDate = new Date();
+    let endDate = new Date();
     let daysCount = 30;
 
-    if (range === "today") {
+    if (startDateParam && endDateParam) {
+        // Custom or preset start/end dates passed from DatePicker
+        startDate = new Date(`${startDateParam}T00:00:00`);
+        endDate = new Date(`${endDateParam}T23:59:59.999`);
+        const diffMs = endDate.getTime() - startDate.getTime();
+        daysCount = Math.max(1, Math.round(diffMs / (1000 * 60 * 60 * 24)));
+    } else if (range === "today") {
         startDate.setHours(0, 0, 0, 0);
         daysCount = 1;
     } else if (range === "7d") {
@@ -98,13 +108,18 @@ export const loader = async ({ request }) => {
     let allOffers = [];
     let ordersInRange = [];
 
+    const dateFilter = {
+        gte: startDate,
+        lte: endDate,
+    };
+
     try {
         [allOffers, ordersInRange] = await Promise.all([
             db.offer.findMany({
                 where: { OR: shopConditions },
                 include: {
                     orders: {
-                        where: { createdAt: { gte: startDate } },
+                        where: { createdAt: dateFilter },
                         orderBy: { createdAt: "desc" },
                     },
                 },
@@ -113,7 +128,7 @@ export const loader = async ({ request }) => {
             db.orderUsage.findMany({
                 where: {
                     OR: shopConditions,
-                    createdAt: { gte: startDate },
+                    createdAt: dateFilter,
                 },
                 orderBy: { createdAt: "asc" },
             }),
@@ -353,6 +368,8 @@ export const loader = async ({ request }) => {
 
     return {
         range,
+        startDate: startDateParam || null,
+        endDate: endDateParam || null,
         currencySymbol,
         currencyCode,
         kpi: {
@@ -368,7 +385,7 @@ export const loader = async ({ request }) => {
 };
 
 export default function Analytics() {
-    const { range, currencySymbol, kpi, dailyBuckets, offersData, productsList } = useLoaderData();
+    const { range, startDate, endDate, currencySymbol, kpi, dailyBuckets, offersData, productsList } = useLoaderData();
     const [searchParams, setSearchParams] = useSearchParams();
     const navigation = useNavigation();
     const shopify = useAppBridge();
@@ -389,10 +406,28 @@ export default function Analytics() {
         }
     }, [isNavigating, shopify]);
 
-    // Handle Range change
+    // Handle Range change from DatePicker (Apply callback)
+    const handleDatePickerApply = ({ preset, startDate: sDate, endDate: eDate }) => {
+        const params = new URLSearchParams(searchParams);
+        if (preset && preset !== "Custom") {
+            params.set("preset", preset);
+        } else {
+            params.delete("preset");
+        }
+        if (sDate && eDate) {
+            params.set("startDate", sDate);
+            params.set("endDate", eDate);
+        }
+        setSearchParams(params);
+    };
+
+    // Handle Range change from native s-select
     const handleRangeChange = (newRange) => {
         const params = new URLSearchParams(searchParams);
         params.set("range", newRange);
+        params.delete("startDate");
+        params.delete("endDate");
+        params.delete("preset");
         setSearchParams(params);
     };
 
@@ -439,18 +474,12 @@ export default function Analytics() {
                     </s-heading>
 
                     {/* Date Range Selector */}
-                    <div style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
-                        <s-select
-                            value={range}
-                            onChange={(e) => handleRangeChange(e.target.value)}
-                            accessibilityLabel="Select date range"
-                        >
-                            <s-option value="today">Today</s-option>
-                            <s-option value="7d">Last 7 Days</s-option>
-                            <s-option value="30d">Last 30 Days</s-option>
-                            <s-option value="90d">Last 90 Days</s-option>
-                        </s-select>
-                    </div>
+                    <DatePicker
+                        initialPreset={searchParams.get("preset") || (range === "today" ? "Today" : range === "7d" ? "Last 7 days" : range === "90d" ? "Last 90 Days" : "Last 30 Days")}
+                        initialStartDate={startDate}
+                        initialEndDate={endDate}
+                        onApply={handleDatePickerApply}
+                    />
                 </s-stack>
             </s-box>
 
