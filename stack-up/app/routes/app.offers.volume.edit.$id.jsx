@@ -26,6 +26,7 @@ import { ensureMasterDiscounts } from "../utils/masterDiscount.server";
 import {
   syncAllActiveVolumeOffersToShopMetafield,
   removeVolumeMetafieldFromProducts,
+  getVolumeProductsFromOffer,
 } from "../utils/volumeMetafields.server";
 import { getActiveMainProductsMap, checkMainProductConflicts } from "../utils/productConflicts.server";
 import VolumeWidgetPreview from "./components/Preview/VolumeWidgetPreview";
@@ -211,11 +212,10 @@ export const action = async ({ request, params }) => {
         data: { status: "EXPIRED" },
       });
 
-      let prods = [];
-      try {
-        prods = JSON.parse(existingOffer.volumeProducts || "[]");
-      } catch {}
-      await removeVolumeMetafieldFromProducts(admin, prods.map((p) => p.id));
+      const prods = getVolumeProductsFromOffer(existingOffer);
+      if (prods.length > 0) {
+        await removeVolumeMetafieldFromProducts(admin, prods.map((p) => p.id));
+      }
       await syncAllActiveVolumeOffersToShopMetafield(admin);
 
       return redirect(`/app/offers/volume/edit/${numericId}`);
@@ -242,11 +242,10 @@ export const action = async ({ request, params }) => {
   // Delete
   if (intent === "delete") {
     try {
-      let prods = [];
-      try {
-        prods = JSON.parse(existingOffer.volumeProducts || "[]");
-      } catch {}
-      await removeVolumeMetafieldFromProducts(admin, prods.map((p) => p.id));
+      const prods = getVolumeProductsFromOffer(existingOffer);
+      if (prods.length > 0) {
+        await removeVolumeMetafieldFromProducts(admin, prods.map((p) => p.id));
+      }
 
       await prisma.offer.deleteMany({ where: offerWhere });
       await syncAllActiveVolumeOffersToShopMetafield(admin);
@@ -355,10 +354,7 @@ export const action = async ({ request, params }) => {
   const maxDiscountPct = compactTiers.reduce((max, t) => Math.max(max, t.d), 0);
 
   try {
-    let oldProds = [];
-    try {
-      oldProds = JSON.parse(existingOffer.volumeProducts || "[]");
-    } catch {}
+    const oldProds = getVolumeProductsFromOffer(existingOffer);
     const newGidSet = new Set(sanitizedProducts.map((p) => p.id));
     const removedGids = oldProds.map((p) => p.id).filter((id) => !newGidSet.has(id));
     if (removedGids.length > 0) {

@@ -121,8 +121,8 @@ export function cartLinesDiscountsGenerateRun(input) {
       if (Array.isArray(parsedProductTiers)) {
         tiers = parsedProductTiers;
       } else if (parsedProductTiers && typeof parsedProductTiers === 'object') {
-        tiers = parsedProductTiers.tiers || [];
-        offerTitle = parsedProductTiers.title || '';
+        tiers = parsedProductTiers.tiers || parsedProductTiers.tr || [];
+        offerTitle = parsedProductTiers.t || parsedProductTiers.title || '';
       }
     }
 

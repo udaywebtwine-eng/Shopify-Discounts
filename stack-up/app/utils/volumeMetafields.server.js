@@ -3,29 +3,23 @@ import { computeOfferStatus } from "./timezone.js";
 
 /**
  * ============================================================================
- * STACKUP VOLUME OFFERS METAFIELD SYNC
+ * STACKUP VOLUME OFFERS - PRODUCT-LEVEL METAFELD ENGINE (SHARDED ARCHITECTURE)
  * ============================================================================
  * 
- * Synchronizes active Quantity Breaks / Volume Discount offers from PostgreSQL
- * to the single Shop Metafield:
- *   `shop.metafields.stack_up.volume_offers`
+ * Instead of storing every store offer into a single 3,300-byte shop-level metafield
+ * (which crashes into Shopify Functions' 10,000-byte limit after 3-4 offers),
+ * each Volume Discount is saved directly on the participating Product's metafield:
+ *   `product.metafields.stack_up.volume_tiers`
  * 
- * Storing under shop.metafields.stack_up.volume_offers does NOT require write_products scope,
- * and allows Liquid to look up any product's volume offer in 0ms!
- * Exactly matches how paired_offers and selected_offers are managed.
- * 
- * ULTRA-COMPACT TIER SCHEMA DICTIONARY:
- * ----------------------------------------------------------------------------
- * mq -> minQty:    Minimum quantity required for tier (e.g. 2, 3, 5)
- * d  -> discount:  Discount value (e.g. 10 for 10% OFF, or fixed dollar amount)
- * t  -> type:      Discount type ("P" = Percentage %, "F" = Fixed Amount $) [Default: "P"]
- * b  -> badge:     Highlight badge text (e.g. "MOST POPULAR", "BEST VALUE", or "")
- * s  -> subtitle:  Optional savings subtitle (e.g. "Save $15", or "")
- * ----------------------------------------------------------------------------
+ * BENEFIT:
+ * - Each product only stores its own compact ~120-byte rule.
+ * - At checkout, Shopify Functions ONLY query the metafields of items in the cart!
+ * - A store can have 10,000+ active volume discounts without ever exceeding the 10 KB limit.
+ * - Liquid on product pages directly reads `product.metafields.stack_up.volume_tiers` in 0ms!
  */
 
 /**
- * Normalizes any tier object to our ultra-compact schema.
+ * Normalizes any tier object to our compact schema.
  * @param {object} tier
  * @param {number} idx
  * @returns {object}
@@ -47,26 +41,139 @@ export function normalizeTierToCompact(tier, idx = 0) {
   const badge = String(tier.b ?? tier.badge ?? "").trim();
   const label = String(tier.s ?? tier.label ?? tier.subtitle ?? "").trim();
   const title = String(tier.title ?? (minQty === 1 ? "Buy 1" : (minQty === 3 ? "Buy 3+" : `Buy ${minQty}`))).trim();
-  const isDefault = Boolean(tier.isDefault ?? (idx === 0));
+  const isDefault = Boolean(tier.isDefault ?? tier.df ?? (idx === 0));
 
-  return {
+  const tierObj = {
     mq: minQty,
-    quantity: minQty,
     d: discount,
-    value: discount,
     t: t,
-    discountType: t === "N" ? "none" : (t === "F" ? "fixed" : "percent"),
-    b: badge,
-    badge: badge,
-    s: label,
-    label: label,
     title: title,
-    isDefault: isDefault,
+    s: label,
   };
+  if (badge) tierObj.b = badge;
+  if (isDefault) tierObj.df = true;
+
+  return tierObj;
 }
 
 /**
- * Syncs all active volume discount offers to Shopify Shop Metafield.
+ * Safely extracts products list from a volume offer record.
+ * Supports both modern `volumeProducts` column and legacy `configuration.volumeProducts`.
+ * @param {object} offer
+ * @returns {Array}
+ */
+export function getVolumeProductsFromOffer(offer) {
+  if (!offer) return [];
+  try {
+    if (offer.volumeProducts) {
+      return JSON.parse(offer.volumeProducts);
+    }
+    if (offer.configuration) {
+      const cfg = typeof offer.configuration === "string" ? JSON.parse(offer.configuration) : offer.configuration;
+      return cfg?.volumeProducts || [];
+    }
+  } catch {}
+  return [];
+}
+
+/**
+ * Safely extracts tiers list from a volume offer record.
+ * Supports both modern `volumeTiers` column and legacy `configuration.volumeTiers`.
+ * @param {object} offer
+ * @returns {Array}
+ */
+export function getVolumeTiersFromOffer(offer) {
+  if (!offer) return [];
+  try {
+    if (offer.volumeTiers) {
+      return JSON.parse(offer.volumeTiers);
+    }
+    if (offer.configuration) {
+      const cfg = typeof offer.configuration === "string" ? JSON.parse(offer.configuration) : offer.configuration;
+      return cfg?.volumeTiers || [];
+    }
+  } catch {}
+  return [];
+}
+
+/**
+ * Formats a product ID into a canonical Shopify GID.
+ * @param {string|number} id
+ * @returns {string}
+ */
+function toProductGid(id) {
+  if (!id) return "";
+  const str = String(id).trim();
+  if (str.startsWith("gid://shopify/Product/")) return str;
+  const num = str.split("/").pop();
+  return `gid://shopify/Product/${num}`;
+}
+
+/**
+ * Deletes the `volume_tiers` metafield from specified products.
+ * Uses Shopify GraphQL `metafieldsDelete` mutation.
+ * 
+ * @param {object} admin - Authenticated Shopify GraphQL admin client
+ * @param {Array<string|number>} productIds - Array of product GIDs or numeric IDs
+ */
+export async function removeVolumeMetafieldFromProducts(admin, productIds = []) {
+  if (!admin || !Array.isArray(productIds) || productIds.length === 0) return;
+
+  const validGids = productIds
+    .map(toProductGid)
+    .filter(Boolean);
+
+  if (validGids.length === 0) return;
+
+  // Process in batches of 25 (Shopify's maximum allowed in a single mutation)
+  const BATCH_SIZE = 25;
+  for (let i = 0; i < validGids.length; i += BATCH_SIZE) {
+    const chunk = validGids.slice(i, i + BATCH_SIZE);
+    const deleteInputs = chunk.map((ownerId) => ({
+      ownerId,
+      namespace: "stack_up",
+      key: "volume_tiers",
+    }));
+
+    try {
+      const res = await admin.graphql(
+        `#graphql
+        mutation DeleteProductVolumeTiers($metafields: [MetafieldIdentifierInput!]!) {
+          metafieldsDelete(metafields: $metafields) {
+            deletedMetafields {
+              ownerId
+              namespace
+              key
+            }
+            userErrors {
+              field
+              message
+            }
+          }
+        }`,
+        { variables: { metafields: deleteInputs } }
+      );
+
+      const json = await res.json();
+      const userErrors = json.data?.metafieldsDelete?.userErrors || [];
+      if (userErrors.length > 0) {
+        console.warn("[VolumeMetafields] Warning deleting product volume tiers:", userErrors);
+      } else {
+        console.log(`[VolumeMetafields] Cleaned volume_tiers from ${chunk.length} product(s).`);
+      }
+    } catch (err) {
+      console.warn("[VolumeMetafields] Error deleting product volume tiers:", err);
+    }
+  }
+}
+
+/**
+ * Syncs all active Volume Discount offers to individual Product Metafields:
+ *   `product.metafields.stack_up.volume_tiers`
+ * 
+ * Also keeps `shop.metafields.stack_up.volume_offers` completely empty `{}` (2 bytes)
+ * so it never consumes shop-level space.
+ * 
  * @param {object} admin - Authenticated Shopify GraphQL admin client
  */
 export async function syncAllActiveVolumeOffersToShopMetafield(admin) {
@@ -83,114 +190,142 @@ export async function syncAllActiveVolumeOffersToShopMetafield(admin) {
     const shopId = shopJson.data?.shop?.id;
     if (!shopId) return;
 
-    // 1. Fetch all Volume offers from DB that are not manually deactivated (EXPIRED)
+    // 1. Fetch all Volume offers from DB
     const allOffers = await prisma.offer.findMany({
-      where: { type: "VOLUME", status: { not: "EXPIRED" } },
+      where: { type: "VOLUME" },
     });
-    const activeOffers = allOffers.filter((o) => computeOfferStatus(o) === "ACTIVE");
 
-    // 2. Background sync of DB status if schedule changed
+    const activeOffers = [];
+    const inactiveProductsToClean = new Set();
+
+    // 2. Identify active offers and background sync DB status
     for (const o of allOffers) {
       const realStatus = computeOfferStatus(o);
       if (realStatus !== o.status && o.status !== "EXPIRED") {
         prisma.offer.update({ where: { id: o.id }, data: { status: realStatus } }).catch(() => {});
       }
+
+      if (realStatus === "ACTIVE") {
+        activeOffers.push(o);
+      } else {
+        const inactiveProds = getVolumeProductsFromOffer(o);
+        inactiveProds.forEach((p) => {
+          if (p.id) inactiveProductsToClean.add(p.id);
+        });
+      }
     }
 
-    const offersMap = {};
+    const productMetafieldsToSet = [];
+    const activeProductGids = new Set();
 
-    // 3. Process active volume offers
+    // 3. Prepare product-level metafields for active offers
     for (const offer of activeOffers) {
-      let products = [];
-      try {
-        if (offer.volumeProducts) {
-          products = JSON.parse(offer.volumeProducts);
-        } else if (offer.configuration) {
-          const cfg = JSON.parse(offer.configuration);
-          products = cfg.volumeProducts || [];
-        }
-      } catch {
-        products = [];
-      }
-
-      let rawTiers = [];
-      try {
-        if (offer.volumeTiers) {
-          rawTiers = JSON.parse(offer.volumeTiers);
-        } else if (offer.configuration) {
-          const cfg = JSON.parse(offer.configuration);
-          rawTiers = cfg.volumeTiers || [];
-        }
-      } catch {
-        rawTiers = [];
-      }
+      const products = getVolumeProductsFromOffer(offer);
+      const rawTiers = getVolumeTiersFromOffer(offer);
 
       // Convert tiers to ultra-compact dictionary format
       const compactTiers = rawTiers
         .map((t, i) => normalizeTierToCompact(t, i))
         .filter((t) => t.mq > 0)
-        .sort((a, b) => a.mq - b.mq); // Lowest quantity first for storefront display
+        .sort((a, b) => a.mq - b.mq);
 
       if (compactTiers.length === 0) continue;
 
-      const offerPayload = {
-        offerId: offer.discountId,
-        numericId: offer.numericId,
-        title: offer.title,
-        widgetTitle: offer.widgetTitle || "Buy More, Save More",
-        percentage: offer.percentage,
-        products,
+      // Product payload (ultra-compact ~270 bytes per product!)
+      const productPayload = {
+        id: String(offer.numericId || offer.id || ""),
+        t: String(offer.title || ""),
+        wt: String(offer.widgetTitle || "Buy More, Save More"),
+        p: Number(offer.percentage) || 0,
         tiers: compactTiers,
       };
 
-      for (const prod of products) {
-        const fullGid = String(prod.id).trim();
-        const numericId = fullGid.split("/").pop();
+      const payloadJson = JSON.stringify(productPayload);
 
-        // Add to shop-level map (same indexing as paired_offers & selected_offers)
-        offersMap[numericId] = offerPayload;
-        offersMap["id_" + numericId] = offerPayload;
-        offersMap[fullGid] = offerPayload;
+      for (const prod of products) {
+        const productGid = toProductGid(prod.id);
+        if (!productGid) continue;
+
+        activeProductGids.add(productGid);
+        productMetafieldsToSet.push({
+          ownerId: productGid,
+          namespace: "stack_up",
+          key: "volume_tiers",
+          type: "json",
+          value: payloadJson,
+        });
       }
     }
 
-    // 4. Update Shop Metafield (`shop.metafields.stack_up.volume_offers`)
-    const mutation = `#graphql
-      mutation SetVolumeOffersShopMetafield($metafields: [MetafieldsSetInput!]!) {
+    // 4. Automatically clean up any products from expired/inactive offers
+    // that are NOT part of any other active offer
+    const productsToDelete = Array.from(inactiveProductsToClean).filter(
+      (pid) => !activeProductGids.has(toProductGid(pid))
+    );
+    if (productsToDelete.length > 0) {
+      await removeVolumeMetafieldFromProducts(admin, productsToDelete);
+    }
+
+    // 5. Batch save product metafields in chunks of 25
+    const BATCH_SIZE = 25;
+    for (let i = 0; i < productMetafieldsToSet.length; i += BATCH_SIZE) {
+      const chunk = productMetafieldsToSet.slice(i, i + BATCH_SIZE);
+      const mutation = `#graphql
+        mutation SetProductVolumeTiers($metafields: [MetafieldsSetInput!]!) {
+          metafieldsSet(metafields: $metafields) {
+            metafields {
+              id
+              key
+              namespace
+            }
+            userErrors {
+              field
+              message
+            }
+          }
+        }
+      `;
+
+      const res = await admin.graphql(mutation, {
+        variables: { metafields: chunk },
+      });
+      const json = await res.json();
+      const userErrors = json.data?.metafieldsSet?.userErrors || [];
+      if (userErrors.length > 0) {
+        console.warn("[VolumeMetafields] UserErrors saving product volume tiers:", userErrors);
+      }
+    }
+
+    // 6. Ensure the old Shop Metafield stays completely empty `{}` (only 2 bytes)
+    await admin.graphql(
+      `#graphql
+      mutation EmptyShopVolumeMetafield($metafields: [MetafieldsSetInput!]!) {
         metafieldsSet(metafields: $metafields) {
           metafields {
             id
-            key
           }
           userErrors {
-            field
             message
           }
         }
+      }`,
+      {
+        variables: {
+          metafields: [
+            {
+              ownerId: shopId,
+              namespace: "stack_up",
+              key: "volume_offers",
+              type: "json",
+              value: "{}",
+            },
+          ],
+        },
       }
-    `;
+    );
 
-    await admin.graphql(mutation, {
-      variables: {
-        metafields: [
-          {
-            ownerId: shopId,
-            namespace: "stack_up",
-            key: "volume_offers",
-            type: "json",
-            value: JSON.stringify(offersMap),
-          },
-        ],
-      },
-    });
-
-    console.log(`[VolumeMetafields] Synced ${activeOffers.length} active volume offers to shop.metafields.stack_up.volume_offers.`);
+    console.log(`[VolumeMetafields] Successfully synced ${productMetafieldsToSet.length} product(s) to product.metafields.stack_up.volume_tiers across ${activeOffers.length} offer(s).`);
   } catch (err) {
-    console.error("[VolumeMetafields] Error syncing volume offers to shop metafield:", err);
+    console.error("[VolumeMetafields] Error syncing volume offers to product metafields:", err);
   }
 }
-
-/**
- * Kept for interface compatibility; unbinding is automatic upon syncing shop metafield.
- */
-export async function removeVolumeMetafieldFromProducts() {}

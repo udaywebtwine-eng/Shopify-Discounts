@@ -6,7 +6,11 @@ import prisma from "../db.server";
 import { getShopTimezone, formatDateInShopTimezone, computeOfferStatus } from "../utils/timezone";
 import { syncAllActiveOffersToShopMetafield } from "../utils/bundleMetafields.server";
 import { syncAllActiveSelectedOffersToShopMetafield } from "../utils/selectedOffersMetafields.server";
-import { syncAllActiveVolumeOffersToShopMetafield } from "../utils/volumeMetafields.server";
+import {
+    syncAllActiveVolumeOffersToShopMetafield,
+    removeVolumeMetafieldFromProducts,
+    getVolumeProductsFromOffer,
+} from "../utils/volumeMetafields.server";
 import { ensureMasterDiscounts, cleanupLegacyDiscounts } from "../utils/masterDiscount.server";
 
 export const loader = async ({ request }) => {
@@ -143,15 +147,23 @@ export const action = async ({ request }) => {
         console.log("-------------------> [Unified Offers: Delete] Deleting offer ID:", numericId || id);
 
         try {
-            await prisma.offer.deleteMany({
-                where: {
-                    OR: [
-                        id ? { discountId: id } : undefined,
-                        numericId ? { numericId } : undefined,
-                        id ? { id } : undefined,
-                    ].filter(Boolean),
-                },
-            });
+            const whereClause = {
+                OR: [
+                    id ? { discountId: id } : undefined,
+                    numericId ? { numericId } : undefined,
+                    id ? { id } : undefined,
+                ].filter(Boolean),
+            };
+
+            const offerToDelete = await prisma.offer.findFirst({ where: whereClause });
+            if (offerToDelete && offerToDelete.type === "VOLUME") {
+                const prods = getVolumeProductsFromOffer(offerToDelete);
+                if (prods.length > 0) {
+                    await removeVolumeMetafieldFromProducts(admin, prods.map((p) => p.id));
+                }
+            }
+
+            await prisma.offer.deleteMany({ where: whereClause });
 
             // Resync all metafields immediately to Shopify to prevent any phantom discounts
             await Promise.all([

@@ -12,20 +12,24 @@
 {% endif %}
 
 {% if is_app_enabled %}
-  {% comment %} Look up volume offer for current product from shop metafield {% endcomment %}
+  {% comment %} Look up volume offer: Product metafield first (Product-level sharding), fallback to shop metafield {% endcomment %}
   {% assign current_id = product.id | append: '' %}
   {% assign prefixed_id = 'id_' | append: current_id %}
-  {% assign all_offers = shop.metafields.stack_up.volume_offers.value %}
-  {% assign volume_data = all_offers[prefixed_id] | default: all_offers[current_id] %}
+  {% assign volume_data = product.metafields.stack_up.volume_tiers.value %}
 
-  {% if volume_data == blank and all_offers != blank %}
-    {% for item in all_offers %}
-      {% assign offer_key = item[0] | append: '' %}
-      {% if offer_key == current_id or offer_key == prefixed_id %}
-        {% assign volume_data = item[1] %}
-        {% break %}
-      {% endif %}
-    {% endfor %}
+  {% if volume_data == blank %}
+    {% assign all_offers = shop.metafields.stack_up.volume_offers.value %}
+    {% assign volume_data = all_offers[prefixed_id] | default: all_offers[current_id] %}
+
+    {% if volume_data == blank and all_offers != blank %}
+      {% for item in all_offers %}
+        {% assign offer_key = item[0] | append: '' %}
+        {% if offer_key == current_id or offer_key == prefixed_id %}
+          {% assign volume_data = item[1] %}
+          {% break %}
+        {% endif %}
+      {% endfor %}
+    {% endif %}
   {% endif %}
 
   {% assign is_editor = request.design_mode %}
@@ -35,7 +39,7 @@
   {% endif %}
 
   {% if is_active or is_editor %}
-    {% assign widget_heading = volume_data.widgetTitle | default: 'Buy more, Save more' %}
+    {% assign widget_heading = volume_data.wt | default: volume_data.widgetTitle | default: 'Buy more, Save more' %}
     {% assign tiers_list = volume_data.tiers %}
     {% assign base_unit_price = product.selected_or_first_available_variant.price | default: 12540 %}
 
@@ -88,7 +92,7 @@
             {% endif %}
 
             {% assign is_default = false %}
-            {% if tier.isDefault == true or tier.isDefault == 'true' or forloop.first and volume_data.tiers[1].isDefault != true %}
+            {% if tier.df == true or tier.isDefault == true or tier.isDefault == 'true' or forloop.first and tiers_list[1].isDefault != true and tiers_list[1].df != true %}
               {% assign is_default = true %}
             {% endif %}
 
