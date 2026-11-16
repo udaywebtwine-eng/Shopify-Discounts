@@ -402,6 +402,22 @@ html:has([data-stackup-embed-active]) .stackup-addons-widget,
   transform-origin: center;
 }
 
+/* Volume Discounts ATC Button States */
+.stackup-volume-atc-btn:hover {
+  opacity: 0.95;
+  transform: translateY(-1px);
+}
+
+.stackup-volume-atc-btn:active {
+  transform: scale(0.98);
+}
+
+.stackup-volume-atc-btn:disabled {
+  opacity: 0.75 !important;
+  cursor: not-allowed !important;
+  transform: none !important;
+}
+
 /* Stock Badges & Out of Stock States */
 .stackup-item-title-wrap {
   display: flex;

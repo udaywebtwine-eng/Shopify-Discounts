@@ -24,7 +24,7 @@ import { computeOfferStatus } from "./timezone.js";
  * @param {number} idx
  * @returns {object}
  */
-export function normalizeTierToCompact(tier, idx = 0) {
+export function normalizeTierToCompact(tier, idx = 0, hasExplicitDefault = false) {
   const minQty = Number(tier.mq ?? tier.quantity ?? (idx + 1));
   const discountType = String(tier.discountType ?? tier.t ?? "percent").toLowerCase();
 
@@ -41,7 +41,8 @@ export function normalizeTierToCompact(tier, idx = 0) {
   const badge = String(tier.b ?? tier.badge ?? "").trim();
   const label = String(tier.s ?? tier.label ?? tier.subtitle ?? "").trim();
   const title = String(tier.title ?? (minQty === 1 ? "Buy 1" : (minQty === 3 ? "Buy 3+" : `Buy ${minQty}`))).trim();
-  const isDefault = Boolean(tier.isDefault ?? tier.df ?? (idx === 0));
+  const hasDf = tier.df === true || tier.df === "true" || tier.isDefault === true || tier.isDefault === "true";
+  const isDefault = hasDf || (!hasExplicitDefault && idx === 0);
 
   const tierObj = {
     mq: minQty,
@@ -223,9 +224,13 @@ export async function syncAllActiveVolumeOffersToShopMetafield(admin) {
       const products = getVolumeProductsFromOffer(offer);
       const rawTiers = getVolumeTiersFromOffer(offer);
 
+      const hasExplicitDefault = rawTiers.some(
+        (t) => t.isDefault === true || t.isDefault === "true" || t.df === true || t.df === "true"
+      );
+
       // Convert tiers to ultra-compact dictionary format
       const compactTiers = rawTiers
-        .map((t, i) => normalizeTierToCompact(t, i))
+        .map((t, i) => normalizeTierToCompact(t, i, hasExplicitDefault))
         .filter((t) => t.mq > 0)
         .sort((a, b) => a.mq - b.mq);
 

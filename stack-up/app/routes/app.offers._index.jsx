@@ -526,6 +526,10 @@ export default function AllOffersIndex() {
                 id="customize-menu"
                 accessibilityLabel="Customize widgets"
             >
+                <s-button href="/app/offers/volume/customize">
+                    Quantity Breaks Widget
+                </s-button>
+
                 <s-button href="/app/offers/paired/customize">
                     Frequently Bought Widget
                 </s-button>

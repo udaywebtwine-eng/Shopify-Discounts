@@ -95,8 +95,11 @@ export const action = async ({ request }) => {
     rawTiers = [];
   }
 
+  const hasExplicitDefault = rawTiers.some(
+    (t) => t.isDefault === true || t.isDefault === "true" || t.df === true || t.df === "true"
+  );
   const compactTiers = rawTiers
-    .map(normalizeTierToCompact)
+    .map((t, i) => normalizeTierToCompact(t, i, hasExplicitDefault))
     .filter((t) => t.mq > 0);
 
   if (compactTiers.length === 0) {

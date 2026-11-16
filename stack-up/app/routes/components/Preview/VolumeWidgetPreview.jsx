@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 
 /**
  * Helper to clean and parse price
@@ -19,7 +19,7 @@ function formatMoney(amount) {
 /**
  * Normalizes any tier object to full options format
  */
-function normalizeTier(t, idx = 0) {
+function normalizeTier(t, idx = 0, hasExplicitDefault = false) {
   const quantity = Number(t.quantity ?? t.mq ?? (idx + 1));
   let discountType = t.discountType;
   if (!discountType) {
@@ -31,7 +31,8 @@ function normalizeTier(t, idx = 0) {
   const title = t.title ?? (quantity === 1 ? "Buy 1" : (quantity === 3 ? "Buy 3+" : `Buy ${quantity}`));
   const label = t.label ?? t.s ?? (quantity === 1 ? "Standard" : (value > 0 ? `Save ${value}%` : ""));
   const badge = t.badge ?? t.b ?? (quantity === 2 ? "Most popular" : "");
-  const isDefault = Boolean(t.isDefault ?? (idx === 0));
+  const hasDf = t.df === true || t.df === "true" || t.isDefault === true || t.isDefault === "true";
+  const isDefault = hasDf || (!hasExplicitDefault && idx === 0);
 
   return {
     quantity,
@@ -55,8 +56,41 @@ export default function VolumeWidgetPreview({
   tiers = [],
   shopDomain = "",
   asSection = false,
+  widgetSettings = null,
 }) {
   const [selectedProductIndex, setSelectedProductIndex] = useState(0);
+
+  // Settings with defaults matching volume_widget_settings
+  const styles = {
+    cardSurface: widgetSettings?.styles?.cardSurface || "#ffffff",
+    borderColor: widgetSettings?.styles?.borderColor || "#e5e7eb",
+    borderWidth: widgetSettings?.styles?.borderWidth ?? 1,
+    borderRadius: widgetSettings?.styles?.borderRadius ?? 14,
+    activeBorderColor: widgetSettings?.styles?.activeBorderColor || "#111827",
+    activeBorderWidth: widgetSettings?.styles?.activeBorderWidth ?? 2,
+    badgeBg: widgetSettings?.styles?.badgeBg || "#c50707",
+    badgeTextColor: widgetSettings?.styles?.badgeTextColor || "#ffffff",
+    buttonBg: widgetSettings?.styles?.buttonBg || "#111827",
+    buttonTextColor: widgetSettings?.styles?.buttonTextColor || "#ffffff",
+    savingsBg: widgetSettings?.styles?.savingsBg || "#ecfdf5",
+    savingsTextColor: widgetSettings?.styles?.savingsTextColor || "#059669",
+  };
+
+  const display = {
+    showWidgetTitle: widgetSettings?.display?.showWidgetTitle !== false,
+    showDivider: widgetSettings?.display?.showDivider !== false,
+    showBadge: widgetSettings?.display?.showBadge !== false,
+    showSavings: widgetSettings?.display?.showSavings !== false,
+    showAddToCart: widgetSettings?.display?.showAddToCart !== false,
+  };
+
+  const globalHeading = widgetSettings?.content?.heading || "{widgettitle}";
+  const offerHeading = widgetTitle?.trim() || "Buy more, Save more";
+  const resolvedHeading = globalHeading.includes("{widgettitle}")
+    ? globalHeading.replace(/{widgettitle}/gi, offerHeading)
+    : (widgetTitle?.trim() || globalHeading);
+
+  const customButtonText = widgetSettings?.content?.buttonText || "Add {quantity} to Cart";
 
   // Fallback tiers matching standard presets
   const rawTiers = tiers && tiers.length > 0 ? tiers : [
@@ -65,10 +99,20 @@ export default function VolumeWidgetPreview({
     { quantity: 3, discountType: "percent", value: 20, title: "Buy 3+", label: "Save 20%", badge: "", isDefault: false },
   ];
 
-  const normalizedTiers = rawTiers.map(normalizeTier);
+  const hasExplicitDefault = rawTiers.some(
+    (t) => t.isDefault === true || t.isDefault === "true" || t.df === true || t.df === "true"
+  );
+  const normalizedTiers = rawTiers.map((t, idx) => normalizeTier(t, idx, hasExplicitDefault));
 
-  const defaultIndex = Math.max(0, normalizedTiers.findIndex((t) => t.isDefault));
-  const [selectedTierIndex, setSelectedTierIndex] = useState(defaultIndex >= 0 ? defaultIndex : 0);
+  const defaultIndex = normalizedTiers.findIndex((t) => t.isDefault);
+  const initialIndex = defaultIndex >= 0 ? defaultIndex : 0;
+  const [selectedTierIndex, setSelectedTierIndex] = useState(initialIndex);
+
+  useEffect(() => {
+    if (defaultIndex >= 0) {
+      setSelectedTierIndex(defaultIndex);
+    }
+  }, [defaultIndex]);
 
   // Active product to preview
   const activeProductIndex = Math.min(Math.max(0, selectedProductIndex), Math.max(0, products.length - 1));
@@ -111,36 +155,42 @@ export default function VolumeWidgetPreview({
   const cardContent = (
     <div
       style={{
-        background: "#ffffff",
-        border: "1px solid #e5e7eb",
-        borderRadius: "14px",
+        background: styles.cardSurface,
+        border: `${styles.borderWidth}px solid ${styles.borderColor}`,
+        borderRadius: `${styles.borderRadius}px`,
         padding: "18px",
         boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
       }}
     >
       {/* Widget Heading with Horizontal Divider Line */}
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: "12px",
-          marginBottom: "16px",
-        }}
-      >
-        <h3
+      {(display.showWidgetTitle || display.showDivider) && (
+        <div
           style={{
-            margin: 0,
-            fontSize: "16px",
-            fontWeight: 700,
-            color: "#111827",
-            whiteSpace: "nowrap",
-            letterSpacing: "-0.01em",
+            display: "flex",
+            alignItems: "center",
+            gap: "12px",
+            marginBottom: "16px",
           }}
         >
-          {widgetTitle?.trim() || "Buy more, Save more"}
-        </h3>
-        <div style={{ flex: 1, height: "1px", background: "#e5e7eb" }}></div>
-      </div>
+          {display.showWidgetTitle && (
+            <h3
+              style={{
+                margin: 0,
+                fontSize: "16px",
+                fontWeight: 700,
+                color: "#111827",
+                whiteSpace: "nowrap",
+                letterSpacing: "-0.01em",
+              }}
+            >
+              {resolvedHeading}
+            </h3>
+          )}
+          {display.showDivider && (
+            <div style={{ flex: 1, height: "1px", background: styles.borderColor }}></div>
+          )}
+        </div>
+      )}
 
       {/* Target Product Bar */}
       <div
@@ -228,28 +278,30 @@ export default function VolumeWidgetPreview({
                 alignItems: "center",
                 justifyContent: "space-between",
                 padding: "16px 18px",
-                borderRadius: "12px",
-                border: isSelected ? "2px solid #111827" : "1px solid #d1d5db",
+                borderRadius: `${Math.max(6, styles.borderRadius - 2)}px`,
+                border: isSelected
+                  ? `${styles.activeBorderWidth}px solid ${styles.activeBorderColor}`
+                  : `1px solid ${styles.borderColor}`,
                 background: "#ffffff",
                 cursor: "pointer",
                 transition: "all 0.15s ease",
               }}
             >
-              {/* Optional Red Ribbon for Badge (e.g. Most popular) */}
-              {tier.badge && (
+              {/* Optional Ribbon for Badge (e.g. Most popular) */}
+              {display.showBadge && tier.badge && (
                 <div
                   style={{
                     position: "absolute",
                     top: "-10px",
                     right: "18px",
-                    background: "#c50707",
-                    color: "#ffffff",
+                    background: styles.badgeBg,
+                    color: styles.badgeTextColor,
                     fontSize: "11px",
                     fontWeight: 700,
                     padding: "2px 10px",
                     borderRadius: "4px 4px 0 0",
                     letterSpacing: "0.02em",
-                    boxShadow: "0 2px 4px rgba(197, 7, 7, 0.25)",
+                    boxShadow: "0 2px 4px rgba(0,0,0,0.18)",
                     zIndex: 2,
                   }}
                 >
@@ -264,7 +316,9 @@ export default function VolumeWidgetPreview({
                     width: "20px",
                     height: "20px",
                     borderRadius: "50%",
-                    border: isSelected ? "6px solid #111827" : "2px solid #9ca3af",
+                    border: isSelected
+                      ? `6px solid ${styles.activeBorderColor}`
+                      : "2px solid #9ca3af",
                     background: "#ffffff",
                     boxSizing: "border-box",
                     flexShrink: 0,
@@ -324,66 +378,73 @@ export default function VolumeWidgetPreview({
       </div>
 
       {/* Footer / CTA Button */}
-      <div style={{ marginTop: "16px" }}>
-        <button
-          type="button"
-          style={{
-            width: "100%",
-            background: "#111827",
-            color: "#ffffff",
-            border: "none",
-            borderRadius: "10px",
-            padding: "13px 16px",
-            fontSize: "13px",
-            fontWeight: 700,
-            cursor: "pointer",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: "8px",
-            boxShadow: "0 2px 4px rgba(0,0,0,0.08)",
-          }}
-        >
-          <svg
-            width="14"
-            height="14"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2.2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z" />
-            <line x1="3" y1="6" x2="21" y2="6" />
-            <path d="M16 10a4 4 0 0 1-8 0" />
-          </svg>
-          <span>Add {activeQty} to Cart • {formatMoney(discountedTotal)}</span>
-        </button>
+      {(display.showAddToCart || (display.showSavings && savedAmount > 0)) && (
+        <div style={{ marginTop: "16px" }}>
+          {display.showAddToCart && (
+            <button
+              type="button"
+              style={{
+                width: "100%",
+                background: styles.buttonBg,
+                color: styles.buttonTextColor,
+                border: "none",
+                borderRadius: `${Math.max(6, styles.borderRadius - 4)}px`,
+                padding: "13px 16px",
+                fontSize: "14px",
+                fontWeight: 700,
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: "8px",
+                boxShadow: "0 2px 4px rgba(0,0,0,0.08)",
+                transition: "opacity 0.15s ease",
+              }}
+            >
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z" />
+                <line x1="3" y1="6" x2="21" y2="6" />
+                <path d="M16 10a4 4 0 0 1-8 0" />
+              </svg>
+              <span>
+                {customButtonText.replace(/\{quantity\}/gi, String(activeQty))} • {formatMoney(discountedTotal)}
+              </span>
+            </button>
+          )}
 
-        {savedAmount > 0 && (
-          <div
-            style={{
-              marginTop: "8px",
-              padding: "6px 8px",
-              background: "#ecfdf5",
-              borderRadius: "6px",
-              textAlign: "center",
-              fontSize: "11px",
-              fontWeight: 700,
-              color: "#059669",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: "4px",
-            }}
-          >
-            <span>🎉 Total Savings:</span>
-            <span>{formatMoney(savedAmount)}</span>
-            <span>({activeTier.value}% OFF)</span>
-          </div>
-        )}
-      </div>
+          {display.showSavings && savedAmount > 0 && (
+            <div
+              style={{
+                marginTop: "8px",
+                padding: "6px 8px",
+                background: styles.savingsBg,
+                borderRadius: "6px",
+                textAlign: "center",
+                fontSize: "11px",
+                fontWeight: 700,
+                color: styles.savingsTextColor,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: "4px",
+              }}
+            >
+              <span>🎉 Total Savings:</span>
+              <span>{formatMoney(savedAmount)}</span>
+              <span>({activeTier.value}% OFF)</span>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 

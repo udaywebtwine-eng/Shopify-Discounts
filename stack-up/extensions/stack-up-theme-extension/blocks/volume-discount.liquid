@@ -39,7 +39,49 @@
   {% endif %}
 
   {% if is_active or is_editor %}
-    {% assign widget_heading = volume_data.wt | default: volume_data.widgetTitle | default: 'Buy more, Save more' %}
+    {% assign custom_settings = shop.metafields.stack_up.volume_widget_settings.value %}
+    {% assign card_surface = custom_settings.styles.cardSurface | default: '#ffffff' %}
+    {% assign border_color = custom_settings.styles.borderColor | default: '#e5e7eb' %}
+    {% assign border_width = custom_settings.styles.borderWidth | default: 1 %}
+    {% assign border_radius = custom_settings.styles.borderRadius | default: 14 %}
+    {% assign active_border_color = custom_settings.styles.activeBorderColor | default: '#111827' %}
+    {% assign active_border_width = custom_settings.styles.activeBorderWidth | default: 2 %}
+    {% assign badge_bg = custom_settings.styles.badgeBg | default: '#c50707' %}
+    {% assign badge_color = custom_settings.styles.badgeTextColor | default: '#ffffff' %}
+    {% assign btn_bg = custom_settings.styles.buttonBg | default: '#111827' %}
+    {% assign btn_color = custom_settings.styles.buttonTextColor | default: '#ffffff' %}
+
+    {% assign show_title = true %}
+    {% if custom_settings.display.showWidgetTitle == false %}
+      {% assign show_title = false %}
+    {% endif %}
+
+    {% assign show_divider = true %}
+    {% if custom_settings.display.showDivider == false %}
+      {% assign show_divider = false %}
+    {% endif %}
+
+    {% assign show_badge = true %}
+    {% if custom_settings.display.showBadge == false %}
+      {% assign show_badge = false %}
+    {% endif %}
+
+    {% assign show_atc = true %}
+    {% if custom_settings.display.showAddToCart == false %}
+      {% assign show_atc = false %}
+    {% endif %}
+
+    {% assign default_heading = volume_data.wt | default: volume_data.widgetTitle | default: 'Buy more, Save more' %}
+    {% assign global_heading = custom_settings.content.heading | default: '{widgettitle}' %}
+    {% if global_heading contains '{widgettitle}' %}
+      {% assign widget_heading = global_heading | replace: '{widgettitle}', default_heading %}
+    {% elsif volume_data.wt != blank or volume_data.widgetTitle != blank %}
+      {% assign widget_heading = default_heading %}
+    {% else %}
+      {% assign widget_heading = global_heading %}
+    {% endif %}
+
+    {% assign btn_template = custom_settings.content.buttonText | default: 'Add {quantity} to Cart' %}
     {% assign tiers_list = volume_data.tiers %}
     {% assign base_unit_price = product.selected_or_first_available_variant.price | default: 12540 %}
 
@@ -48,7 +90,11 @@
       id="stackup-volume-widget-{{ product.id }}"
       data-product-id="{{ product.id }}"
       data-base-price="{{ base_unit_price }}"
-      style="margin: 20px 0; border: 1px solid #e5e7eb; border-radius: 14px; padding: 18px; background: #ffffff; box-shadow: 0 1px 3px rgba(0,0,0,0.04); font-family: inherit;"
+      data-btn-template="{{ btn_template | escape }}"
+      data-active-border="{{ active_border_color }}"
+      data-active-border-width="{{ active_border_width }}"
+      data-normal-border="{{ border_color }}"
+      style="margin: 20px 0; border: {{ border_width }}px solid {{ border_color }}; border-radius: {{ border_radius }}px; padding: 18px; background: {{ card_surface }}; box-shadow: 0 1px 3px rgba(0,0,0,0.04); font-family: inherit;"
     >
       {% if is_editor and is_active == false %}
         <div style="background: #eff6ff; border: 1px solid #bfdbfe; color: #1e40af; padding: 6px 10px; border-radius: 6px; font-size: 11px; margin-bottom: 12px; display: flex; align-items: center; gap: 6px;">
@@ -58,16 +104,30 @@
       {% endif %}
 
       <!-- Header with Divider Line -->
-      <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 16px;">
-        <h3 style="margin: 0; font-size: 16px; font-weight: 700; color: #111827; white-space: nowrap; letter-spacing: -0.01em;">
-          {{ widget_heading }}
-        </h3>
-        <div style="flex: 1; height: 1px; background: #e5e7eb;"></div>
-      </div>
+      {% if show_title or show_divider %}
+        <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 16px;">
+          {% if show_title %}
+            <h3 style="margin: 0; font-size: 16px; font-weight: 700; color: #111827; white-space: nowrap; letter-spacing: -0.01em;">
+              {{ widget_heading }}
+            </h3>
+          {% endif %}
+          {% if show_divider %}
+            <div style="flex: 1; height: 1px; background: {{ border_color }};"></div>
+          {% endif %}
+        </div>
+      {% endif %}
 
       <!-- Tiers List -->
       <div class="stackup-volume-tiers" style="display: flex; flex-direction: column; gap: 12px;">
         {% if is_active %}
+          {% assign has_explicit_default = false %}
+          {% for t in tiers_list %}
+            {% if t.df == true or t.df == 'true' or t.isDefault == true or t.isDefault == 'true' %}
+              {% assign has_explicit_default = true %}
+              {% break %}
+            {% endif %}
+          {% endfor %}
+
           {% for tier in tiers_list %}
             {% assign qty = tier.mq | default: tier.quantity | default: 1 | times: 1 %}
             {% assign discount_val = tier.d | default: tier.value | default: 0 | times: 1 %}
@@ -92,7 +152,9 @@
             {% endif %}
 
             {% assign is_default = false %}
-            {% if tier.df == true or tier.isDefault == true or tier.isDefault == 'true' or forloop.first and tiers_list[1].isDefault != true and tiers_list[1].df != true %}
+            {% if tier.df == true or tier.df == 'true' or tier.isDefault == true or tier.isDefault == 'true' %}
+              {% assign is_default = true %}
+            {% elsif has_explicit_default == false and forloop.first %}
               {% assign is_default = true %}
             {% endif %}
 
@@ -106,16 +168,17 @@
 
             <div
               class="stackup-volume-tier-card {% if is_default %}active{% endif %}"
+              data-is-default="{% if is_default %}true{% else %}false{% endif %}"
               data-qty="{{ qty }}"
               data-discount="{{ discount_val }}"
               data-type="{{ tier.t | default: 'P' }}"
               data-unit-price="{{ tier_unit_price }}"
               data-total-price="{{ tier_total_price }}"
-              style="position: relative; display: flex; align-items: center; justify-content: space-between; padding: 16px 18px; border-radius: 12px; border: {% if is_default %}2px solid #111827{% else %}1px solid #d1d5db{% endif %}; background: #ffffff; cursor: pointer; transition: all 0.15s ease;"
+              style="position: relative; display: flex; align-items: center; justify-content: space-between; padding: 16px 18px; border-radius: 12px; border: {% if is_default %}{{ active_border_width }}px solid {{ active_border_color }}{% else %}1px solid {{ border_color }}{% endif %}; background: #ffffff; cursor: pointer; transition: all 0.15s ease;"
             >
               <!-- Optional Red Ribbon for Badge -->
-              {% if tier_badge != blank %}
-                <div style="position: absolute; top: -10px; right: 18px; background: #c50707; color: #ffffff; font-size: 11px; font-weight: 700; padding: 2px 10px; border-radius: 4px 4px 0 0; letter-spacing: 0.02em; box-shadow: 0 2px 4px rgba(197, 7, 7, 0.25); z-index: 2;">
+              {% if show_badge and tier_badge != blank %}
+                <div style="position: absolute; top: -10px; right: 18px; background: {{ badge_bg }}; color: {{ badge_color }}; font-size: 11px; font-weight: 700; padding: 2px 10px; border-radius: 4px 4px 0 0; letter-spacing: 0.02em; box-shadow: 0 2px 4px rgba(0, 0, 0, 0.18); z-index: 2;">
                   {{ tier_badge }}
                 </div>
               {% endif %}
@@ -124,7 +187,7 @@
               <div style="display: flex; align-items: center; gap: 12px;">
                 <div
                   class="stackup-tier-radio"
-                  style="width: 20px; height: 20px; border-radius: 50%; border: {% if is_default %}6px solid #111827{% else %}2px solid #9ca3af{% endif %}; background: #ffffff; box-sizing: border-box; flex-shrink: 0; transition: border 0.15s ease;"
+                  style="width: 20px; height: 20px; border-radius: 50%; border: {% if is_default %}6px solid {{ active_border_color }}{% else %}2px solid #9ca3af{% endif %}; background: #ffffff; box-sizing: border-box; flex-shrink: 0; transition: border 0.15s ease;"
                 ></div>
                 <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
                   <span style="font-size: 15px; font-weight: 700; color: #111827;">
@@ -190,11 +253,13 @@
             data-type="P"
             data-unit-price="{{ mock_p2 }}"
             data-total-price="{{ mock_t2 }}"
-            style="position: relative; display: flex; align-items: center; justify-content: space-between; padding: 16px 18px; border-radius: 12px; border: 1px solid #d1d5db; background: #ffffff; cursor: pointer; transition: all 0.15s ease;"
+            style="position: relative; display: flex; align-items: center; justify-content: space-between; padding: 16px 18px; border-radius: 12px; border: 1px solid {{ border_color }}; background: #ffffff; cursor: pointer; transition: all 0.15s ease;"
           >
-            <div style="position: absolute; top: -10px; right: 18px; background: #c50707; color: #ffffff; font-size: 11px; font-weight: 700; padding: 2px 10px; border-radius: 4px 4px 0 0; letter-spacing: 0.02em; box-shadow: 0 2px 4px rgba(197, 7, 7, 0.25); z-index: 2;">
-              Most popular
-            </div>
+            {% if show_badge %}
+              <div style="position: absolute; top: -10px; right: 18px; background: {{ badge_bg }}; color: {{ badge_color }}; font-size: 11px; font-weight: 700; padding: 2px 10px; border-radius: 4px 4px 0 0; letter-spacing: 0.02em; box-shadow: 0 2px 4px rgba(0, 0, 0, 0.18); z-index: 2;">
+                {{ default_badge_text }}
+              </div>
+            {% endif %}
             <div style="display: flex; align-items: center; gap: 12px;">
               <div class="stackup-tier-radio" style="width: 20px; height: 20px; border-radius: 50%; border: 2px solid #9ca3af; background: #ffffff; box-sizing: border-box; flex-shrink: 0;"></div>
               <div style="display: flex; align-items: center; gap: 8px;">
@@ -217,7 +282,7 @@
             data-type="P"
             data-unit-price="{{ mock_p3 }}"
             data-total-price="{{ mock_t3 }}"
-            style="position: relative; display: flex; align-items: center; justify-content: space-between; padding: 16px 18px; border-radius: 12px; border: 1px solid #d1d5db; background: #ffffff; cursor: pointer; transition: all 0.15s ease;"
+            style="position: relative; display: flex; align-items: center; justify-content: space-between; padding: 16px 18px; border-radius: 12px; border: 1px solid {{ border_color }}; background: #ffffff; cursor: pointer; transition: all 0.15s ease;"
           >
             <div style="display: flex; align-items: center; gap: 12px;">
               <div class="stackup-tier-radio" style="width: 20px; height: 20px; border-radius: 50%; border: 2px solid #9ca3af; background: #ffffff; box-sizing: border-box; flex-shrink: 0;"></div>
@@ -236,15 +301,59 @@
       </div>
 
       <!-- Add to Cart Button -->
-      <div style="margin-top: 18px;">
-        <button
-          type="button"
-          class="stackup-volume-atc-btn"
-          style="width: 100%; background: #111827; color: #ffffff; border: none; border-radius: 10px; padding: 14px 18px; font-size: 14px; font-weight: 700; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.08); transition: opacity 0.2s ease;"
+      {% if show_atc %}
+        <div style="margin-top: 18px;">
+          <button
+            type="button"
+            class="stackup-volume-atc-btn"
+            style="width: 100%; min-height: 48px; background: {{ btn_bg }}; color: {{ btn_color }}; border: none; border-radius: 10px; padding: 14px 18px; font-size: 14px; font-weight: 700; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.08); transition: opacity 0.2s ease;"
+          >
+            <span class="stackup-btn-icon" style="display: inline-flex; align-items: center;">
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"></path>
+                <line x1="3" y1="6" x2="21" y2="6"></line>
+                <path d="M16 10a4 4 0 0 1-8 0"></path>
+              </svg>
+            </span>
+            <span class="stackup-atc-text">Add to Cart</span>
+            <span class="stackup-btn-spinner" style="display: none; align-items: center;">
+              <svg
+                class="stackup-spin"
+                width="18"
+                height="18"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2.5"
+              >
+                <circle cx="12" cy="12" r="10" stroke-opacity="0.25"></circle>
+                <path d="M12 2a10 10 0 0 1 10 10" stroke-linecap="round"></path>
+              </svg>
+            </span>
+          </button>
+        </div>
+
+        <div
+          class="stackup-volume-stock-alert"
+          style="display: none; align-items: center; gap: 8px; margin-top: 10px; padding: 10px 14px; background: #fef2f2; border: 1px solid #fee2e2; border-radius: 8px; color: #991b1b; font-size: 13px;"
         >
-          <span class="stackup-atc-text">Add to Cart</span>
-        </button>
-      </div>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink: 0;">
+            <circle cx="12" cy="12" r="10"></circle>
+            <line x1="12" y1="8" x2="12" y2="12"></line>
+            <line x1="12" y1="16" x2="12.01" y2="16"></line>
+          </svg>
+          <span class="stackup-volume-alert-text">Could not add items to cart. Please try again.</span>
+        </div>
+      {% endif %}
     </div>
 
     <script>
@@ -255,24 +364,34 @@
         const cards = widget.querySelectorAll(".stackup-volume-tier-card");
         const atcBtn = widget.querySelector(".stackup-volume-atc-btn");
         const atcText = widget.querySelector(".stackup-atc-text");
+        const btnIcon = widget.querySelector(".stackup-btn-icon");
+        const btnSpinner = widget.querySelector(".stackup-btn-spinner");
+        const stockAlert = widget.querySelector(".stackup-volume-stock-alert");
+        const alertText = widget.querySelector(".stackup-volume-alert-text");
+        const btnTemplate = widget.getAttribute("data-btn-template") || "Add {quantity} to Cart";
+        const activeBorder = widget.getAttribute("data-active-border") || "#111827";
+        const activeWidth = widget.getAttribute("data-active-border-width") || "2";
+        const normalBorder = widget.getAttribute("data-normal-border") || "#e5e7eb";
 
-        let activeCard = widget.querySelector(".stackup-volume-tier-card.active") || cards[0];
+        let activeCard = widget.querySelector(".stackup-volume-tier-card[data-is-default='true']") ||
+                         widget.querySelector(".stackup-volume-tier-card.active") ||
+                         cards[0];
 
         function updateUI() {
           if (!activeCard) return;
 
           cards.forEach(c => {
             const isSel = c === activeCard;
-            c.style.border = isSel ? "2px solid #111827" : "1px solid #d1d5db";
+            c.style.border = isSel ? (activeWidth + "px solid " + activeBorder) : ("1px solid " + normalBorder);
             const radio = c.querySelector(".stackup-tier-radio");
             if (radio) {
-              radio.style.border = isSel ? "6px solid #111827" : "2px solid #9ca3af";
+              radio.style.border = isSel ? ("6px solid " + activeBorder) : "2px solid #9ca3af";
             }
           });
 
           const qty = activeCard.getAttribute("data-qty") || "1";
           if (atcText) {
-            atcText.textContent = `Add ${qty} to Cart`;
+            atcText.textContent = btnTemplate.replace("{quantity}", qty);
           }
 
           // Sync with theme quantity input if present on the page
@@ -300,11 +419,18 @@
 
             if (!variantId) return;
 
-            atcBtn.style.opacity = "0.7";
+            // Show loader spinner state
             atcBtn.disabled = true;
+            atcBtn.style.opacity = "0.75";
+            atcBtn.style.cursor = "not-allowed";
+            if (btnIcon) btnIcon.style.display = "none";
+            if (atcText) atcText.style.display = "none";
+            if (btnSpinner) btnSpinner.style.display = "inline-flex";
+            if (stockAlert) stockAlert.style.display = "none";
 
             try {
-              const res = await fetch("/cart/add.js", {
+              const rootUrl = window.Shopify?.routes?.root || "/";
+              const res = await fetch(`${rootUrl}cart/add.js`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json", "Accept": "application/json" },
                 body: JSON.stringify({
@@ -312,15 +438,29 @@
                 })
               });
 
-              if (res.ok) {
-                document.dispatchEvent(new CustomEvent("cart:updated", { bubbles: true }));
-                document.dispatchEvent(new CustomEvent("cart:refresh", { bubbles: true }));
-                window.location.href = "/cart";
+              const responseData = await res.json().catch(() => ({}));
+
+              if (!res.ok) {
+                throw new Error(responseData.description || responseData.message || "This product is out of stock, not available.");
               }
+
+              document.dispatchEvent(new CustomEvent("cart:updated", { bubbles: true }));
+              document.dispatchEvent(new CustomEvent("cart:refresh", { bubbles: true }));
+
+              // Keep loader running while navigating to checkout
+              window.location.href = `${rootUrl}checkout`;
             } catch (e) {
               console.error("[StackUp Volume] Error adding to cart:", e);
-            } finally {
+              if (stockAlert && alertText) {
+                alertText.textContent = e.message || "Could not add items to cart. Please try again.";
+                stockAlert.style.display = "flex";
+              }
+              // Reset loader on error so customer can retry
+              if (btnSpinner) btnSpinner.style.display = "none";
+              if (btnIcon) btnIcon.style.display = "inline-flex";
+              if (atcText) atcText.style.display = "";
               atcBtn.style.opacity = "1";
+              atcBtn.style.cursor = "pointer";
               atcBtn.disabled = false;
             }
           });

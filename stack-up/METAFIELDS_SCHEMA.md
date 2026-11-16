@@ -213,4 +213,17 @@ To ensure consistency across the entire app and prevent confusion for future AI 
 | **`h`** | Handle | - | Product handle | Product handle |
 | **`img`** | Image URL | - | Image URL | Image URL |
 
+---
+
+## 5. Shop-Level Widget Customization Settings
+
+Each widget has a dedicated customization route in the admin app (`/app/offers/*/customize`) where merchants can configure colors, fonts, borders, badge ribbons, and button text without editing theme code.
+
+| Function | Metafield Key | Route | Description |
+| :--- | :--- | :--- | :--- |
+| **Volume Discounts / Quantity Breaks** | `shop.metafields.stack_up.volume_widget_settings` | `/app/offers/volume/customize` | Configures card background, borders, badge ribbon colors, active tier highlight, button text, and total savings banner. |
+| **Selected Add-ons** | `shop.metafields.stack_up.selected_widget_settings` | `/app/offers/selected/customize` | Configures add-on list appearance, checkboxes, companion badges, total box, and Add to Cart button. |
+| **Paired Bundles** | `shop.metafields.stack_up.paired_widget_settings` | `/app/offers/paired/customize` | Configures bundle box, plus separator icon, discount badge, sub-product label, and Add Both button. |
+
+
 

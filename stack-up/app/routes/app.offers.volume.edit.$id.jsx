@@ -32,7 +32,7 @@ import {
 import { getActiveMainProductsMap, checkMainProductConflicts } from "../utils/productConflicts.server";
 import VolumeWidgetPreview from "./components/Preview/VolumeWidgetPreview";
 
-function normalizeTier(tier, idx = 0) {
+function normalizeTier(tier, idx = 0, hasExplicitDefault = false) {
   const minQty = Number(tier.mq ?? tier.quantity ?? (idx + 1));
   const discountType = String(tier.discountType ?? tier.t ?? "percent").toLowerCase();
 
@@ -49,7 +49,8 @@ function normalizeTier(tier, idx = 0) {
   const badge = String(tier.b ?? tier.badge ?? "").trim();
   const label = String(tier.s ?? tier.label ?? tier.subtitle ?? "").trim();
   const title = String(tier.title ?? (minQty === 1 ? "Buy 1" : (minQty === 3 ? "Buy 3+" : `Buy ${minQty}`))).trim();
-  const isDefault = Boolean(tier.isDefault ?? (idx === 0));
+  const hasDf = tier.df === true || tier.df === "true" || tier.isDefault === true || tier.isDefault === "true";
+  const isDefault = hasDf || (!hasExplicitDefault && idx === 0);
 
   return {
     mq: minQty,
@@ -64,6 +65,7 @@ function normalizeTier(tier, idx = 0) {
     label: label,
     title: title,
     isDefault: isDefault,
+    df: isDefault ? true : undefined,
   };
 }
 
@@ -294,8 +296,11 @@ export const action = async ({ request, params }) => {
     rawTiers = [];
   }
 
+  const hasExplicitDefault = rawTiers.some(
+    (t) => t.isDefault === true || t.isDefault === "true" || t.df === true || t.df === "true"
+  );
   const compactTiers = rawTiers
-    .map(normalizeTierToCompact)
+    .map((t, i) => normalizeTierToCompact(t, i, hasExplicitDefault))
     .filter((t) => t.mq > 0);
 
   if (compactTiers.length === 0) {
