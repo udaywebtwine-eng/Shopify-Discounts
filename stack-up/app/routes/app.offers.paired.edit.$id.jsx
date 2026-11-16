@@ -4,6 +4,7 @@ import {
     useActionData,
     useNavigation,
     useSubmit,
+    useSearchParams,
     redirect,
 } from "react-router";
 import { useAppBridge, SaveBar } from "@shopify/app-bridge-react";
@@ -370,7 +371,7 @@ export const action = async ({ request, params }) => {
                 ).catch(() => { });
             }
 
-            return redirect(`/app/offers/paired/edit/${numericId}`);
+            return redirect(`/app/offers/paired/edit/${numericId}?deactivated=true`);
         } catch (err) {
             console.error("-------------------> [EditAction] Error deactivating offer:", err);
             return { error: err instanceof Error ? err.message : "Failed to deactivate offer." };
@@ -402,7 +403,7 @@ export const action = async ({ request, params }) => {
                 ).catch(() => { });
             }
 
-            return redirect(`/app/offers/paired/edit/${numericId}`);
+            return redirect(`/app/offers/paired/edit/${numericId}?activated=true`);
         } catch (err) {
             console.error("-------------------> [EditAction] Error activating offer:", err);
             return { error: err instanceof Error ? err.message : "Failed to activate offer." };
@@ -606,7 +607,33 @@ export default function PairedProductsEdit() {
     const actionData = useActionData();
     const navigation = useNavigation();
     const submit = useSubmit();
+    const [searchParams, setSearchParams] = useSearchParams();
     const shopify = useAppBridge();
+
+    // Handle toast notifications & modal hides based on query params
+    useEffect(() => {
+        if (searchParams.get("deactivated") === "true") {
+            shopify.toast.show("Offer deactivated successfully!");
+            shopify.modal.hide("deactivate-offer-modal");
+            const modal = document.getElementById("deactivate-offer-modal");
+            if (modal?.hideOverlay) {
+                modal.hideOverlay();
+            }
+            setSearchParams((prev) => {
+                const next = new URLSearchParams(prev);
+                next.delete("deactivated");
+                return next;
+            }, { replace: true });
+        }
+        if (searchParams.get("activated") === "true") {
+            shopify.toast.show("Offer activated successfully!");
+            setSearchParams((prev) => {
+                const next = new URLSearchParams(prev);
+                next.delete("activated");
+                return next;
+            }, { replace: true });
+        }
+    }, [searchParams, shopify, setSearchParams]);
 
     const [title, setTitle] = useState(data.title);
     const [widgetTitle, setWidgetTitle] = useState(data.widgetTitle || "");
@@ -648,6 +675,10 @@ export default function PairedProductsEdit() {
     const [isSaving, setIsSaving] = useState(false);
     const isRedirecting = navigation.state === "loading" && !navigation.location?.pathname?.includes("/edit/");
     const isSubmitting = (isSaving || navigation.state === "submitting" || (navigation.state === "loading" && navigation.formMethod?.toLowerCase() === "post")) && !isRedirecting;
+    const submittingIntent = navigation.formData?.get("intent");
+    const isDeactivating = isSubmitting && submittingIntent === "deactivate";
+    const isDeleting = isSubmitting && submittingIntent === "delete";
+    const isActivating = isSubmitting && submittingIntent === "activate";
 
     // Helper to format selection IDs and variants for Shopify App Bridge ResourcePicker
     const buildResourceSelection = (products) =>
@@ -1085,6 +1116,8 @@ export default function PairedProductsEdit() {
             <s-button
                 slot="secondary-actions"
                 commandFor="offer-actions"
+                loading={isActivating ? "true" : undefined}
+                disabled={isSubmitting ? "true" : undefined}
             >
                 More actions
             </s-button>
@@ -1094,13 +1127,14 @@ export default function PairedProductsEdit() {
                 accessibilityLabel="Offer actions"
             >
                 {isDeactivatedOrExpired ? (
-                    <s-button onClick={handleActivateOffer}>
+                    <s-button onClick={handleActivateOffer} loading={isActivating ? "true" : undefined} disabled={isSubmitting ? "true" : undefined}>
                         Activate
                     </s-button>
                 ) : (
                     <s-button
                         commandFor="deactivate-offer-modal"
                         command="--show"
+                        disabled={isSubmitting ? "true" : undefined}
                     >
                         Deactivate
                     </s-button>
@@ -1110,6 +1144,7 @@ export default function PairedProductsEdit() {
                     tone="critical"
                     commandFor="delete-offer-modal"
                     command="--show"
+                    disabled={isSubmitting ? "true" : undefined}
                 >
                     Delete
                 </s-button>
@@ -1131,10 +1166,9 @@ export default function PairedProductsEdit() {
                 <s-button
                     slot="primary-action"
                     variant="primary"
-                    tone="critical"
-                    commandFor="deactivate-offer-modal"
-                    command="--hide"
                     onClick={handleDeactivateOffer}
+                    loading={isDeactivating ? "true" : undefined}
+                    disabled={isSubmitting ? "true" : undefined}
                 >
                     Deactivate
                 </s-button>
@@ -1143,6 +1177,7 @@ export default function PairedProductsEdit() {
                     variant="secondary"
                     commandFor="deactivate-offer-modal"
                     command="--hide"
+                    disabled={isSubmitting ? "true" : undefined}
                 >
                     Cancel
                 </s-button>
@@ -1163,9 +1198,9 @@ export default function PairedProductsEdit() {
                     slot="primary-action"
                     variant="primary"
                     tone="critical"
-                    commandFor="delete-offer-modal"
-                    command="--hide"
                     onClick={handleDeleteOffer}
+                    loading={isDeleting ? "true" : undefined}
+                    disabled={isSubmitting ? "true" : undefined}
                 >
                     Delete offer
                 </s-button>
@@ -1174,6 +1209,7 @@ export default function PairedProductsEdit() {
                     variant="secondary"
                     commandFor="delete-offer-modal"
                     command="--hide"
+                    disabled={isSubmitting ? "true" : undefined}
                 >
                     Cancel
                 </s-button>

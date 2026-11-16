@@ -4,6 +4,7 @@ import {
   useActionData,
   useNavigation,
   useSubmit,
+  useSearchParams,
   redirect,
 } from "react-router";
 import { useAppBridge, SaveBar } from "@shopify/app-bridge-react";
@@ -218,7 +219,7 @@ export const action = async ({ request, params }) => {
       }
       await syncAllActiveVolumeOffersToShopMetafield(admin);
 
-      return redirect(`/app/offers/volume/edit/${numericId}`);
+      return redirect(`/app/offers/volume/edit/${numericId}?deactivated=true`);
     } catch (err) {
       return { error: err instanceof Error ? err.message : "Failed to deactivate offer." };
     }
@@ -233,7 +234,7 @@ export const action = async ({ request, params }) => {
       });
       await syncAllActiveVolumeOffersToShopMetafield(admin);
 
-      return redirect(`/app/offers/volume/edit/${numericId}`);
+      return redirect(`/app/offers/volume/edit/${numericId}?activated=true`);
     } catch (err) {
       return { error: err instanceof Error ? err.message : "Failed to activate offer." };
     }
@@ -416,23 +417,57 @@ export const action = async ({ request, params }) => {
 };
 
 export default function VolumeEdit() {
-  const { offer, shopTimezone, timezoneAbbr, currentTime, usedMainProducts } = useLoaderData();
+  const { offer, shop, shopTimezone, timezoneAbbr, currentTime, usedMainProducts } = useLoaderData();
   const actionData = useActionData();
   const navigation = useNavigation();
   const submit = useSubmit();
+  const [searchParams, setSearchParams] = useSearchParams();
   const shopify = useAppBridge();
 
   const timeOptions = useMemo(() => generateTimeOptions(), []);
   const todayStr = useMemo(() => getShopTodayDate(shopTimezone), [shopTimezone]);
 
+  // Handle toast notifications & modal hides based on query params
+  useEffect(() => {
+    if (searchParams.get("deactivated") === "true") {
+      shopify.toast.show("Offer deactivated successfully!");
+      shopify.modal.hide("deactivate-offer-modal");
+      const modal = document.getElementById("deactivate-offer-modal");
+      if (modal?.hideOverlay) {
+        modal.hideOverlay();
+      }
+      setSearchParams((prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete("deactivated");
+        return next;
+      }, { replace: true });
+    }
+    if (searchParams.get("activated") === "true") {
+      shopify.toast.show("Offer activated successfully!");
+      setSearchParams((prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete("activated");
+        return next;
+      }, { replace: true });
+    }
+    if (searchParams.get("saved") === "true") {
+      shopify.toast.show("Volume offer updated successfully!");
+      setSearchParams((prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete("saved");
+        return next;
+      }, { replace: true });
+    }
+  }, [searchParams, shopify, setSearchParams]);
+
   const initialTiers = useMemo(() => {
     return offer.tiers && offer.tiers.length > 0
       ? offer.tiers.map((t, i) => normalizeTier(t, i))
       : [
-          { quantity: 1, discountType: "none", value: 0, title: "Buy {quantity}", label: "Standard", badge: "", isDefault: true, mq: 1, d: 0, t: "N", b: "", s: "Standard" },
-          { quantity: 2, discountType: "percent", value: 10, title: "Buy {quantity}", label: "Save 10%", badge: "Most popular", isDefault: false, mq: 2, d: 10, t: "P", b: "Most popular", s: "Save 10%" },
-          { quantity: 3, discountType: "percent", value: 20, title: "Buy 3+", label: "Save 20%", badge: "", isDefault: false, mq: 3, d: 20, t: "P", b: "", s: "Save 20%" },
-        ];
+        { quantity: 1, discountType: "none", value: 0, title: "Buy {quantity}", label: "Standard", badge: "", isDefault: true, mq: 1, d: 0, t: "N", b: "", s: "Standard" },
+        { quantity: 2, discountType: "percent", value: 10, title: "Buy {quantity}", label: "Save 10%", badge: "Most popular", isDefault: false, mq: 2, d: 10, t: "P", b: "Most popular", s: "Save 10%" },
+        { quantity: 3, discountType: "percent", value: 20, title: "Buy 3+", label: "Save 20%", badge: "", isDefault: false, mq: 3, d: 20, t: "P", b: "", s: "Save 20%" },
+      ];
   }, [offer.tiers]);
 
   const [title, setTitle] = useState(offer.title || "");
@@ -440,6 +475,24 @@ export default function VolumeEdit() {
   const [products, setProducts] = useState(offer.products || []);
   const [tiers, setTiers] = useState(initialTiers);
   const [expandedIndices, setExpandedIndices] = useState({ 0: true });
+
+  // Sync form state when loader data changes (after save/activate/deactivate)
+  useEffect(() => {
+    setTitle(offer.title || "");
+    setWidgetTitle(offer.widgetTitle || "");
+    setProducts(offer.products || []);
+    setTiers(initialTiers);
+    setCombinesWithProduct(Boolean(offer.combinesWithProduct));
+    setCombinesWithOrder(Boolean(offer.combinesWithOrder));
+    setCombinesWithShipping(Boolean(offer.combinesWithShipping));
+    setStartsAtDate(offer.startsAtDate || "");
+    setStartsAtTime(offer.startsAtTime || "00:00:00");
+    setHasEndDate(Boolean(offer.hasEndDate));
+    setEndsAtDate(offer.endsAtDate || "");
+    setEndsAtTime(offer.endsAtTime || "23:59:59");
+    setIsSaving(false);
+    shopify.saveBar?.hide("edit-volume-offer-save-bar");
+  }, [offer, initialTiers, shopify]);
 
   const toggleAccordion = (index) => {
     setExpandedIndices((prev) => ({
@@ -461,6 +514,10 @@ export default function VolumeEdit() {
   const [isSaving, setIsSaving] = useState(false);
   const isRedirecting = navigation.state === "loading" && navigation.location?.pathname !== `/app/offers/volume/edit/${offer.numericId}`;
   const isSubmitting = (isSaving || navigation.state === "submitting" || (navigation.state === "loading" && navigation.formMethod?.toLowerCase() === "post")) && !isRedirecting;
+  const submittingIntent = navigation.formData?.get("intent");
+  const isDeactivating = isSubmitting && submittingIntent === "deactivate";
+  const isDeleting = isSubmitting && submittingIntent === "delete";
+  const isActivating = isSubmitting && submittingIntent === "activate";
 
   // Conflict detection
   const usedProductIds = useMemo(() => {
@@ -731,12 +788,26 @@ export default function VolumeEdit() {
     submit(formData, { method: "post" });
   };
 
+  const handleDeactivateOffer = () => {
+    handleSubmit("deactivate");
+  };
+
+  const handleDeleteOffer = () => {
+    handleSubmit("delete");
+  };
+
+  const handleActivateOffer = () => {
+    handleSubmit("activate");
+  };
+
+  const isDeactivatedOrExpired = offer.status !== "ACTIVE";
+
   const statusBadgeTone =
     offer.computedStatus === "ACTIVE"
       ? "success"
       : offer.computedStatus === "SCHEDULED"
-      ? "info"
-      : "attention";
+        ? "info"
+        : "attention";
 
   return (
     <s-page heading={title || "Edit Volume Discount"}>
@@ -744,44 +815,110 @@ export default function VolumeEdit() {
         All Discounts
       </s-link>
 
-      <s-badge slot="title-metadata" tone={statusBadgeTone}>
-        {offer.computedStatus}
-      </s-badge>
+      {/* Polaris Web Component More Actions Menu */}
+      <s-button
+        slot="secondary-actions"
+        commandFor="offer-actions"
+        loading={isActivating ? "true" : undefined}
+        disabled={isSubmitting ? "true" : undefined}
+      >
+        More actions
+      </s-button>
 
-      {/* Secondary Actions: Activate / Deactivate */}
-      {offer.status === "ACTIVE" ? (
+      <s-menu
+        id="offer-actions"
+        accessibilityLabel="Offer actions"
+      >
+        {isDeactivatedOrExpired ? (
+          <s-button onClick={handleActivateOffer} loading={isActivating ? "true" : undefined} disabled={isSubmitting ? "true" : undefined}>
+            Activate
+          </s-button>
+        ) : (
+          <s-button
+            commandFor="deactivate-offer-modal"
+            command="--show"
+            disabled={isSubmitting ? "true" : undefined}
+          >
+            Deactivate
+          </s-button>
+        )}
+
         <s-button
-          slot="secondary-actions"
-          variant="secondary"
-          onClick={() => handleSubmit("deactivate")}
+          tone="critical"
+          commandFor="delete-offer-modal"
+          command="--show"
+          disabled={isSubmitting ? "true" : undefined}
+        >
+          Delete
+        </s-button>
+      </s-menu>
+
+      {/* Deactivate Confirmation Modal */}
+      <s-modal id="deactivate-offer-modal" heading="Deactivate offer?">
+        <s-stack gap="base">
+          <s-paragraph>
+            Are you sure you want to deactivate <b>&ldquo;{title || offer.title}&rdquo;</b>? Customers will no longer receive this discount at checkout.
+          </s-paragraph>
+          {isDirty && (
+            <s-paragraph tone="caution">
+              Note: Any unsaved changes you made will be discarded.
+            </s-paragraph>
+          )}
+        </s-stack>
+
+        <s-button
+          slot="primary-action"
+          variant="primary"
+          onClick={handleDeactivateOffer}
+          loading={isDeactivating ? "true" : undefined}
           disabled={isSubmitting ? "true" : undefined}
         >
           Deactivate
         </s-button>
-      ) : (
         <s-button
           slot="secondary-actions"
           variant="secondary"
-          onClick={() => handleSubmit("activate")}
+          commandFor="deactivate-offer-modal"
+          command="--hide"
           disabled={isSubmitting ? "true" : undefined}
         >
-          Activate
+          Cancel
         </s-button>
-      )}
+      </s-modal>
 
-      <s-button
-        slot="secondary-actions"
-        tone="critical"
-        variant="plain"
-        onClick={() => {
-          if (confirm("Are you sure you want to delete this volume offer?")) {
-            handleSubmit("delete");
-          }
-        }}
-        disabled={isSubmitting ? "true" : undefined}
-      >
-        Delete
-      </s-button>
+      {/* Delete Confirmation Modal */}
+      <s-modal id="delete-offer-modal" heading="Delete offer?">
+        <s-stack gap="base">
+          <s-paragraph>
+            Are you sure you want to delete <b>&ldquo;{title || offer.title}&rdquo;</b>?
+          </s-paragraph>
+          <s-paragraph tone="critical">
+            This action cannot be undone.
+          </s-paragraph>
+        </s-stack>
+
+        <s-button
+          slot="primary-action"
+          variant="primary"
+          tone="critical"
+          commandFor="delete-offer-modal"
+          command="--hide"
+          onClick={handleDeleteOffer}
+          loading={isDeleting ? "true" : undefined}
+          disabled={isSubmitting ? "true" : undefined}
+        >
+          Delete offer
+        </s-button>
+        <s-button
+          slot="secondary-actions"
+          variant="secondary"
+          commandFor="delete-offer-modal"
+          command="--hide"
+          disabled={isSubmitting ? "true" : undefined}
+        >
+          Cancel
+        </s-button>
+      </s-modal>
 
       <SaveBar id="edit-volume-offer-save-bar" open={showSaveBar}>
         <button
@@ -1270,6 +1407,9 @@ export default function VolumeEdit() {
 
       {/* Right side Sidebar: Summary in slot="aside" */}
       <s-section slot="aside" heading="Summary">
+        <s-badge slot="supplemental" tone={statusBadgeTone}>
+          {offer.computedStatus}
+        </s-badge>
         <s-stack gap="base">
           <s-stack gap="tight">
             <s-text weight="bold">Offer title</s-text>
@@ -1349,7 +1489,7 @@ export default function VolumeEdit() {
         widgetTitle={widgetTitle}
         products={products}
         tiers={tiers}
-        shopDomain={offer?.shop}
+        shopDomain={shop || offer?.shop}
       />
 
       {/* Performance & Usage Analytics */}

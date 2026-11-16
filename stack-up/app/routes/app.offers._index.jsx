@@ -245,6 +245,7 @@ export default function AllOffersIndex() {
 
     const [isNavigatingCreate, setIsNavigatingCreate] = useState(false);
     const isCreateLoading = isNavigatingCreate || (navigation.state === "loading" && navigation.location?.pathname?.includes("/offers/new"));
+    const [offerToDelete, setOfferToDelete] = useState(null);
 
     const handleCreateOffer = () => {
         try {
@@ -268,6 +269,11 @@ export default function AllOffersIndex() {
         }
     };
 
+    const handleOpenDeleteModal = (offer) => {
+        setOfferToDelete(offer);
+        shopify.modal.show("delete-offer-modal");
+    };
+
     const handleDelete = (id, numericId) => {
         if (isSubmitting) return;
         try {
@@ -287,14 +293,10 @@ export default function AllOffersIndex() {
         }
     }, [navigation.state]);
 
-    // Hide any hanging savebars from create/edit forms
+    // Stop global loader when page renders
     useEffect(() => {
         try {
             shopify.loading(false);
-            shopify.saveBar?.hide("create-paired-offer-save-bar");
-            shopify.saveBar?.hide("edit-paired-offer-save-bar");
-            shopify.saveBar?.hide("create-selected-offer-save-bar");
-            shopify.saveBar?.hide("edit-selected-offer-save-bar");
         } catch { }
     }, [shopify]);
 
@@ -302,10 +304,6 @@ export default function AllOffersIndex() {
     useEffect(() => {
         if (searchParams.get("created") === "true") {
             shopify.toast.show("Discount offer created successfully!");
-            shopify.saveBar?.hide("create-paired-offer-save-bar");
-            shopify.saveBar?.hide("edit-paired-offer-save-bar");
-            shopify.saveBar?.hide("create-selected-offer-save-bar");
-            shopify.saveBar?.hide("edit-selected-offer-save-bar");
             setSearchParams((prev) => {
                 const next = new URLSearchParams(prev);
                 next.delete("created");
@@ -314,10 +312,6 @@ export default function AllOffersIndex() {
         }
         if (searchParams.get("updated") === "true") {
             shopify.toast.show("Discount offer updated successfully!");
-            shopify.saveBar?.hide("create-paired-offer-save-bar");
-            shopify.saveBar?.hide("edit-paired-offer-save-bar");
-            shopify.saveBar?.hide("create-selected-offer-save-bar");
-            shopify.saveBar?.hide("edit-selected-offer-save-bar");
             setSearchParams((prev) => {
                 const next = new URLSearchParams(prev);
                 next.delete("updated");
@@ -326,10 +320,8 @@ export default function AllOffersIndex() {
         }
         if (searchParams.get("deleted") === "true" || actionData?.success) {
             shopify.toast.show("Discount offer deleted successfully!");
-            shopify.saveBar?.hide("create-paired-offer-save-bar");
-            shopify.saveBar?.hide("edit-paired-offer-save-bar");
-            shopify.saveBar?.hide("create-selected-offer-save-bar");
-            shopify.saveBar?.hide("edit-selected-offer-save-bar");
+            shopify.modal.hide("delete-offer-modal");
+            setOfferToDelete(null);
             setSearchParams((prev) => {
                 const next = new URLSearchParams(prev);
                 next.delete("deleted");
@@ -825,46 +817,12 @@ export default function AllOffersIndex() {
                                                     <s-button
                                                         variant="primary"
                                                         tone="critical"
-                                                        icon={deletingId === String(offer.numericId) ? undefined : "delete"}
+                                                        icon="delete"
                                                         interestFor={`delete-tip-${offer.numericId}`}
                                                         accessibilityLabel="Delete offer"
-                                                        commandFor={`delete-modal-${offer.numericId}`}
-                                                        command="--show"
-                                                        loading={deletingId === String(offer.numericId) ? true : undefined}
+                                                        onClick={() => handleOpenDeleteModal(offer)}
                                                         disabled={(isSubmitting || isNavigatingEdit || isCreateLoading) ? true : undefined}
                                                     />
-
-                                                    {/* Delete Confirmation Modal */}
-                                                    <s-modal id={`delete-modal-${offer.numericId}`} heading="Delete offer?">
-                                                        <s-stack gap="base">
-                                                            <s-text>
-                                                                Are you sure you want to delete <b>&ldquo;{offer.title}&rdquo;</b>?
-                                                            </s-text>
-                                                            <s-text tone="caution">This action cannot be undone.</s-text>
-                                                        </s-stack>
-
-                                                        <s-button
-                                                            slot="primary-action"
-                                                            variant="primary"
-                                                            tone="critical"
-                                                            commandFor={`delete-modal-${offer.numericId}`}
-                                                            command="--hide"
-                                                            onClick={() => handleDelete(offer.id, offer.numericId)}
-                                                            loading={deletingId === String(offer.numericId) ? true : undefined}
-                                                            disabled={(isSubmitting || isCreateLoading) ? true : undefined}
-                                                        >
-                                                            Delete offer
-                                                        </s-button>
-                                                        <s-button
-                                                            slot="secondary-actions"
-                                                            variant="secondary"
-                                                            commandFor={`delete-modal-${offer.numericId}`}
-                                                            command="--hide"
-                                                            disabled={(isSubmitting || isCreateLoading) ? true : undefined}
-                                                        >
-                                                            Cancel
-                                                        </s-button>
-                                                    </s-modal>
                                                 </s-stack>
                                             </s-table-cell>
                                         </s-table-row>
@@ -873,6 +831,36 @@ export default function AllOffersIndex() {
                             )}
                         </s-table-body>
                     </s-table>
+
+                    {/* Single Shared Delete Confirmation Modal (Shopify App Bridge Web Component Best Practice) */}
+                    <s-modal id="delete-offer-modal" heading="Delete offer?">
+                        <s-stack gap="base">
+                            <s-text>
+                                Are you sure you want to delete <b>&ldquo;{offerToDelete?.title}&rdquo;</b>?
+                            </s-text>
+                            <s-text tone="caution">This action cannot be undone.</s-text>
+                        </s-stack>
+
+                        <s-button
+                            slot="primary-action"
+                            variant="primary"
+                            tone="critical"
+                            onClick={() => offerToDelete && handleDelete(offerToDelete.id, offerToDelete.numericId)}
+                            loading={deletingId && offerToDelete && deletingId === String(offerToDelete.numericId) ? true : undefined}
+                            disabled={(isSubmitting || isCreateLoading) ? true : undefined}
+                        >
+                            Delete offer
+                        </s-button>
+                        <s-button
+                            slot="secondary-actions"
+                            variant="secondary"
+                            commandFor="delete-offer-modal"
+                            command="--hide"
+                            disabled={(isSubmitting || isCreateLoading) ? true : undefined}
+                        >
+                            Cancel
+                        </s-button>
+                    </s-modal>
 
                     {/* Pagination Controls */}
                     {totalFilteredOffers > 0 && (

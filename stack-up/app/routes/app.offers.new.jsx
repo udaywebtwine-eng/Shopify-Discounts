@@ -18,12 +18,6 @@ export default function NewOfferSelect() {
   useEffect(() => {
     try {
       shopify.loading(false);
-      shopify.saveBar?.hide("create-paired-offer-save-bar");
-      shopify.saveBar?.hide("edit-paired-offer-save-bar");
-      shopify.saveBar?.hide("create-selected-offer-save-bar");
-      shopify.saveBar?.hide("edit-selected-offer-save-bar");
-      shopify.saveBar?.hide("create-volume-offer-save-bar");
-      shopify.saveBar?.hide("edit-volume-offer-save-bar");
     } catch { }
   }, [shopify]);
 
