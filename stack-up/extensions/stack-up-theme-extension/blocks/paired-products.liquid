@@ -32,17 +32,18 @@
   {% endif %}
 
   {% assign is_editor = request.design_mode %}
+  {% assign bundle_sub_products = bundle.subs | default: bundle.subProducts %}
   {% assign is_active_offer = false %}
-  {% if bundle != blank and bundle.subProducts.size > 0 %}
+  {% if bundle != blank and bundle_sub_products.size > 0 %}
     {% assign is_active_offer = true %}
   {% endif %}
 
   {% comment %} Show if active offer exists OR if merchant is previewing in Theme Editor {% endcomment %}
   {% if is_active_offer or is_editor %}
     {% if is_active_offer %}
-      {% assign discount_pct = bundle.percentage %}
-      {% assign main_qty = bundle.mainQuantity | default: 1 %}
-      {% assign sub_products_count = bundle.subProducts.size %}
+      {% assign discount_pct = bundle.d | default: bundle.percentage %}
+      {% assign main_qty = bundle.mq | default: bundle.mainQuantity | default: 1 %}
+      {% assign sub_products_count = bundle_sub_products.size %}
     {% else %}
       {% comment %} Sample Data for Theme Editor Preview {% endcomment %}
       {% assign discount_pct = 20 %}
@@ -57,7 +58,7 @@
     {% endif %}
 
     {% comment %} Resolve Settings with Safe Defaults {% endcomment %}
-    {% assign offer_custom_heading = bundle.widgetTitle | default: '' %}
+    {% assign offer_custom_heading = bundle.wt | default: bundle.widgetTitle | default: '' %}
     {% assign global_heading = custom_settings.content.heading | default: '{widgettitle}' %}
     {% if global_heading == 'Frequently Bought Together' and offer_custom_heading != blank %}
       {% assign global_heading = '{widgettitle}' %}
@@ -73,7 +74,8 @@
     {% else %}
       {% assign heading = global_heading %}
     {% endif %}
-    {% assign heading = heading | replace: '{widgetname}', bundle.title | replace: '{offername}', bundle.title | replace: '{percentage}', discount_pct %}
+    {% assign offer_display_title = bundle.t | default: bundle.title %}
+    {% assign heading = heading | replace: '{widgetname}', offer_display_title | replace: '{offername}', offer_display_title | replace: '{percentage}', discount_pct %}
     {% assign button_text = custom_settings.content.buttonText | default: default_btn_text %}
     {% assign badge_template = custom_settings.content.badgeText | default: 'Save {percentage}% OFF' %}
     {% assign badge_label = badge_template | replace: '{percentage}', discount_pct %}
@@ -124,9 +126,9 @@
 
     {% assign total_original_price = main_line_price %}
     {% if is_active_offer %}
-      {% for sub in bundle.subProducts %}
-        {% assign sp = sub.variants[0].price | default: sub.price %}
-        {% assign sq = sub.quantity | default: 1 %}
+      {% for sub in bundle_sub_products %}
+        {% assign sp = sub.p | default: sub.variants[0].price | default: sub.price %}
+        {% assign sq = sub.q | default: sub.quantity | default: 1 %}
         {% assign slp = sp | times: sq %}
         {% assign total_original_price = total_original_price | plus: slp %}
       {% endfor %}
@@ -240,7 +242,7 @@
         </div>
 
         <!-- Single Plus Separator between Main Product and Subproducts -->
-        {% if show_plus and is_active_offer and bundle.subProducts.size > 0 %}
+        {% if show_plus and is_active_offer and bundle_sub_products.size > 0 %}
           <div class="stackup-plus-wrap">
             <div class="stackup-plus-line"></div>
             <div class="stackup-plus-circle">
@@ -263,14 +265,14 @@
 
         <!-- Sub / Add-on Product Cards (NO plus icon between subproducts) -->
         {% if is_active_offer %}
-          {% for sub in bundle.subProducts %}
-            {% assign sub_qty = sub.quantity | default: 1 %}
-            {% assign sub_title = sub.title %}
-            {% assign sub_img = sub.image %}
-            {% assign sub_handle = sub.handle %}
+          {% for sub in bundle_sub_products %}
+            {% assign sub_qty = sub.q | default: sub.quantity | default: 1 %}
+            {% assign sub_title = sub.t | default: sub.title %}
+            {% assign sub_img = sub.img | default: sub.image %}
+            {% assign sub_handle = sub.h | default: sub.handle %}
             {% assign sub_variants = sub.variants %}
-            {% assign sub_first_variant_id = sub.variants[0].id | default: sub.numericId %}
-            {% assign sub_price = sub.variants[0].price | default: sub.price %}
+            {% assign sub_first_variant_id = sub.vid | default: sub.variants[0].id | default: sub.numericId %}
+            {% assign sub_price = sub.p | default: sub.variants[0].price | default: sub.price %}
 
             {% assign sub_prod = all_products[sub_handle] %}
             {% assign sub_first_v_avail = true %}

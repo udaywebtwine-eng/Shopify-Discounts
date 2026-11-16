@@ -53,8 +53,9 @@ function parseSuggestedProductIds(metafieldValue) {
 }
 
 /**
- * Extracts active paired product offers from shop metafield (Master Engine)
- * or fallback discount node metafield (legacy).
+ * Extracts active paired product offers from:
+ * 1. Product-level sharded metafield (`product.pairedBundle.value`)
+ * 2. Legacy master shop metafield (`shop.offersMetafield.value`) as fallback.
  * @param {RunInput} input
  * @returns {Array<object>}
  */
@@ -65,20 +66,57 @@ function getOffersList(input) {
     return [];
   }
 
-  // Retrieve active offers from the master shop metafield
+  const seen = new Set();
+  const list = [];
+
+  // 1. Sharded product-level metafield: product.pairedBundle.value
+  for (const line of input.cart?.lines || []) {
+    if (line.merchandise?.__typename === 'ProductVariant') {
+      const product = line.merchandise.product;
+      const bundleMeta = product?.pairedBundle?.value;
+      if (bundleMeta) {
+        const bundle = parseJson(bundleMeta);
+        if (bundle && typeof bundle === 'object') {
+          const idKey = String(bundle.id || bundle.numericId || bundle.t || bundle.title || product.id);
+          if (!seen.has(idKey)) {
+            seen.add(idKey);
+            const mainQty = Number(bundle.mq || bundle.mainQuantity) || 1;
+            const mainProdEntry = { id: product.id, quantity: mainQty };
+            if (Array.isArray(bundle.mvids) && bundle.mvids.length > 0) {
+              mainProdEntry.vids = bundle.mvids;
+            }
+            list.push({
+              ...bundle,
+              mainProducts: [mainProdEntry],
+              subProducts: bundle.subs || bundle.subProducts || [],
+              percentage: Number(bundle.d ?? bundle.percentage) || 0,
+              title: bundle.t || bundle.title || '',
+            });
+          }
+        }
+      }
+    }
+  }
+
+  if (list.length > 0) return list;
+
+  // 2. Fallback: Retrieve active offers from the master shop metafield
   const shopMetaValue = input.shop?.offersMetafield?.value;
   if (shopMetaValue) {
     const map = parseJson(shopMetaValue);
     if (map && typeof map === 'object') {
-      const seen = new Set();
-      const list = [];
       for (const key of Object.keys(map)) {
         const offer = map[key];
         if (!offer || typeof offer !== 'object') continue;
         const idKey = offer.numericId || offer.offerId || offer.title || key;
         if (!seen.has(idKey)) {
           seen.add(idKey);
-          list.push(offer);
+          list.push({
+            ...offer,
+            percentage: Number(offer.d ?? offer.percentage) || 0,
+            title: offer.t || offer.title || '',
+            subProducts: offer.subs || offer.subProducts || [],
+          });
         }
       }
       if (list.length > 0) return list;
@@ -163,9 +201,10 @@ export function cartLinesDiscountsGenerateRun(input) {
         mainProductQuantities[fullId] = qty;
         mainProductQuantities[numId] = qty;
 
-        if (Array.isArray(item.variants) && item.variants.length > 0) {
+        const specificMainVids = item.vids || (Array.isArray(item.variants) && item.variants.length > 0 && typeof item.variants[0] === 'string' ? item.variants : null);
+        if (Array.isArray(specificMainVids) && specificMainVids.length > 0) {
           hasSpecificMainVariants = true;
-          item.variants.forEach((v) => {
+          specificMainVids.forEach((v) => {
             const vId = String(typeof v === 'object' ? v.id : v).trim();
             mainVariantIds.add(vId);
             mainVariantIds.add(getNumericId(vId));
@@ -190,15 +229,17 @@ export function cartLinesDiscountsGenerateRun(input) {
       if (item?.id) {
         const fullId = String(item.id).trim();
         const numId = getNumericId(fullId);
-        const qty = Number(item.quantity) || 1;
+        const qty = Number(item.quantity || item.q) || 1;
         subProductIds.add(fullId);
         subProductIds.add(numId);
         subProductQuantities[fullId] = qty;
         subProductQuantities[numId] = qty;
 
-        if (Array.isArray(item.variants) && item.variants.length > 0) {
+        // Variant restriction: Check specific vids (only populated if merchant restricted to specific variants)
+        const specificVids = item.vids || (Array.isArray(item.variants) && item.variants.length > 0 && typeof item.variants[0] === 'string' ? item.variants : null);
+        if (Array.isArray(specificVids) && specificVids.length > 0) {
           hasSpecificSubVariants = true;
-          item.variants.forEach((v) => {
+          specificVids.forEach((v) => {
             const vId = String(typeof v === 'object' ? v.id : v).trim();
             subVariantIds.add(vId);
             subVariantIds.add(getNumericId(vId));
@@ -269,7 +310,7 @@ export function cartLinesDiscountsGenerateRun(input) {
     }
 
     candidates.push({
-      message: offer.title || `${percentage}% OFF PAIRED OFFER`,
+      message: offer.title || offer.t || `${percentage}% OFF PAIRED OFFER`,
       targets: [
         {
           orderSubtotal: {

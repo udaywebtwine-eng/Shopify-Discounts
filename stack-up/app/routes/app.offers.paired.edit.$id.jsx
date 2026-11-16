@@ -21,7 +21,12 @@ import {
     computeOfferStatus,
     setShopTimezoneCache,
 } from "../utils/timezone";
-import { syncAllActiveOffersToShopMetafield } from "../utils/bundleMetafields.server";
+import {
+    syncAllActiveOffersToShopMetafield,
+    removePairedMetafieldFromProducts,
+    getMainProductsFromOffer,
+    toProductGid,
+} from "../utils/bundleMetafields.server";
 import { getActiveMainProductsMap, checkMainProductConflicts } from "../utils/productConflicts.server";
 import { syncRecentOrdersFromShopify } from "../utils/orders.server";
 import WidgetPreview from "./components/Preview/WidgetPreview";
@@ -337,6 +342,13 @@ export const action = async ({ request, params }) => {
     if (intent === "deactivate") {
         console.log("-------------------> [Deactivate Clicked] Offer ID:", numericId);
         try {
+            const existing = await prisma.offer.findFirst({ where: offerWhere });
+            if (existing) {
+                const mains = getMainProductsFromOffer(existing);
+                if (mains.length > 0) {
+                    await removePairedMetafieldFromProducts(admin, mains.map((p) => p.id));
+                }
+            }
             await prisma.offer.updateMany({
                 where: offerWhere,
                 data: { status: "EXPIRED" },
@@ -401,6 +413,13 @@ export const action = async ({ request, params }) => {
     if (intent === "delete") {
         console.log("-------------------> [Delete Clicked] Deleting offer ID:", numericId);
         try {
+            const existing = await prisma.offer.findFirst({ where: offerWhere });
+            if (existing) {
+                const mains = getMainProductsFromOffer(existing);
+                if (mains.length > 0) {
+                    await removePairedMetafieldFromProducts(admin, mains.map((p) => p.id));
+                }
+            }
             await prisma.offer.deleteMany({
                 where: offerWhere,
             });
@@ -540,6 +559,16 @@ export const action = async ({ request, params }) => {
     console.log("------------------->   Updated Percentage:", percentage + "%");
 
     try {
+        const existing = await prisma.offer.findFirst({ where: offerWhere });
+        if (existing) {
+            const oldMains = getMainProductsFromOffer(existing);
+            const newGids = new Set(sanitizedMainProducts.map((p) => toProductGid(p.id)));
+            const removedProducts = oldMains.filter((p) => !newGids.has(toProductGid(p.id)));
+            if (removedProducts.length > 0) {
+                await removePairedMetafieldFromProducts(admin, removedProducts.map((p) => p.id));
+            }
+        }
+
         await prisma.offer.updateMany({
             where: offerWhere,
             data: {

@@ -22,6 +22,9 @@ query CartInput {
           id
           product {
             id
+            pairedBundle: metafield(namespace: "stack_up", key: "paired_bundle") {
+              value
+            }
             suggestedProducts: metafield(namespace: "custom", key: "suggested_products") {
               value
             }

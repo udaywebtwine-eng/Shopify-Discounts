@@ -4,7 +4,11 @@ import { useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import { getShopTimezone, formatDateInShopTimezone, computeOfferStatus } from "../utils/timezone";
-import { syncAllActiveOffersToShopMetafield } from "../utils/bundleMetafields.server";
+import {
+    syncAllActiveOffersToShopMetafield,
+    removePairedMetafieldFromProducts,
+    getMainProductsFromOffer,
+} from "../utils/bundleMetafields.server";
 import {
     syncAllActiveSelectedOffersToShopMetafield,
     removeSelectedMetafieldFromProducts,
@@ -169,6 +173,11 @@ export const action = async ({ request }) => {
                 const targets = getSelectedTargetProductsFromOffer(offerToDelete);
                 if (targets.length > 0) {
                     await removeSelectedMetafieldFromProducts(admin, targets.map((p) => p.id));
+                }
+            } else if (offerToDelete && offerToDelete.type === "PAIRED") {
+                const mains = getMainProductsFromOffer(offerToDelete);
+                if (mains.length > 0) {
+                    await removePairedMetafieldFromProducts(admin, mains.map((p) => p.id));
                 }
             }
 

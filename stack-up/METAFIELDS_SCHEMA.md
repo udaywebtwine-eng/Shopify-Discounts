@@ -128,9 +128,70 @@ Discounts are saved directly on the participating Product's metafield (`product.
 
 ---
 
-## 3. Shared Key Reusability Guide (Functions 1, 2 & 3)
+## 3. Paired Products / Frequently Bought Together Bundles (Function 3)
 
-To ensure consistency across the entire app and prevent confusion for future AI models and developers, **the same short keys MUST be reused** for:
+* **Metafield Target**: `product.metafields.stack_up.paired_bundle` (Saved on each participating Main Product)
+* **Type**: `json`
+* **Average Size**: ~**260 bytes**
+
+### Top-Level Object Keys
+
+| Short Key | Full Property Name | Type | Purpose / Use Case | Why We Use It |
+| :--- | :--- | :--- | :--- | :--- |
+| **`id`** | `numericId` / `offerId` | `String` | **Offer Tracking & DB Reference** | Maps back to database offer (`/app/offers/paired/edit/:id`). |
+| **`t`** | `title` | `String` | **Checkout Discount Pill** | Read by `cart_lines_discounts_generate_run.js` to display the discount label at checkout (e.g., `"Frequently Bought Together"`). |
+| **`wt`** | `widgetTitle` | `String` | **Storefront Widget Heading** | Read by `paired-products.liquid` on the product page (e.g., `"Pair & Save 20%"`). |
+| **`d`** | `percentage` | `Number` | **Discount Percentage** | The bundle discount percentage applied to participating bundle lines (e.g., `20` for 20% OFF). |
+| **`mq`** | `mainQuantity` | `Number` | **Main Product Minimum Quantity** | Minimum quantity of the main product required in the cart (default `1`). |
+| **`mvids`** | `mainVariantIds` | `Array<String>` | **Specific Main Variant IDs** | *(Optional)* If merchant restricted the main product to specific variants, checkout function checks this list. |
+| **`subs`** | `subProducts` | `Array` | **Sub / Companion Products List** | List of companion items that must be paired with this main product to form the bundle. |
+
+---
+
+### Sub-Product Object Keys (`subs[]`)
+
+| Short Key | Full Property Name | Type | Purpose / Use Case | Why We Use It |
+| :--- | :--- | :--- | :--- | :--- |
+| **`id`** | `numericId` / `id` | `String` | **Sub Product Numeric ID** | Matches the companion product in the cart lines. |
+| **`q`** | `quantity` | `Number` | **Required Sub Quantity** | Minimum quantity of the companion product required (default `1`). |
+| **`vid`** | `variantId` | `String` | **Default Variant ID** | First or pre-selected variant ID used when adding the bundle to cart. |
+| **`vids`** | `variantIds` | `Array<String>` | **Specific Variant IDs** | *(Optional)* If merchant restricted the companion product to specific variants, checkout function checks this list. |
+| **`t`** | `title` | `String` | **Sub Product Title** | Displayed in storefront bundle items list. |
+| **`p`** | `price` | `Number` | **Original Price (cents)** | Base price of the companion item in cents (e.g. `6900` for $69.00). |
+| **`h`** | `handle` | `String` | **Product Handle** | Used by `all_products[sub.h]` in Liquid to query live stock, prices, and images in 0ms. |
+| **`img`** | `image` | `String` | **Image URL** | Thumbnail image URL for the companion item. |
+
+---
+
+### Example Paired Bundle Payload (~260 bytes)
+
+```json
+{
+  "id": "1794807750096",
+  "t": "Frequently Bought Together",
+  "wt": "Pair & Save 20%",
+  "d": 20,
+  "mq": 1,
+  "subs": [
+    {
+      "id": "8923482348",
+      "q": 1,
+      "vid": "48923482348",
+      "t": "Matching Linen Pants",
+      "p": 6900,
+      "h": "matching-linen-pants",
+      "img": "https://cdn.shopify.com/.../pants.jpg"
+    }
+  ]
+}
+```
+
+---
+
+## 4. Shared Key Reusability Guide (Functions 1, 2 & 3)
+
+To ensure consistency across the entire app and prevent confusion for future AI models and developers, **the same short keys MUST be reused** across all discount functions:
+* **Function 1**: Volume Discounts / Quantity Breaks
 * **Function 2**: Selected Add-ons / Frequently Bought Together
 * **Function 3**: Paired Bundles (Buy X, Get Y)
 
@@ -141,8 +202,15 @@ To ensure consistency across the entire app and prevent confusion for future AI 
 | **`id`** | Offer Database Numeric ID | Primary offer ID | Primary offer ID | Primary offer ID |
 | **`t`** | Checkout Title | Campaign name | Campaign name | Campaign name |
 | **`wt`** | Storefront Widget Title | Tier widget heading | Add-on widget heading | Bundle widget heading |
-| **`d`** | Discount Value | Per-tier discount | Bundle discount | Bundle discount |
+| **`d`** | Discount Value | Per-tier discount | Companion discount | Bundle discount |
 | **`t`** | Discount Type (`"P"`, `"F"`, `"N"`) | Per-tier type | Add-on discount type | Bundle discount type |
 | **`df`** | Default Selection Flag | Selected tier card | Pre-checked add-on checkbox | Pre-selected variant |
-| **`p`** | Max Percentage Rate | Headline metadata | Headline metadata | Headline metadata |
+| **`p`** | Price / Max Percentage Rate | Headline percentage | Base price (cents) | Base price (cents) |
+| **`q`** | Quantity Required | - | Add-on quantity | Companion quantity |
+| **`mq`** | Main / Min Quantity Required | Min quantity tier | - | Main product quantity |
+| **`vid`** | Variant ID | - | Default variant ID | Default variant ID |
+| **`vids`** | Variant IDs List | - | Specific variant IDs | Specific variant IDs |
+| **`h`** | Handle | - | Product handle | Product handle |
+| **`img`** | Image URL | - | Image URL | Image URL |
+
 
