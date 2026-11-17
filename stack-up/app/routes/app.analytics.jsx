@@ -111,6 +111,24 @@ export const loader = async ({ request }) => {
                 orderBy: { createdAt: "asc" },
             }),
         ]);
+
+        // Load raw purchasedProducts if in-memory Prisma client hasn't loaded the new column
+        if (ordersInRange.length > 0) {
+            try {
+                const rawRows = await db.$queryRawUnsafe(
+                    `SELECT id, "purchasedProducts" FROM "OrderUsage" WHERE id = ANY($1::text[])`,
+                    ordersInRange.map((o) => o.id)
+                );
+                const rawMap = new Map(rawRows.map((r) => [r.id, r.purchasedProducts]));
+                ordersInRange.forEach((o) => {
+                    if (!o.purchasedProducts && rawMap.has(o.id)) {
+                        o.purchasedProducts = rawMap.get(o.id);
+                    }
+                });
+            } catch (rawErr) {
+                console.warn("Could not query raw purchasedProducts in analytics:", rawErr);
+            }
+        }
     } catch (err) {
         console.warn("Could not query DB for analytics:", err);
     }
@@ -223,7 +241,7 @@ export const loader = async ({ request }) => {
         };
     });
 
-    // 7. Collect unique product GIDs across all active offers
+    // 7. Collect unique product GIDs across active offers AND actually purchased items
     const allProdIdsSet = new Set();
     allOffers.forEach((off) => {
         const prods = getOfferProductsList(off);
@@ -235,6 +253,25 @@ export const loader = async ({ request }) => {
                 allProdIdsSet.add(gid);
             }
         });
+    });
+
+    // Also collect product IDs from actual purchasedProducts in ordersInRange
+    ordersInRange.forEach((o) => {
+        if (o.purchasedProducts) {
+            try {
+                const items = JSON.parse(o.purchasedProducts);
+                if (Array.isArray(items)) {
+                    items.forEach((it) => {
+                        if (it?.productId) {
+                            const gid = String(it.productId).startsWith("gid://shopify/Product/")
+                                ? String(it.productId)
+                                : `gid://shopify/Product/${it.productId}`;
+                            allProdIdsSet.add(gid);
+                        }
+                    });
+                }
+            } catch {}
+        }
     });
 
     const allProductIds = Array.from(allProdIdsSet);
@@ -311,35 +348,41 @@ export const loader = async ({ request }) => {
         }
     });
 
+    // 9. Aggregate Top Selling Products strictly from ordersInRange and purchasedProducts
     const productMap = {};
 
-    const addProductToMap = (p, ordersCount) => {
-        if (!p || !p.id) return;
-        const pid = String(p.id);
-        const numericId = pid.split("/").pop();
-        const details = shopifyProductDetails[pid] || shopifyProductDetails[numericId] || {};
-
-        if (!productMap[pid]) {
-            productMap[pid] = {
-                id: pid,
-                name: details.title || p.title || "Product",
-                image: details.image || p.image || "",
-                price: details.price || p.price || "",
-                bundleCount: 0,
-                totalOrders: 0,
-                availableQuantity: details.availableQuantity !== undefined ? details.availableQuantity : 0,
-            };
+    ordersInRange.forEach((orderUsage) => {
+        let items = [];
+        if (orderUsage.purchasedProducts) {
+            try {
+                items = JSON.parse(orderUsage.purchasedProducts);
+            } catch {
+                items = [];
+            }
         }
-        productMap[pid].bundleCount += 1;
-        productMap[pid].totalOrders += ordersCount;
-    };
 
-    allOffers.forEach((off) => {
-        const prods = getOfferProductsList(off);
-        const offOrders = off.orders || [];
-        const ordersCount = offOrders.length || off.usageCount || 0;
+        if (Array.isArray(items) && items.length > 0) {
+            items.forEach((item) => {
+                if (!item || !item.productId) return;
+                const pid = String(item.productId);
+                const numericId = pid.split("/").pop();
+                const details = shopifyProductDetails[pid] || shopifyProductDetails[numericId] || {};
 
-        prods.all.forEach((p) => addProductToMap(p, ordersCount));
+                if (!productMap[pid]) {
+                    productMap[pid] = {
+                        id: pid,
+                        name: details.title || item.title || "Product",
+                        image: details.image || "",
+                        price: details.price || (item.price ? `$${Number(item.price).toFixed(2)}` : ""),
+                        bundleCount: 0,
+                        totalOrders: 0,
+                        availableQuantity: details.availableQuantity !== undefined ? details.availableQuantity : 0,
+                    };
+                }
+                productMap[pid].totalOrders += 1;
+                productMap[pid].bundleCount += (item.quantity || 1);
+            });
+        }
     });
 
     const productsList = Object.values(productMap).sort((a, b) => b.totalOrders - a.totalOrders);

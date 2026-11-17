@@ -31,51 +31,52 @@ model Session {
 }
 
 model Offer {
-  id                   String       @id @default(uuid())
+  id                   String    @id @default(uuid())
   shop                 String
-  discountId           String       @unique // e.g. gid://shopify/DiscountAutomaticNode/...
+  discountId           String    @unique // e.g. gid://shopify/DiscountAutomaticNode/...
   numericId            String
   title                String
-  type                 String       // "PAIRED" (Frequently Bought) or "SELECTED" (Product Add-ons) or future "VOLUME", etc.
+  type                 String // "PAIRED" (Frequently Bought) or "SELECTED" (Product Add-ons) or future "VOLUME", etc.
   widgetTitle          String?
-  percentage           Float?       @default(0)
-  status               String       @default("ACTIVE") // ACTIVE / SCHEDULED / EXPIRED
-  combinesWithOrder    Boolean      @default(false)
-  combinesWithProduct  Boolean      @default(false)
-  combinesWithShipping Boolean      @default(false)
+  percentage           Float?    @default(0)
+  status               String    @default("ACTIVE") // ACTIVE / SCHEDULED / EXPIRED
+  combinesWithOrder    Boolean   @default(false)
+  combinesWithProduct  Boolean   @default(false)
+  combinesWithShipping Boolean   @default(false)
   startsAt             DateTime?
   endsAt               DateTime?
 
   // Products configuration data (JSON strings)
-  mainProducts         String?      // For PAIRED: JSON array of { id, title, image, price, quantity, variants }
-  subProducts          String?      // For PAIRED: JSON array of { id, title, image, price, quantity, variants }
-  targetProducts       String?      // For SELECTED: JSON array of { id, title, handle, image, price }
-  offeredProducts      String?      // For SELECTED: JSON array of { id, title, handle, image, price, quantity, variants }
-  volumeProducts       String?      // For VOLUME: JSON array of { id, title, handle, image, price, variants }
-  volumeTiers          String?      // For VOLUME: JSON array of tiers [{ mq: minQty, d: discount, t: type, b: badge, s: subtitle }]
-  configuration        String?      // Extensible JSON for future function parameters
+  mainProducts    String? // For PAIRED: JSON array of { id, title, image, price, quantity, variants }
+  subProducts     String? // For PAIRED: JSON array of { id, title, image, price, quantity, variants }
+  targetProducts  String? // For SELECTED: JSON array of { id, title, handle, image, price }
+  offeredProducts String? // For SELECTED: JSON array of { id, title, handle, image, price, quantity, variants }
+  volumeProducts  String? // For VOLUME: JSON array of { id, title, handle, image, price, variants }
+  volumeTiers     String? // For VOLUME: JSON array of tiers [{ mq: minQty, d: discount, t: type, b: badge, s: subtitle }]
+  configuration   String? // Extensible JSON for future function parameters
 
   // Analytics & performance tracking
-  usageCount           Int          @default(0) // Total times used / orders count
-  totalRevenue         Float        @default(0.0) // Total revenue generated
-  totalDiscountAmount  Float        @default(0.0) // Total discount given
-  orders               OrderUsage[]
-  createdAt            DateTime     @default(now())
-  updatedAt            DateTime     @updatedAt
+  usageCount          Int          @default(0) // Total times used / orders count
+  totalRevenue        Float        @default(0.0) // Total revenue generated
+  totalDiscountAmount Float        @default(0.0) // Total discount given
+  orders              OrderUsage[]
+  createdAt           DateTime     @default(now())
+  updatedAt           DateTime     @updatedAt
 }
 
 model OrderUsage {
-  id              String   @id @default(uuid())
-  shop            String
-  orderId         String
-  orderName       String?  // e.g. "#1001"
-  customerEmail   String?
-  totalPrice      Float
-  discountAmount  Float
-  currency        String   @default("USD")
-  offerId         String
-  offer           Offer    @relation(fields: [offerId], references: [id], onDelete: Cascade)
-  createdAt       DateTime @default(now())
+  id                String   @id @default(uuid())
+  shop              String
+  orderId           String
+  orderName         String? // e.g. "#1001"
+  customerEmail     String?
+  totalPrice        Float
+  discountAmount    Float
+  currency          String   @default("USD")
+  purchasedProducts String?
+  offerId           String
+  offer             Offer    @relation(fields: [offerId], references: [id], onDelete: Cascade)
+  createdAt         DateTime @default(now())
 
   @@unique([orderId, offerId])
 }

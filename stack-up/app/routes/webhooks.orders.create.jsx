@@ -1,6 +1,6 @@
 import { authenticate } from "../shopify.server";
 import db from "../db.server";
-import { cleanupMismatchedOrders } from "../utils/orders.server";
+import { getOfferProductIds, safeSaveOrderUsage, cleanupMismatchedOrders } from "../utils/orders.server";
 
 export const action = async ({ request }) => {
   const { payload, topic, shop } = await authenticate.webhook(request);
@@ -30,9 +30,11 @@ export const action = async ({ request }) => {
     .map((app) => parseFloat(app.value))
     .filter((v) => !isNaN(v) && v > 0);
 
+  const orderLines = payload.line_items || [];
+
   // Extract product IDs present in the order
   const orderProductIds = new Set();
-  (payload.line_items || []).forEach((item) => {
+  orderLines.forEach((item) => {
     if (item.product_id) {
       const pid = String(item.product_id).trim();
       orderProductIds.add(pid);
@@ -40,7 +42,7 @@ export const action = async ({ request }) => {
     }
   });
 
-  // Find all active offers for this shop
+  // Find all offers for this shop
   let allOffers = [];
   try {
     const shopConditions = [
@@ -69,54 +71,94 @@ export const action = async ({ request }) => {
   const matchedOffers = [];
 
   for (const off of allOffers) {
-    const title = (off.title || "").toLowerCase().trim();
-    const titleMatches = Boolean(title && (appliedTitles.some((t) => t === title || t.includes(title)) || appliedCodes.includes(title)));
-
-    if (titleMatches) {
-      matchedOffers.push(off);
+    // GATE 1: Time Boundary (Strict) - Order MUST be created after the offer was created
+    const offerTime = new Date(off.createdAt).getTime() - 2 * 60 * 1000;
+    if (orderTime < offerTime) {
       continue;
     }
 
-    const offerTime = new Date(off.createdAt).getTime() - 5 * 60 * 1000;
-    if (orderTime < offerTime) continue;
+    // GATE 2: Product Membership (Strict) - Order MUST contain at least one product configured for this offer
+    const offerProductIds = getOfferProductIds(off);
+    if (offerProductIds.size === 0) continue;
 
-    if (off.type === "PAIRED") {
-      const pctMatches = hasMasterPaired && appliedPercentages.includes(off.percentage);
-      let prodMatches = false;
-      if (hasMasterPaired) {
-        try {
-          const mProds = JSON.parse(off.mainProducts || "[]");
-          const sProds = JSON.parse(off.subProducts || "[]");
-          prodMatches = [...mProds, ...sProds].some((p) => p?.id && (orderProductIds.has(String(p.id)) || orderProductIds.has(String(p.id).split("/").pop())));
-        } catch {}
+    let hasMatchingProduct = false;
+    for (const pid of offerProductIds) {
+      if (orderProductIds.has(pid)) {
+        hasMatchingProduct = true;
+        break;
       }
-      if (pctMatches || prodMatches) matchedOffers.push(off);
-    } else if (off.type === "SELECTED") {
-      const pctMatches = hasMasterSelected && appliedPercentages.includes(off.percentage);
-      let prodMatches = false;
-      if (hasMasterSelected) {
-        try {
-          const tProds = JSON.parse(off.targetProducts || "[]");
-          const oProds = JSON.parse(off.offeredProducts || off.products || "[]");
-          prodMatches = [...tProds, ...oProds].some((p) => p?.id && (orderProductIds.has(String(p.id)) || orderProductIds.has(String(p.id).split("/").pop())));
-        } catch {}
-      }
-      if (pctMatches || prodMatches) matchedOffers.push(off);
-    } else if (off.type === "VOLUME") {
-      let prodMatches = false;
-      if (hasMasterVolume) {
-        try {
-          let vProds = [];
-          if (off.volumeProducts) {
-            vProds = JSON.parse(off.volumeProducts);
-          } else if (off.configuration) {
-            vProds = JSON.parse(off.configuration)?.volumeProducts || [];
-          }
-          prodMatches = vProds.some((p) => p?.id && (orderProductIds.has(String(p.id)) || orderProductIds.has(String(p.id).split("/").pop())));
-        } catch {}
-      }
-      if (prodMatches) matchedOffers.push(off);
     }
+    if (!hasMatchingProduct) {
+      continue;
+    }
+
+    // GATE 3: Title or Master Discount Function Match
+    const title = (off.title || "").toLowerCase().trim();
+    const titleMatches = Boolean(
+      title && (appliedTitles.some((t) => t === title || t.includes(title)) || appliedCodes.includes(title))
+    );
+
+    let isMatched = false;
+    if (titleMatches) {
+      isMatched = true;
+    } else if (off.type === "PAIRED" && hasMasterPaired && appliedPercentages.includes(off.percentage)) {
+      isMatched = true;
+    } else if (off.type === "SELECTED" && hasMasterSelected && appliedPercentages.includes(off.percentage)) {
+      isMatched = true;
+    } else if (off.type === "VOLUME" && hasMasterVolume) {
+      isMatched = true;
+    }
+
+    if (!isMatched) {
+      continue;
+    }
+
+    // GATE 4: Line Item Extraction & Product Attribution
+    const purchasedItems = [];
+    let offerAllocatedDiscount = 0;
+
+    // Check line item discount allocations
+    const appIndex = Array.isArray(payload.discount_applications)
+      ? payload.discount_applications.findIndex((app) => {
+          const t = (app.title || app.description || app.code || "")?.toLowerCase().trim();
+          return t === title || t.includes(title);
+        })
+      : -1;
+
+    orderLines.forEach((item) => {
+      const pid = item.product_id ? String(item.product_id).trim() : "";
+      const gid = `gid://shopify/Product/${pid}`;
+
+      if (offerProductIds.has(pid) || offerProductIds.has(gid)) {
+        const itemQty = Number(item.quantity) || 1;
+        const unitPrice = parseFloat(item.price) || 0;
+
+        let lineDiscount = 0;
+        if (appIndex !== -1 && Array.isArray(item.discount_allocations)) {
+          for (const alloc of item.discount_allocations) {
+            if (alloc.discount_application_index === appIndex) {
+              lineDiscount += parseFloat(alloc.amount) || 0;
+            }
+          }
+        }
+
+        offerAllocatedDiscount += lineDiscount;
+
+        purchasedItems.push({
+          productId: gid,
+          title: item.title || "Product",
+          quantity: itemQty,
+          price: unitPrice,
+          discountAmount: lineDiscount,
+        });
+      }
+    });
+
+    matchedOffers.push({
+      offer: off,
+      purchasedItems,
+      offerDiscount: offerAllocatedDiscount,
+    });
   }
 
   if (matchedOffers.length === 0) {
@@ -124,7 +166,7 @@ export const action = async ({ request }) => {
     return new Response();
   }
 
-  console.log(`-------------------> 🎯 [Webhook: orders/create] Matched ${matchedOffers.length} offers for ${payload.name}:`, matchedOffers.map((o) => o.title).join(", "));
+  console.log(`-------------------> 🎯 [Webhook: orders/create] Matched ${matchedOffers.length} offers for ${payload.name}:`, matchedOffers.map((m) => m.offer.title).join(", "));
 
   const totalPrice = parseFloat(payload.total_price) || 0;
   const totalDiscounts = parseFloat(payload.total_discounts) || 0;
@@ -132,62 +174,24 @@ export const action = async ({ request }) => {
   const currency = payload.currency || "USD";
 
   try {
-    for (const matchedOffer of matchedOffers) {
-      let offerDiscount = 0;
-      const targetTitle = (matchedOffer.title || "").toLowerCase().trim();
-
-      // Check line item discount allocations
-      if (Array.isArray(payload.line_items) && Array.isArray(payload.discount_applications)) {
-        const appIndex = payload.discount_applications.findIndex((app) => {
-          const t = (app.title || app.description || app.code || "")?.toLowerCase().trim();
-          return t === targetTitle || t.includes(targetTitle);
-        });
-
-        if (appIndex !== -1) {
-          for (const item of payload.line_items) {
-            for (const alloc of (item.discount_allocations || [])) {
-              if (alloc.discount_application_index === appIndex) {
-                offerDiscount += parseFloat(alloc.amount) || 0;
-              }
-            }
-          }
-        }
+    for (const matched of matchedOffers) {
+      let finalDiscount = matched.offerDiscount;
+      if (finalDiscount === 0) {
+        finalDiscount = matchedOffers.length === 1 ? totalDiscounts : (totalDiscounts / matchedOffers.length);
       }
 
-      if (offerDiscount === 0) {
-        offerDiscount = matchedOffers.length === 1 ? totalDiscounts : (totalDiscounts / matchedOffers.length);
-      }
-
-      const existingUsage = await db.orderUsage.findFirst({
-        where: {
-          orderId: orderIdStr,
-          offerId: matchedOffer.id,
-        },
+      await safeSaveOrderUsage({
+        shop,
+        orderId: orderIdStr,
+        orderName: payload.name || `#${payload.order_number || payload.id}`,
+        customerEmail,
+        totalPrice,
+        discountAmount: finalDiscount,
+        currency,
+        purchasedProducts: matched.purchasedItems,
+        offerId: matched.offer.id,
+        createdAt: payload.created_at ? new Date(payload.created_at) : new Date(),
       });
-
-      if (existingUsage) {
-        await db.orderUsage.update({
-          where: { id: existingUsage.id },
-          data: {
-            totalPrice,
-            discountAmount: offerDiscount,
-          },
-        });
-      } else {
-        await db.orderUsage.create({
-          data: {
-            shop,
-            orderId: orderIdStr,
-            orderName: payload.name || `#${payload.order_number || payload.id}`,
-            customerEmail,
-            totalPrice,
-            discountAmount: offerDiscount,
-            currency,
-            offerId: matchedOffer.id,
-            createdAt: payload.created_at ? new Date(payload.created_at) : new Date(),
-          },
-        });
-      }
     }
 
     // Audit to guarantee numbers match perfectly
