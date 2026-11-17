@@ -153,81 +153,60 @@ export default function OffersComparisonChart({
                 {/* Recharts Bar Chart Area */}
                 <div style={{ width: "100%", height: "260px", position: "relative" }}>
                     {isMounted ? (
-                        offersData.length === 0 ? (
-                            <s-box
-                                background="subdued"
-                                borderRadius="base"
-                                padding="large"
-                                border="small"
+                        <ResponsiveContainer width="100%" height="100%">
+                            <BarChart
+                                data={offersData.length > 0 ? offersData : [{ title: "", totalOrders: 0, totalSale: 0 }]}
+                                margin={{ top: 12, right: 15, left: -10, bottom: 10 }}
                             >
-                                <s-stack alignItems="center" justifyContent="center" gap="small-200">
-                                    <s-box
-                                        padding="small"
-                                        background="base"
-                                        borderRadius="base"
-                                    >
-                                        <s-icon type="chart-vertical" />
-                                    </s-box>
-                                    <s-text weight="bold">No offer data available</s-text>
-                                    <s-paragraph color="subdued">
-                                        Create a paired products bundle offer to track its performance here.
-                                    </s-paragraph>
-                                </s-stack>
-                            </s-box>
-                        ) : (
-                            <ResponsiveContainer width="100%" height="100%">
-                                <BarChart
-                                    data={offersData}
-                                    margin={{ top: 12, right: 15, left: -10, bottom: 10 }}
-                                >
-                                    <defs>
-                                        <linearGradient id="barGradOrders" x1="0" y1="0" x2="0" y2="1">
-                                            <stop offset="0%" stopColor="#3b82f6" />
-                                            <stop offset="100%" stopColor="#1d4ed8" />
-                                        </linearGradient>
-                                        <linearGradient id="barGradSales" x1="0" y1="0" x2="0" y2="1">
-                                            <stop offset="0%" stopColor="#10b981" />
-                                            <stop offset="100%" stopColor="#047857" />
-                                        </linearGradient>
-                                    </defs>
-                                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f2f5" />
-                                    <XAxis
-                                        dataKey="title"
-                                        tickLine={false}
-                                        axisLine={{ stroke: "#e2e8f0" }}
-                                        tick={{ fill: "#64748b", fontSize: 11, fontWeight: 500 }}
-                                        tickFormatter={(val) =>
-                                            val && val.length > 15 ? `${val.substring(0, 15)}...` : val || ""
-                                        }
-                                        dy={6}
-                                    />
-                                    <YAxis
-                                        tickLine={false}
-                                        axisLine={false}
-                                        tick={{ fill: "#64748b", fontSize: 11, fontWeight: 500 }}
-                                        tickFormatter={(val) =>
-                                            chart2Metric === "orders" ? Math.round(val) : `${currencySymbol}${val}`
-                                        }
-                                        domain={[0, (dataMax) => (dataMax <= 0 ? 4 : Math.ceil(dataMax * 1.25))]}
-                                        allowDecimals={chart2Metric !== "orders"}
-                                    />
+                                <defs>
+                                    <linearGradient id="barGradOrders" x1="0" y1="0" x2="0" y2="1">
+                                        <stop offset="0%" stopColor="#3b82f6" />
+                                        <stop offset="100%" stopColor="#1d4ed8" />
+                                    </linearGradient>
+                                    <linearGradient id="barGradSales" x1="0" y1="0" x2="0" y2="1">
+                                        <stop offset="0%" stopColor="#10b981" />
+                                        <stop offset="100%" stopColor="#047857" />
+                                    </linearGradient>
+                                </defs>
+                                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f2f5" />
+                                <XAxis
+                                    dataKey="title"
+                                    tickLine={false}
+                                    axisLine={{ stroke: "#e2e8f0" }}
+                                    tick={{ fill: "#64748b", fontSize: 11, fontWeight: 500 }}
+                                    tickFormatter={(val) =>
+                                        val && val.length > 15 ? `${val.substring(0, 15)}...` : val || ""
+                                    }
+                                    dy={6}
+                                />
+                                <YAxis
+                                    tickLine={false}
+                                    axisLine={false}
+                                    tick={{ fill: "#64748b", fontSize: 11, fontWeight: 500 }}
+                                    tickFormatter={(val) =>
+                                        chart2Metric === "orders" ? Math.round(val) : `${currencySymbol}${val}`
+                                    }
+                                    domain={[0, (dataMax) => (dataMax <= 0 ? 4 : Math.ceil(dataMax * 1.25))]}
+                                    allowDecimals={chart2Metric !== "orders"}
+                                />
+                                {offersData.length > 0 && (
                                     <Tooltip
                                         content={<CustomChart2Tooltip />}
                                         cursor={{ fill: "rgba(241, 245, 249, 0.6)" }}
                                     />
-                                    <Bar
-                                        key={chart2Metric}
-                                        dataKey={chart2Metric === "orders" ? "totalOrders" : "totalSale"}
-                                        fill={chart2Metric === "orders" ? "url(#barGradOrders)" : "url(#barGradSales)"}
-                                        radius={[6, 6, 0, 0]}
-                                        maxBarSize={44}
-                                        isAnimationActive={true}
-                                        animationDuration={400}
-                                        animationEasing="ease-in"
-                                    />
-                                </BarChart>
-                            </ResponsiveContainer>
-                        )
+                                )}
+                                <Bar
+                                    key={chart2Metric}
+                                    dataKey={chart2Metric === "orders" ? "totalOrders" : "totalSale"}
+                                    fill={chart2Metric === "orders" ? "url(#barGradOrders)" : "url(#barGradSales)"}
+                                    radius={[6, 6, 0, 0]}
+                                    maxBarSize={44}
+                                    isAnimationActive={true}
+                                    animationDuration={400}
+                                    animationEasing="ease-in"
+                                />
+                            </BarChart>
+                        </ResponsiveContainer>
                     ) : (
                         <div
                             style={{
