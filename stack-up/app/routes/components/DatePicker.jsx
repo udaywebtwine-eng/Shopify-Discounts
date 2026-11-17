@@ -1,65 +1,11 @@
 import { useState, useEffect } from "react";
+import {
+    formatDate,
+    getPresetDateRange,
+    PRESET_LABELS,
+} from "../../utils/dateRange";
 
-// Helper to format Date object to YYYY-MM-DD
-function formatDate(d) {
-    const year = d.getFullYear();
-    const month = String(d.getMonth() + 1).padStart(2, "0");
-    const day = String(d.getDate()).padStart(2, "0");
-    return `${year}-${month}-${day}`;
-}
-
-// Preset range calculations
-function getPresetRange(presetKey) {
-    const today = new Date();
-    const end = new Date(today);
-    let start = new Date(today);
-
-    switch (presetKey) {
-        case "Today":
-            start = new Date(today);
-            break;
-        case "Yesterday":
-            start.setDate(today.getDate() - 1);
-            end.setDate(today.getDate() - 1);
-            break;
-        case "Last 7 days":
-            start.setDate(today.getDate() - 6);
-            break;
-        case "Last 30 Days":
-        case "Last 30 days":
-            start.setDate(today.getDate() - 29);
-            break;
-        case "Last 90 Days":
-        case "Last 90 days":
-            start.setDate(today.getDate() - 89);
-            break;
-        case "This Month":
-            start = new Date(today.getFullYear(), today.getMonth(), 1);
-            break;
-        case "Last Month":
-            start = new Date(today.getFullYear(), today.getMonth() - 1, 1);
-            end.setTime(new Date(today.getFullYear(), today.getMonth(), 0).getTime());
-            break;
-        default:
-            break;
-    }
-
-    return {
-        start: formatDate(start),
-        end: formatDate(end),
-    };
-}
-
-const PRESET_OPTIONS = [
-    "Today",
-    "Yesterday",
-    "Last 7 days",
-    "Last 30 Days",
-    "Last 90 Days",
-    "This Month",
-    "Last Month",
-    "Custom",
-];
+const PRESET_OPTIONS = PRESET_LABELS;
 
 export default function DatePicker({
     onApply,
@@ -69,7 +15,7 @@ export default function DatePicker({
 }) {
     // Applied states (controls what is shown in the trigger button)
     const [appliedPreset, setAppliedPreset] = useState(initialPreset);
-    const initialRange = getPresetRange(initialPreset);
+    const initialRange = getPresetDateRange(initialPreset);
     const [appliedStart, setAppliedStart] = useState(initialStartDate || initialRange.start);
     const [appliedEnd, setAppliedEnd] = useState(initialEndDate || initialRange.end);
 
@@ -91,11 +37,24 @@ export default function DatePicker({
         }
     }, [initialStartDate, initialEndDate]);
 
+    useEffect(() => {
+        if (initialPreset && initialPreset !== appliedPreset) {
+            setAppliedPreset(initialPreset);
+            setSelectedPreset(initialPreset);
+            const range = getPresetDateRange(initialPreset);
+            setAppliedStart(range.start);
+            setAppliedEnd(range.end);
+            setStartDate(range.start);
+            setEndDate(range.end);
+            setCalendarView(range.end.substring(0, 7));
+        }
+    }, [initialPreset]);
+
     // Handle clicking a preset on the left side
     const handleSelectPreset = (preset) => {
         setSelectedPreset(preset);
         if (preset !== "Custom") {
-            const range = getPresetRange(preset);
+            const range = getPresetDateRange(preset);
             setStartDate(range.start);
             setEndDate(range.end);
             setCalendarView(range.end.substring(0, 7));

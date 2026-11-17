@@ -5,29 +5,32 @@ import { useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import db from "../db.server";
 import { syncRecentOrdersFromShopify } from "../utils/orders.server";
+import { resolveAnalyticsRange, generateDailyBuckets } from "../utils/dateRange";
 import DailyTrendChart from "./components/chart/daily-trend-chart";
 import OffersComparisonChart from "./components/chart/offers-comparison-chart";
 import OffersTable from "./components/table/offers-table";
 import ProductsTable from "./components/table/products-table";
 import DatePicker from "./components/DatePicker"
 
-// In-memory currency cache per shop domain to avoid redundant GraphQL roundtrips
-const currencyCache = new Map();
+// In-memory currency and shop details cache per shop domain to avoid redundant GraphQL roundtrips
+const shopDetailsCache = new Map();
 
-async function getShopCurrencyDetails(admin, shopDomain) {
-    if (shopDomain && currencyCache.has(shopDomain)) {
-        return currencyCache.get(shopDomain);
+async function getShopDetails(admin, shopDomain) {
+    if (shopDomain && shopDetailsCache.has(shopDomain)) {
+        return shopDetailsCache.get(shopDomain);
     }
     try {
         const shopRes = await admin.graphql(`#graphql
-            query GetShopCurrency {
+            query GetShopDetails {
                 shop {
                     currencyCode
+                    ianaTimezone
                 }
             }
         `);
         const shopJson = await shopRes.json();
         const currencyCode = shopJson.data?.shop?.currencyCode || "USD";
+        const ianaTimezone = shopJson.data?.shop?.ianaTimezone || "UTC";
 
         const currencySymbol =
             new Intl.NumberFormat("en-US", {
@@ -38,12 +41,12 @@ async function getShopCurrencyDetails(admin, shopDomain) {
                 .formatToParts(0)
                 .find((part) => part.type === "currency")?.value || currencyCode;
 
-        const result = { currencyCode, currencySymbol };
-        if (shopDomain) currencyCache.set(shopDomain, result);
+        const result = { currencyCode, currencySymbol, ianaTimezone };
+        if (shopDomain) shopDetailsCache.set(shopDomain, result);
         return result;
     } catch (err) {
-        console.warn("Could not query shop currency:", err);
-        return { currencyCode: "USD", currencySymbol: "$" };
+        console.warn("Could not query shop details:", err);
+        return { currencyCode: "USD", currencySymbol: "$", ianaTimezone: "UTC" };
     }
 }
 
@@ -56,46 +59,21 @@ export const loader = async ({ request }) => {
     const { admin, session } = await authenticate.admin(request);
     const shop = session?.shop || "";
     const url = new URL(request.url);
-    const range = url.searchParams.get("range") || "30d";
-    const startDateParam = url.searchParams.get("startDate");
-    const endDateParam = url.searchParams.get("endDate");
 
-    // 1. Calculate date range boundaries
-    const now = new Date();
-    let startDate = new Date();
-    let endDate = new Date();
-    let daysCount = 30;
-
-    if (startDateParam && endDateParam) {
-        // Custom or preset start/end dates passed from DatePicker
-        startDate = new Date(`${startDateParam}T00:00:00`);
-        endDate = new Date(`${endDateParam}T23:59:59.999`);
-        const diffMs = endDate.getTime() - startDate.getTime();
-        daysCount = Math.max(1, Math.round(diffMs / (1000 * 60 * 60 * 24)));
-    } else if (range === "today") {
-        startDate.setHours(0, 0, 0, 0);
-        daysCount = 1;
-    } else if (range === "7d") {
-        startDate.setDate(now.getDate() - 7);
-        daysCount = 7;
-    } else if (range === "90d") {
-        startDate.setDate(now.getDate() - 90);
-        daysCount = 90;
-    } else {
-        // 30d default
-        startDate.setDate(now.getDate() - 30);
-        daysCount = 30;
-    }
-
-    // 2. Parallelize currency fetch and background order sync
-    const [currencyDetails] = await Promise.all([
-        getShopCurrencyDetails(admin, shop),
+    // 1. Parallelize shop details (timezone, currency) and background order sync
+    const [shopDetails] = await Promise.all([
+        getShopDetails(admin, shop),
         shop ? syncRecentOrdersFromShopify(admin, shop).catch((e) => {
             console.warn("Could not sync recent orders in analytics loader:", e);
             return 0;
         }) : Promise.resolve(0),
     ]);
-    const { currencyCode, currencySymbol } = currencyDetails;
+    const { currencyCode, currencySymbol, ianaTimezone } = shopDetails;
+
+    // 2. Resolve date boundaries using local date matching frontend
+    const { startDate, endDate, rangeKey, activePresetLabel } = resolveAnalyticsRange(
+        url.searchParams
+    );
 
     // 3. Parallelize database queries for Paired Offers, Selected Offers, and Order Usages
     const shopName = shop.replace(".myshopify.com", "");
@@ -154,23 +132,8 @@ export const loader = async ({ request }) => {
             ? Math.round(((revenueGenerated - totalDiscountAmount) / totalDiscountAmount) * 100)
             : 0;
 
-    // 5. Build Daily Time Series for Chart 1
-    const dailyBuckets = [];
-    const bucketCount = Math.min(daysCount, 30);
-    for (let i = bucketCount - 1; i >= 0; i--) {
-        const d = new Date();
-        d.setDate(d.getDate() - i);
-        const dateStr = d.toISOString().split("T")[0];
-        const label = d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-        dailyBuckets.push({
-            dateStr,
-            label,
-            orders: 0,
-            sales: 0,
-            aov: 0,
-        });
-    }
-
+    // 5. Build Daily Time Series for Chart 1 using chronological bucket generator
+    const dailyBuckets = generateDailyBuckets(startDate, endDate);
     const bucketMap = {};
     dailyBuckets.forEach((b, idx) => {
         bucketMap[b.dateStr] = idx;
@@ -367,11 +330,13 @@ export const loader = async ({ request }) => {
     console.log(`⏱️ [AnalyticsLoader] Loaded in ${(tEnd - t0).toFixed(0)}ms (${offersData.length} offers, ${productsList.length} products, ${totalOrders} orders)`);
 
     return {
-        range,
-        startDate: startDateParam || null,
-        endDate: endDateParam || null,
+        range: rangeKey,
+        activePresetLabel,
+        startDate: startDate.toISOString().split("T")[0],
+        endDate: endDate.toISOString().split("T")[0],
         currencySymbol,
         currencyCode,
+        ianaTimezone,
         kpi: {
             revenueGenerated,
             totalOrders,
@@ -385,7 +350,7 @@ export const loader = async ({ request }) => {
 };
 
 export default function Analytics() {
-    const { range, startDate, endDate, currencySymbol, kpi, dailyBuckets, offersData, productsList } = useLoaderData();
+    const { range, activePresetLabel, startDate, endDate, currencySymbol, ianaTimezone, kpi, dailyBuckets, offersData, productsList } = useLoaderData();
     const [searchParams, setSearchParams] = useSearchParams();
     const navigation = useNavigation();
     const shopify = useAppBridge();
@@ -406,28 +371,27 @@ export default function Analytics() {
         }
     }, [isNavigating, shopify]);
 
+    // Map preset labels to short range tokens for clean URLs
+    const PRESET_TO_RANGE = {
+        "Today": "today",
+        "Yesterday": "yesterday",
+        "Last 7 days": "7d",
+        "Last 30 Days": "30d",
+        "Last 90 Days": "90d",
+        "This Month": "this_month",
+        "Last Month": "last_month",
+    };
+
     // Handle Range change from DatePicker (Apply callback)
     const handleDatePickerApply = ({ preset, startDate: sDate, endDate: eDate }) => {
-        const params = new URLSearchParams(searchParams);
+        const params = new URLSearchParams();
         if (preset && preset !== "Custom") {
-            params.set("preset", preset);
-        } else {
-            params.delete("preset");
-        }
-        if (sDate && eDate) {
+            const shortRange = PRESET_TO_RANGE[preset] || "30d";
+            params.set("range", shortRange);
+        } else if (sDate && eDate) {
             params.set("startDate", sDate);
             params.set("endDate", eDate);
         }
-        setSearchParams(params);
-    };
-
-    // Handle Range change from native s-select
-    const handleRangeChange = (newRange) => {
-        const params = new URLSearchParams(searchParams);
-        params.set("range", newRange);
-        params.delete("startDate");
-        params.delete("endDate");
-        params.delete("preset");
         setSearchParams(params);
     };
 
@@ -475,7 +439,7 @@ export default function Analytics() {
 
                     {/* Date Range Selector */}
                     <DatePicker
-                        initialPreset={searchParams.get("preset") || (range === "today" ? "Today" : range === "7d" ? "Last 7 days" : range === "90d" ? "Last 90 Days" : "Last 30 Days")}
+                        initialPreset={activePresetLabel || "Last 30 Days"}
                         initialStartDate={startDate}
                         initialEndDate={endDate}
                         onApply={handleDatePickerApply}
