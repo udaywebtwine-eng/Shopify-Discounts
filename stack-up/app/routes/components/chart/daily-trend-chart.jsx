@@ -14,6 +14,8 @@ export default function DailyTrendChart({
     dailyBuckets = [],
     kpi = { totalOrders: 0, revenueGenerated: 0, aov: 0 },
     currencySymbol = "$",
+    intervalType = "day",
+    intervalTitle = "Daily breakdown over the selected date range",
     isMounted = true,
 }) {
     // Chart 1 toggle state: 'orders' | 'sales' | 'aov'
@@ -36,6 +38,8 @@ export default function DailyTrendChart({
     // Custom Tooltip for Trend Area Chart
     const CustomChart1Tooltip = ({ active, payload, label }) => {
         if (active && payload && payload.length) {
+            const dataPoint = payload[0].payload;
+            const displayLabel = dataPoint?.fullLabel || label;
             const val = payload[0].value ?? 0;
             const formattedVal =
                 chart1Metric === "orders"
@@ -81,7 +85,7 @@ export default function DailyTrendChart({
                                 background: chart1Color,
                             }}
                         />
-                        {label}
+                        {displayLabel}
                     </div>
                     <div
                         style={{
@@ -147,7 +151,7 @@ export default function DailyTrendChart({
                         </s-stack>
                         <s-box paddingBlockStart="small-400">
                             <s-paragraph color="subdued">
-                                Daily breakdown over the selected date range
+                                {intervalTitle}
                             </s-paragraph>
                         </s-box>
                     </s-box>
@@ -212,16 +216,19 @@ export default function DailyTrendChart({
                                     axisLine={{ stroke: "#e2e8f0" }}
                                     tick={{ fill: "#64748b", fontSize: 11, fontWeight: 500 }}
                                     dy={6}
+                                    minTickGap={24}
+                                    interval="preserveStartEnd"
                                 />
                                 <YAxis
                                     tickLine={false}
                                     axisLine={false}
                                     tick={{ fill: "#64748b", fontSize: 11, fontWeight: 500 }}
                                     tickFormatter={(val) =>
-                                        chart1Metric === "orders" ? val : `${currencySymbol}${val}`
+                                        chart1Metric === "orders" ? Math.round(val) : `${currencySymbol}${val}`
                                     }
-                                    domain={[0, (dataMax) => (dataMax <= 0 ? 5 : Math.ceil(dataMax * 1.25))]}
-                                    tickCount={5}
+                                    domain={[0, (dataMax) => (dataMax <= 0 ? 4 : Math.ceil(dataMax * 1.25))]}
+                                    allowDecimals={chart1Metric !== "orders"}
+                                    interval={0}
                                 />
                                 <Tooltip content={<CustomChart1Tooltip />} />
                                 <Area

@@ -206,10 +206,10 @@ export default function OffersComparisonChart({
                                         axisLine={false}
                                         tick={{ fill: "#64748b", fontSize: 11, fontWeight: 500 }}
                                         tickFormatter={(val) =>
-                                            chart2Metric === "orders" ? val : `${currencySymbol}${val}`
+                                            chart2Metric === "orders" ? Math.round(val) : `${currencySymbol}${val}`
                                         }
-                                        domain={[0, (dataMax) => (dataMax <= 0 ? 5 : Math.ceil(dataMax * 1.25))]}
-                                        tickCount={5}
+                                        domain={[0, (dataMax) => (dataMax <= 0 ? 4 : Math.ceil(dataMax * 1.25))]}
+                                        allowDecimals={chart2Metric !== "orders"}
                                     />
                                     <Tooltip
                                         content={<CustomChart2Tooltip />}

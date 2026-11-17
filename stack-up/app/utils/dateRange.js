@@ -150,35 +150,154 @@ export function resolveAnalyticsRange(searchParams) {
 }
 
 /**
- * Builds chronological daily buckets between startDate and endDate.
- * Ensures custom ranges and historical presets render accurate time series.
+ * Formats hour in 12-hour AM/PM format (e.g. 0 -> "12 AM", 15 -> "3 PM")
+ */
+function formatHourLabel(h) {
+    const ampm = h >= 12 ? "PM" : "AM";
+    const hour = h % 12 === 0 ? 12 : h % 12;
+    return `${hour} ${ampm}`;
+}
+
+/**
+ * Generates smart chart buckets based on the span of days:
+ * - 1 day (e.g. Today, Yesterday): 24 Hourly buckets (00:00 - 23:00)
+ * - 2 to 90 days: Daily buckets
+ * - 91 to 180 days: Weekly buckets (7-day intervals)
+ * - > 180 days: Monthly buckets (grouped by year-month)
  *
  * @param {Date} startDate
  * @param {Date} endDate
- * @returns {Array<{ dateStr: string, label: string, orders: number, sales: number, aov: number }>}
+ * @param {number} daysCount
+ * @returns {{ intervalType: "hour" | "day" | "week" | "month", intervalTitle: string, buckets: Array<any> }}
  */
-export function generateDailyBuckets(startDate, endDate) {
-    const buckets = [];
-    const current = new Date(startDate);
-    current.setHours(0, 0, 0, 0);
-
+export function generateChartBuckets(startDate, endDate, daysCount) {
+    const start = new Date(startDate);
     const end = new Date(endDate);
-    end.setHours(23, 59, 59, 999);
 
-    while (current <= end) {
-        const dateStr = formatDate(current);
-        const label = current.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+    // 1. Single day range -> Hourly breakdown (24 buckets)
+    if (daysCount <= 1) {
+        const buckets = [];
+        for (let h = 0; h < 24; h++) {
+            const hourPadded = String(h).padStart(2, "0");
+            buckets.push({
+                key: hourPadded,
+                label: formatHourLabel(h),
+                fullLabel: `${formatHourLabel(h)} (${hourPadded}:00)`,
+                orders: 0,
+                sales: 0,
+                aov: 0,
+            });
+        }
+        return {
+            intervalType: "hour",
+            intervalTitle: "Hourly breakdown over the selected day",
+            buckets,
+        };
+    }
+
+    // 2. Daily breakdown for up to 90 days
+    if (daysCount <= 90) {
+        const buckets = [];
+        const current = new Date(start);
+        current.setHours(0, 0, 0, 0);
+        const endDay = new Date(end);
+        endDay.setHours(23, 59, 59, 999);
+
+        while (current <= endDay) {
+            const dateStr = formatDate(current);
+            const label = current.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+            buckets.push({
+                key: dateStr,
+                label,
+                fullLabel: label,
+                orders: 0,
+                sales: 0,
+                aov: 0,
+            });
+            current.setDate(current.getDate() + 1);
+        }
+
+        return {
+            intervalType: "day",
+            intervalTitle: "Daily breakdown over the selected date range",
+            buckets,
+        };
+    }
+
+    // 3. Weekly breakdown for 91 to 180 days
+    if (daysCount <= 180) {
+        const buckets = [];
+        const current = new Date(start);
+        current.setHours(0, 0, 0, 0);
+        const endDay = new Date(end);
+        endDay.setHours(23, 59, 59, 999);
+
+        while (current <= endDay) {
+            const weekStartStr = formatDate(current);
+            const label = current.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+
+            const nextWeek = new Date(current);
+            nextWeek.setDate(nextWeek.getDate() + 6);
+            const effectiveEnd = nextWeek > endDay ? endDay : nextWeek;
+
+            buckets.push({
+                key: weekStartStr,
+                label,
+                fullLabel: `Week of ${label} - ${effectiveEnd.toLocaleDateString("en-US", { month: "short", day: "numeric" })}`,
+                startTime: current.getTime(),
+                endTime: effectiveEnd.getTime() + (24 * 60 * 60 * 1000 - 1),
+                orders: 0,
+                sales: 0,
+                aov: 0,
+            });
+
+            current.setDate(current.getDate() + 7);
+        }
+
+        return {
+            intervalType: "week",
+            intervalTitle: "Weekly breakdown over the selected date range",
+            buckets,
+        };
+    }
+
+    // 4. Monthly breakdown for > 180 days (prevents axis squishing on very long date ranges)
+    const buckets = [];
+    const current = new Date(start.getFullYear(), start.getMonth(), 1, 0, 0, 0, 0);
+    const endMonth = new Date(end.getFullYear(), end.getMonth(), 1, 0, 0, 0, 0);
+
+    while (current <= endMonth) {
+        const year = current.getFullYear();
+        const month = String(current.getMonth() + 1).padStart(2, "0");
+        const monthKey = `${year}-${month}`;
+        const label = current.toLocaleDateString("en-US", { month: "short", year: "2-digit" });
 
         buckets.push({
-            dateStr,
+            key: monthKey,
             label,
+            fullLabel: current.toLocaleDateString("en-US", { month: "long", year: "numeric" }),
             orders: 0,
             sales: 0,
             aov: 0,
         });
 
-        current.setDate(current.getDate() + 1);
+        current.setMonth(current.getMonth() + 1);
     }
 
-    return buckets;
+    return {
+        intervalType: "month",
+        intervalTitle: "Monthly breakdown over the selected date range",
+        buckets,
+    };
+}
+
+/**
+ * Backward compatibility alias for generateDailyBuckets
+ */
+export function generateDailyBuckets(startDate, endDate) {
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+    const diffMs = Math.max(0, end.getTime() - start.getTime());
+    const days = Math.max(1, Math.round(diffMs / (1000 * 60 * 60 * 24)) + 1);
+    return generateChartBuckets(start, end, days).buckets;
 }

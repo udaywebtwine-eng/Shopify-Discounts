@@ -5,7 +5,7 @@ import { useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import db from "../db.server";
 import { syncRecentOrdersFromShopify } from "../utils/orders.server";
-import { resolveAnalyticsRange, generateDailyBuckets } from "../utils/dateRange";
+import { resolveAnalyticsRange, generateChartBuckets, formatDate } from "../utils/dateRange";
 import DailyTrendChart from "./components/chart/daily-trend-chart";
 import OffersComparisonChart from "./components/chart/offers-comparison-chart";
 import OffersTable from "./components/table/offers-table";
@@ -71,7 +71,7 @@ export const loader = async ({ request }) => {
     const { currencyCode, currencySymbol, ianaTimezone } = shopDetails;
 
     // 2. Resolve date boundaries using local date matching frontend
-    const { startDate, endDate, rangeKey, activePresetLabel } = resolveAnalyticsRange(
+    const { startDate, endDate, daysCount, rangeKey, activePresetLabel } = resolveAnalyticsRange(
         url.searchParams
     );
 
@@ -132,23 +132,40 @@ export const loader = async ({ request }) => {
             ? Math.round(((revenueGenerated - totalDiscountAmount) / totalDiscountAmount) * 100)
             : 0;
 
-    // 5. Build Daily Time Series for Chart 1 using chronological bucket generator
-    const dailyBuckets = generateDailyBuckets(startDate, endDate);
+    // 5. Build Dynamic Time Series for Chart 1 (Hourly for 1-day, Daily for <=90d, Weekly for <=180d, Monthly for >180d)
+    const { intervalType, intervalTitle, buckets: chartBuckets } = generateChartBuckets(startDate, endDate, daysCount);
     const bucketMap = {};
-    dailyBuckets.forEach((b, idx) => {
-        bucketMap[b.dateStr] = idx;
+    chartBuckets.forEach((b, idx) => {
+        bucketMap[b.key] = idx;
     });
 
     Array.from(uniqueOrderMap.values()).forEach((order) => {
-        const orderDateStr = new Date(order.createdAt).toISOString().split("T")[0];
-        const idx = bucketMap[orderDateStr];
-        if (idx !== undefined) {
-            dailyBuckets[idx].orders += 1;
-            dailyBuckets[idx].sales += order.totalPrice || 0;
+        const orderDate = new Date(order.createdAt);
+        let matchIdx;
+
+        if (intervalType === "hour") {
+            const hourKey = String(orderDate.getHours()).padStart(2, "0");
+            matchIdx = bucketMap[hourKey];
+        } else if (intervalType === "day") {
+            const dateStr = formatDate(orderDate);
+            matchIdx = bucketMap[dateStr];
+        } else if (intervalType === "week") {
+            const orderTime = orderDate.getTime();
+            matchIdx = chartBuckets.findIndex(
+                (b) => orderTime >= b.startTime && orderTime <= b.endTime
+            );
+        } else if (intervalType === "month") {
+            const monthKey = `${orderDate.getFullYear()}-${String(orderDate.getMonth() + 1).padStart(2, "0")}`;
+            matchIdx = bucketMap[monthKey];
+        }
+
+        if (matchIdx !== undefined && matchIdx !== -1 && chartBuckets[matchIdx]) {
+            chartBuckets[matchIdx].orders += 1;
+            chartBuckets[matchIdx].sales += order.totalPrice || 0;
         }
     });
 
-    dailyBuckets.forEach((b) => {
+    chartBuckets.forEach((b) => {
         b.aov = b.orders > 0 ? b.sales / b.orders : 0;
     });
 
@@ -343,14 +360,16 @@ export const loader = async ({ request }) => {
             aov,
             roi,
         },
-        dailyBuckets,
+        dailyBuckets: chartBuckets,
+        intervalType,
+        intervalTitle,
         offersData,
         productsList,
     };
 };
 
 export default function Analytics() {
-    const { range, activePresetLabel, startDate, endDate, currencySymbol, ianaTimezone, kpi, dailyBuckets, offersData, productsList } = useLoaderData();
+    const { range, activePresetLabel, startDate, endDate, currencySymbol, ianaTimezone, kpi, dailyBuckets, intervalType, intervalTitle, offersData, productsList } = useLoaderData();
     const [searchParams, setSearchParams] = useSearchParams();
     const navigation = useNavigation();
     const shopify = useAppBridge();
@@ -516,11 +535,13 @@ export default function Analytics() {
                     </s-grid>
                 </s-section>
 
-                {/* CHART 1: Daily Breakdown / Trend Area Chart */}
+                {/* CHART 1: Dynamic Breakdown / Trend Area Chart */}
                 <DailyTrendChart
                     dailyBuckets={dailyBuckets}
                     kpi={kpi}
                     currencySymbol={currencySymbol}
+                    intervalType={intervalType}
+                    intervalTitle={intervalTitle}
                     isMounted={isMounted}
                 />
 
