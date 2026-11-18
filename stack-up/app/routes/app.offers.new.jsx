@@ -53,7 +53,7 @@ export default function NewOfferSelect() {
       <s-section padding="none">
         <s-box padding="base">
           <s-grid
-            gridTemplateColumns="@container (inline-size <= 900px) 1fr, 1fr 1fr 1fr"
+            gridTemplateColumns="@container (inline-size <= 900px) 1fr, 1fr 1fr"
             gap="base"
           >
             {/* Option 1: Frequently Bought Together */}
@@ -207,6 +207,58 @@ export default function NewOfferSelect() {
                     disabled={isBusy ? true : undefined}
                   >
                     Create Volume Offer
+                  </s-button>
+                </s-box>
+              </s-stack>
+            </s-box>
+
+            {/* Option 4: Automatic BOGO & Buy X Get Y */}
+            <s-box
+              background="subdued"
+              border="small"
+              borderRadius="base"
+              padding="base"
+            >
+              <s-stack gap="base" justifyContent="space-between">
+                <s-stack gap="base">
+                  {/* Preview Image */}
+                  <s-box
+                    borderRadius="base"
+                    overflow="hidden"
+                    border="small"
+                    background="surface"
+                  >
+                    <s-image
+                      src="/img1.png"
+                      alt="Automatic BOGO & Buy X Get Y Preview"
+                      aspectRatio="16/9"
+                      objectFit="contain"
+                      inlineSize="fill"
+                    />
+                  </s-box>
+
+                  {/* Badge, Title & Description */}
+                  <s-stack gap="small">
+                    <s-stack direction="inline" justifyContent="space-between" alignItems="center">
+                      <s-badge tone="magic">BOGO & Buy X Get Y</s-badge>
+                    </s-stack>
+                    <s-heading size="medium">Automatic BOGO & Buy X Get Y</s-heading>
+                    <s-text tone="subdued">
+                      Reward customers with free items or special deals when purchasing qualifying items. Supports Buy 1 Get 1 Free, Buy X Get X, and Buy X Get Y.
+                    </s-text>
+                  </s-stack>
+                </s-stack>
+
+                {/* Action Button */}
+                <s-box paddingBlockStart="base">
+                  <s-button
+                    variant="primary"
+                    inlineSize="fill"
+                    onClick={() => handleSelect("BOGO", "/app/offers/bogo/create")}
+                    loading={selectedType === "BOGO" ? true : undefined}
+                    disabled={isBusy ? true : undefined}
+                  >
+                    Create BOGO Offer
                   </s-button>
                 </s-box>
               </s-stack>

@@ -205,6 +205,64 @@ export async function getActiveMainProductsMap({
     }
   }
 
+  // 4. Check BOGO / Buy X Get Y Offers if requested
+  if (offerType === "BOGO" || offerType === "ALL") {
+    const bogoOffers = await prisma.offer.findMany({
+      where: {
+        ...shopCondition,
+        type: "BOGO",
+        status: { not: "EXPIRED" },
+      },
+      select: {
+        id: true,
+        discountId: true,
+        numericId: true,
+        title: true,
+        status: true,
+        startsAt: true,
+        endsAt: true,
+        mainProducts: true,
+        configuration: true,
+      },
+    }).catch(() => []);
+
+    for (const offer of bogoOffers) {
+      if (excludeDiscountId && offer.discountId === excludeDiscountId) continue;
+      if (excludeNumericId && offer.numericId === excludeNumericId) continue;
+
+      const realStatus = computeOfferStatus({
+        startsAt: offer.startsAt,
+        endsAt: offer.endsAt,
+        status: offer.status,
+      });
+
+      if (realStatus === "ACTIVE" || realStatus === "SCHEDULED") {
+        try {
+          let prods = [];
+          if (offer.mainProducts) {
+            prods = JSON.parse(offer.mainProducts);
+          } else if (offer.configuration) {
+            prods = JSON.parse(offer.configuration)?.mainProducts || [];
+          }
+          for (const p of prods) {
+            const rawId = p?.id || p;
+            const normId = normalizeProductId(rawId);
+            if (normId) {
+              usedMap.set(normId, {
+                offerId: offer.discountId,
+                numericId: offer.numericId,
+                offerTitle: offer.title,
+                offerType: "BOGO",
+              });
+            }
+          }
+        } catch {
+          // ignore json errors
+        }
+      }
+    }
+  }
+
   return usedMap;
 }
 
@@ -255,7 +313,9 @@ export async function checkMainProductConflicts({
             ? `/app/offers/paired/edit/${match.numericId}`
             : match.offerType === "SELECTED"
             ? `/app/offers/selected/edit/${match.numericId}`
-            : `/app/offers/volume/edit/${match.numericId}`,
+            : match.offerType === "VOLUME"
+            ? `/app/offers/volume/edit/${match.numericId}`
+            : `/app/offers/bogo/edit/${match.numericId}`,
       });
     }
   }

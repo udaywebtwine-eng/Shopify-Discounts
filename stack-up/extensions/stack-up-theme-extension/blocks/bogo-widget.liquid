@@ -1,0 +1,513 @@
+{% comment %}
+  StackUp - Automatic BOGO & Buy X Get Y Widget
+  Target: section (Product Template Block)
+{% endcomment %}
+
+{% assign app_status = shop.metafields.stack_up.stack_up_app_enabled.value %}
+{% assign is_app_enabled = false %}
+{% if app_status == 'true' or app_status == true or app_status == blank %}
+  {% assign is_app_enabled = true %}
+{% endif %}
+
+{% if is_app_enabled %}
+  {% assign bogo_offer = product.metafields.stack_up.bogo_offer.value %}
+  {% assign custom_settings = shop.metafields.stack_up.bogo_widget_settings.value %}
+  {% assign is_editor = request.design_mode %}
+
+  {% assign is_active_offer = false %}
+  {% if bogo_offer != blank %}
+    {% assign is_active_offer = true %}
+  {% endif %}
+
+  {% if is_active_offer or is_editor %}
+    {% if is_active_offer %}
+      {% assign deal_type = bogo_offer.dealType | default: 'BOGO' %}
+      {% assign buy_qty = bogo_offer.buyQty | default: 1 %}
+      {% assign get_qty = bogo_offer.getQty | default: 1 %}
+      {% assign discount_type = bogo_offer.dType | default: 'P' %}
+      {% assign discount_val = bogo_offer.dVal | default: 100 %}
+      {% assign max_discount = bogo_offer.maxD %}
+      {% assign offer_title = bogo_offer.t %}
+      {% assign offer_widget_title = bogo_offer.wt %}
+      {% assign reward_product = bogo_offer.getY %}
+    {% else %}
+      {% comment %} Sample Data for Theme Editor Preview {% endcomment %}
+      {% assign deal_type = 'BOGO' %}
+      {% assign buy_qty = 1 %}
+      {% assign get_qty = 1 %}
+      {% assign discount_type = 'P' %}
+      {% assign discount_val = 100 %}
+      {% assign max_discount = null %}
+      {% assign offer_title = 'Buy 1 Get 1 with 100% off' %}
+      {% assign offer_widget_title = '' %}
+      {% assign reward_product = null %}
+    {% endif %}
+
+    {% comment %} Styling Variables {% endcomment %}
+    {% assign card_surface = custom_settings.styles.cardSurface | default: '#ffffff' %}
+    {% assign border_color = custom_settings.styles.borderColor | default: '#e5e7eb' %}
+    {% assign border_width = custom_settings.styles.borderWidth | default: 1 %}
+    {% assign border_radius = custom_settings.styles.borderRadius | default: 12 %}
+    {% assign badge_bg = custom_settings.styles.badgeBg | default: '#ede9fe' %}
+    {% assign badge_color = custom_settings.styles.badgeTextColor | default: '#6366f1' %}
+    {% assign plus_bg = custom_settings.styles.plusBg | default: badge_bg %}
+    {% assign plus_color = custom_settings.styles.plusColor | default: badge_color %}
+    {% assign button_bg = custom_settings.styles.buttonBg | default: '#1f2937' %}
+    {% assign button_color = custom_settings.styles.buttonTextColor | default: '#ffffff' %}
+    {% assign button_radius = custom_settings.styles.buttonBorderRadius | default: 8 %}
+
+    {% comment %} Display Toggles {% endcomment %}
+    {% assign show_widget_title = true %}
+    {% if custom_settings.display.showWidgetTitle == false %}
+      {% assign show_widget_title = false %}
+    {% endif %}
+    {% assign show_divider = true %}
+    {% if custom_settings.display.showDivider == false %}
+      {% assign show_divider = false %}
+    {% endif %}
+    {% assign show_plus_icon = true %}
+    {% if custom_settings.display.showPlusIcon == false %}
+      {% assign show_plus_icon = false %}
+    {% endif %}
+    {% assign show_badge = true %}
+    {% if custom_settings.display.showBadge == false %}
+      {% assign show_badge = false %}
+    {% endif %}
+    {% assign show_savings = true %}
+    {% if custom_settings.display.showSavings == false %}
+      {% assign show_savings = false %}
+    {% endif %}
+    {% assign show_add_to_cart = true %}
+    {% if custom_settings.display.showAddToCart == false %}
+      {% assign show_add_to_cart = false %}
+    {% endif %}
+
+    {% assign total_items = buy_qty | plus: get_qty %}
+    {% assign curr_sym = cart.currency.symbol | default: '$' %}
+
+    {% if discount_type == 'F' %}
+      {% assign discount_off_text = curr_sym | append: discount_val | append: ' off' %}
+    {% else %}
+      {% assign discount_off_text = discount_val | append: '% off' %}
+    {% endif %}
+
+    {% comment %} Heading Resolution matching Customize page & other widgets {% endcomment %}
+    {% if deal_type == 'BOGO' %}
+      {% assign fallback_heading = 'Buy 1 Get 1 with 100% off' %}
+    {% elsif deal_type == 'BUY_X_GET_X' %}
+      {% assign fallback_heading = 'Buy ' | append: buy_qty | append: ' Get ' | append: get_qty | append: ' with ' | append: discount_off_text %}
+    {% else %}
+      {% if discount_type == 'F' %}
+        {% assign fallback_heading = 'Buy ' | append: buy_qty | append: ' Get ' | append: get_qty | append: ' with ' | append: discount_off_text %}
+      {% else %}
+        {% assign fallback_heading = 'Buy ' | append: buy_qty | append: ' Get ' | append: get_qty | append: ' Special Deal' %}
+      {% endif %}
+    {% endif %}
+
+    {% assign current_widget_title = offer_widget_title | strip %}
+    {% if current_widget_title == blank %}
+      {% assign current_widget_title = fallback_heading %}
+    {% endif %}
+
+    {% assign custom_heading_template = custom_settings.content.heading | default: '{widgettitle}' %}
+    {% if custom_heading_template contains '{widgettitle}' %}
+      {% assign resolved_heading = custom_heading_template | replace: '{widgettitle}', current_widget_title %}
+    {% elsif offer_widget_title != blank %}
+      {% assign resolved_heading = offer_widget_title %}
+    {% else %}
+      {% assign resolved_heading = custom_heading_template %}
+    {% endif %}
+    {% assign resolved_heading = resolved_heading | replace: '{discount}', discount_off_text %}
+
+    {% comment %} Button Text Resolution {% endcomment %}
+    {% assign btn_text_template = custom_settings.content.buttonText | default: 'Add {total} items to Cart' %}
+    {% assign resolved_button_text = btn_text_template | replace: '{total}', total_items | replace: '{quantity}', total_items %}
+
+    {% assign buy_variant = product.selected_or_first_available_variant %}
+    {% assign buy_price = buy_variant.price | default: 0 %}
+
+    {% if deal_type == 'BUY_X_GET_Y' and reward_product != blank %}
+      {% assign get_title = reward_product.title %}
+      {% assign get_image = reward_product.image %}
+      {% assign get_price = reward_product.price | times: 100 %}
+      {% assign get_variants = reward_product.variants %}
+      {% assign get_first_variant_id = reward_product.variants[0].id %}
+    {% else %}
+      {% assign get_title = product.title %}
+      {% assign get_image = product.featured_image | image_url: width: 200 %}
+      {% assign get_price = buy_price %}
+      {% assign get_variants = product.variants %}
+      {% assign get_first_variant_id = buy_variant.id %}
+    {% endif %}
+
+    <div
+      id="stackup-bogo-widget"
+      class="stackup-bogo-container"
+      data-deal-type="{{ deal_type }}"
+      data-buy-qty="{{ buy_qty }}"
+      data-get-qty="{{ get_qty }}"
+      data-discount-type="{{ discount_type }}"
+      data-discount-val="{{ discount_val }}"
+      data-max-discount="{{ max_discount }}"
+      style="
+        background: {{ card_surface }};
+        border: {{ border_width }}px solid {{ border_color }};
+        border-radius: {{ border_radius }}px;
+        padding: 16px;
+        margin: 18px 0;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+        font-family: inherit;
+      "
+    >
+      {% comment %} Header {% endcomment %}
+      {% if show_widget_title %}
+        <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 14px;">
+          <span style="font-size: 15px; font-weight: 700; color: #111827; white-space: nowrap;">
+            {{ resolved_heading }}
+          </span>
+          {% if show_divider %}
+            <div style="flex: 1; height: 1.5px; background: #e5e7eb;"></div>
+          {% endif %}
+        </div>
+      {% endif %}
+
+      {% comment %} Card 1: Buy Item Card {% endcomment %}
+      <div
+        style="
+          border: 1px solid #e5e7eb;
+          border-radius: 8px;
+          padding: 12px;
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+          background: #ffffff;
+        "
+      >
+        <div style="display: flex; gap: 12px; align-items: flex-start;">
+          <img
+            src="{{ product.featured_image | image_url: width: 120 }}"
+            alt="{{ product.title | escape }}"
+            style="width: 52px; height: 52px; object-fit: cover; border-radius: 6px; background: #f3f4f6; flex-shrink: 0;"
+          />
+          <div style="flex: 1; min-width: 0;">
+            <div style="font-size: 11px; color: #6b7280; font-weight: 600; text-transform: uppercase;">
+              Buy {{ buy_qty }}/{{ buy_qty }}
+            </div>
+            <div style="font-size: 13px; font-weight: 600; color: #111827; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+              {{ product.title }}
+            </div>
+            <div class="stackup-bogo-buy-unit" style="font-size: 11px; color: #9ca3af; margin-top: 2px; white-space: nowrap;">
+              {{ buy_price | money }} per item
+            </div>
+          </div>
+          <div style="text-align: right; flex-shrink: 0;">
+            <div class="stackup-bogo-buy-subtotal" style="font-size: 14px; font-weight: 700; color: #111827;">
+              {{ buy_price | times: buy_qty | money }}
+            </div>
+          </div>
+        </div>
+
+        {% if product.variants.size > 1 %}
+          <select
+            id="stackup-bogo-buy-variant"
+            class="stackup-bogo-variant-select"
+            aria-label="Select variant"
+            style="
+              width: 100%;
+              padding: 6px 10px;
+              font-size: 12px;
+              color: #374151;
+              border: 1px solid #d1d5db;
+              border-radius: 6px;
+              background-color: #ffffff;
+              cursor: pointer;
+              outline: none;
+              box-sizing: border-box;
+            "
+          >
+            {% for v in product.variants %}
+              <option
+                value="{{ v.id }}"
+                data-price="{{ v.price }}"
+                data-available="{{ v.available }}"
+                {% if v.id == buy_variant.id %}selected{% endif %}
+              >
+                {{ v.title }}{% if v.available == false %} (Out of stock){% endif %}
+              </option>
+            {% endfor %}
+          </select>
+        {% else %}
+          <input
+            type="hidden" 
+            id="stackup-bogo-buy-variant"
+            value="{{ buy_variant.id }}"
+            data-price="{{ buy_price }}"
+          />
+        {% endif %}
+      </div>
+
+      {% comment %} Centered Plus Icon {% endcomment %}
+      {% if show_plus_icon %}
+        <div style="display: flex; justify-content: center; margin: -6px 0; position: relative; z-index: 2;">
+          <div
+            style="
+              width: 24px;
+              height: 24px;
+              border-radius: 50%;
+              background: {{ plus_bg }};
+              color: {{ plus_color }};
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              font-size: 16px;
+              font-weight: 700;
+              box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+            "
+          >
+            +
+          </div>
+        </div>
+      {% endif %}
+
+      {% comment %} Card 2: Get Item Card {% endcomment %}
+      <div
+        style="
+          border: 1px solid #e5e7eb;
+          border-radius: 8px;
+          padding: 12px;
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+          background: #ffffff;
+        "
+      >
+        <div style="display: flex; gap: 12px; align-items: flex-start;">
+          <img
+            src="{{ get_image }}"
+            alt="{{ get_title | escape }}"
+            style="width: 52px; height: 52px; object-fit: cover; border-radius: 6px; background: #f3f4f6; flex-shrink: 0;"
+          />
+          <div style="flex: 1; min-width: 0;">
+            <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 2px;">
+              <span style="font-size: 11px; color: #6b7280; font-weight: 600; text-transform: uppercase;">
+                Get {{ get_qty }}/{{ get_qty }}
+              </span>
+              {% if show_badge %}
+                <span
+                  style="
+                    font-size: 10px;
+                    font-weight: 600;
+                    background: {{ badge_bg }};
+                    color: {{ badge_color }};
+                    padding: 1px 6px;
+                    border-radius: 10px;
+                  "
+                >
+                  {% if discount_val == 100 and discount_type != 'F' %}
+                    Add {{ get_qty }} item{% if get_qty > 1 %}s{% endif %} for 100% off
+                  {% elsif discount_type == 'F' %}
+                    Add {{ get_qty }} item{% if get_qty > 1 %}s{% endif %} for {{ curr_sym }}{{ discount_val }} off
+                  {% else %}
+                    Add {{ get_qty }} item{% if get_qty > 1 %}s{% endif %} for {{ discount_val }}% off
+                  {% endif %}
+                </span>
+              {% endif %}
+            </div>
+            <div style="font-size: 13px; font-weight: 600; color: #111827; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+              {{ get_title }}
+            </div>
+            <div class="stackup-bogo-get-unit" style="font-size: 11px; color: #9ca3af; margin-top: 2px; white-space: nowrap;">
+              {% if discount_val == 100 %}
+                {{ 0 | money }} per item
+              {% else %}
+                {{ get_price | money }} per item
+              {% endif %}
+            </div>
+          </div>
+          <div style="text-align: right; flex-shrink: 0;">
+            <div class="stackup-bogo-get-subtotal" style="font-size: 14px; font-weight: 700; color: #111827;">
+              {% if discount_val == 100 %}
+                {{ 0 | money }}
+              {% else %}
+                {{ get_price | times: get_qty | money }}
+              {% endif %}
+            </div>
+            <div
+              class="stackup-bogo-get-original"
+              style="font-size: 11px; color: #9ca3af; text-decoration: line-through;"
+            >
+              {{ get_price | times: get_qty | money }}
+            </div>
+          </div>
+        </div>
+
+        {% if deal_type == 'BUY_X_GET_Y' and reward_product != blank %}
+          {% if get_variants.size > 1 %}
+            <select
+              id="stackup-bogo-get-variant"
+              class="stackup-bogo-variant-select"
+              aria-label="Select reward variant"
+              style="
+                width: 100%;
+                padding: 6px 10px;
+                font-size: 12px;
+                color: #374151;
+                border: 1px solid #d1d5db;
+                border-radius: 6px;
+                background-color: #ffffff;
+                cursor: pointer;
+                outline: none;
+                box-sizing: border-box;
+              "
+            >
+              {% for v in get_variants %}
+                {% assign vp = v.price | times: 100 %}
+                <option
+                  value="{{ v.id }}"
+                  data-price="{{ vp }}"
+                  data-title="{{ v.title | escape }}"
+                  {% if v.available == false %}data-available="false"{% endif %}
+                  {% if v.id == get_first_variant_id %}selected{% endif %}
+                >
+                  {{ v.title }}{% if v.available == false %} (Out of stock){% endif %}
+                </option>
+              {% endfor %}
+            </select>
+          {% else %}
+            <input
+              type="hidden"
+              id="stackup-bogo-get-variant"
+              value="{{ get_first_variant_id }}"
+              data-price="{{ get_price }}"
+              data-title="{{ get_variants[0].title | escape }}"
+            />
+          {% endif %}
+        {% else %}
+          {% comment %} BOGO & BUY_X_GET_X: Same product reward mirrors Card 1 selected variant {% endcomment %}
+          {% if product.variants.size > 1 %}
+            <div style="font-size: 11px; color: #6b7280; padding: 2px 0;">
+              Variant: <span class="stackup-bogo-get-variant-title" style="font-weight: 600; color: #374151;">{{ buy_variant.title }}</span>
+            </div>
+          {% endif %}
+          <input
+            type="hidden"
+            id="stackup-bogo-get-variant"
+            value="{{ buy_variant.id }}"
+            data-price="{{ buy_price }}"
+            data-title="{{ buy_variant.title | escape }}"
+          />
+        {% endif %}
+      </div>
+
+      {% comment %} Pricing Summary {% endcomment %}
+      {% if show_savings %}
+        <div style="margin-top: 14px; padding-top: 10px; border-top: 1px dashed #e5e7eb;">
+          <div
+            class="stackup-bogo-discount-row"
+            style="display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 4px;"
+          >
+            <span style="color: #6b7280;">Discount</span>
+            <span class="stackup-bogo-discount-val" style="font-weight: 600; color: #ef4444;"> -{{ 0 | money }} </span>
+          </div>
+          <div style="display: flex; justify-content: space-between; align-items: baseline;">
+            <span style="font-size: 13px; font-weight: 600; color: #111827;">Total</span>
+            <div style="text-align: right;">
+              <span
+                class="stackup-bogo-grand-original"
+                style="font-size: 12px; color: #9ca3af; text-decoration: line-through; margin-right: 6px;"
+              >
+                {{ 0 | money }}
+              </span>
+              <span class="stackup-bogo-grand-final" style="font-size: 15px; font-weight: 800; color: #111827;">
+                {{ 0 | money }}
+              </span>
+            </div>
+          </div>
+        </div>
+      {% endif %}
+
+      {% comment %} Action Button {% endcomment %}
+      {% if show_add_to_cart %}
+        <style>
+          @keyframes stackup-spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+          }
+          .stackup-spin {
+            animation: stackup-spin 0.8s linear infinite;
+          }
+        </style>
+        <button
+          id="stackup-bogo-add-btn"
+          type="button"
+          style="
+            width: 100%;
+            margin-top: 14px;
+            padding: 12px 18px;
+            min-height: 48px;
+            background: {{ button_bg }};
+            color: {{ button_color }};
+            border: none;
+            border-radius: {{ button_radius }}px;
+            font-size: 14px;
+            font-weight: 700;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.08);
+            transition: opacity 0.2s ease, background 0.15s ease;
+          "
+        >
+          <span class="stackup-bogo-btn-icon" style="display: inline-flex; align-items: center;">
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"></path>
+              <line x1="3" y1="6" x2="21" y2="6"></line>
+              <path d="M16 10a4 4 0 0 1-8 0"></path>
+            </svg>
+          </span>
+          <span class="stackup-bogo-btn-label">{{ resolved_button_text }}</span>
+          <span class="stackup-bogo-btn-spinner" style="display: none; align-items: center;">
+            <svg
+              class="stackup-spin"
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2.5"
+            >
+              <circle cx="12" cy="12" r="10" stroke-opacity="0.25"></circle>
+              <path d="M12 2a10 10 0 0 1 10 10" stroke-linecap="round"></path>
+            </svg>
+          </span>
+        </button>
+      {% endif %}
+    </div>
+  {% endif %}
+{% endif %}
+
+{% schema %}
+{
+  "name": "StackUp BOGO Deals",
+  "target": "section",
+  "stylesheet": "stack-up.css",
+  "javascript": "stack-up.js",
+  "settings": [
+    {
+      "type": "paragraph",
+      "content": "Displays automatic Buy One Get One (BOGO) and Buy X Get Y deals on matching product pages."
+    }
+  ]
+}
+{% endschema %}

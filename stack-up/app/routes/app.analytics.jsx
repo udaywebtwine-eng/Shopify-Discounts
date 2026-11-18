@@ -190,7 +190,7 @@ export const loader = async ({ request }) => {
     // Helper to safely extract products from any offer type
     const getOfferProductsList = (off) => {
         try {
-            if (off.type === "PAIRED") {
+            if (off.type === "PAIRED" || off.type === "BOGO") {
                 const p1 = JSON.parse(off.mainProducts || "[]");
                 const p2 = JSON.parse(off.subProducts || "[]");
                 return { p1, p2, all: [...p1, ...p2] };
@@ -222,6 +222,7 @@ export const loader = async ({ request }) => {
         let discountType = "Paired Products";
         if (off.type === "SELECTED") discountType = "Selected Products";
         else if (off.type === "VOLUME") discountType = "Volume Discount";
+        else if (off.type === "BOGO") discountType = "BOGO & Buy X Get Y";
 
         const prods = getOfferProductsList(off);
 

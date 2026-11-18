@@ -724,7 +724,7 @@
       try {
         document.dispatchEvent(new CustomEvent('cart:refresh', { bubbles: true }));
         document.dispatchEvent(new CustomEvent('theme:cart:changed', { bubbles: true }));
-      } catch (e) {}
+      } catch (e) { }
 
       // Direct redirect to checkout so discount applies immediately
       window.location.href = `${rootUrl}checkout`;
@@ -742,6 +742,354 @@
     }
   }
 
+  function initStackUpBogoWidgets() {
+    const widgets = document.querySelectorAll('.stackup-bogo-container');
+    if (!widgets || widgets.length === 0) return;
+    widgets.forEach((widget) => {
+      if (widget.dataset.initialized) return;
+      widget.dataset.initialized = 'true';
+
+      const buyVariantSelect = widget.querySelector('#stackup-bogo-buy-variant');
+      const getVariantSelect = widget.querySelector('#stackup-bogo-get-variant');
+      const addBtn = widget.querySelector('#stackup-bogo-add-btn');
+
+      const dealType = widget.dataset.dealType || 'BOGO';
+      const buyQty = parseInt(widget.dataset.buyQty || '1', 10);
+      const getQty = parseInt(widget.dataset.getQty || '1', 10);
+      const discountType = widget.dataset.discountType || 'P';
+      const discountVal = parseFloat(widget.dataset.discountVal || '100');
+      const maxDiscount = widget.dataset.maxDiscount ? parseFloat(widget.dataset.maxDiscount) : null;
+
+      function updateTotals() {
+        let buyPrice = 0;
+        let buyVariantTitle = '';
+        let buyVariantId = '';
+
+        if (buyVariantSelect) {
+          if (buyVariantSelect.tagName === 'SELECT') {
+            const opt = buyVariantSelect.options[buyVariantSelect.selectedIndex];
+            buyPrice = parseFloat(opt?.dataset?.price || '0');
+            buyVariantTitle = opt?.textContent?.replace(/\(Out of stock\)/i, '').trim() || '';
+            buyVariantId = buyVariantSelect.value;
+          } else {
+            buyPrice = parseFloat(buyVariantSelect.dataset?.price || buyVariantSelect.value || '0');
+            buyVariantTitle = buyVariantSelect.dataset?.title || '';
+            buyVariantId = buyVariantSelect.value;
+          }
+        }
+
+        // BOGO & BUY_X_GET_X: Same product reward mirrors Buy product variant
+        if (dealType === 'BOGO' || dealType === 'BUY_X_GET_X') {
+          if (getVariantSelect && getVariantSelect.tagName === 'INPUT') {
+            getVariantSelect.value = buyVariantId;
+            getVariantSelect.dataset.price = buyPrice;
+          }
+          const getVariantTitleEl = widget.querySelector('.stackup-bogo-get-variant-title');
+          if (getVariantTitleEl && buyVariantTitle) {
+            getVariantTitleEl.textContent = buyVariantTitle;
+          }
+        }
+
+        let getPrice = 0;
+        if (dealType === 'BOGO' || dealType === 'BUY_X_GET_X') {
+          getPrice = buyPrice;
+        } else if (getVariantSelect) {
+          if (getVariantSelect.tagName === 'SELECT') {
+            const opt = getVariantSelect.options[getVariantSelect.selectedIndex];
+            getPrice = parseFloat(opt?.dataset?.price || '0');
+          } else {
+            getPrice = parseFloat(getVariantSelect.dataset?.price || getVariantSelect.value || '0');
+          }
+        }
+
+        const buyTotal = buyPrice * buyQty;
+        const getOriginalTotal = getPrice * getQty;
+
+        let rawDiscount = 0;
+        if (discountType === 'F') {
+          rawDiscount = discountVal * 100 * getQty;
+        } else {
+          rawDiscount = getOriginalTotal * (discountVal / 100);
+        }
+
+        let discountAmount = Math.min(getOriginalTotal, rawDiscount);
+        if (maxDiscount && maxDiscount > 0) {
+          discountAmount = Math.min(discountAmount, maxDiscount * 100);
+        }
+
+        const discountedGetTotal = Math.max(0, getOriginalTotal - discountAmount);
+        const originalGrandTotal = buyTotal + getOriginalTotal;
+        const finalGrandTotal = buyTotal + discountedGetTotal;
+
+        const buySubtotalEl = widget.querySelector('.stackup-bogo-buy-subtotal');
+        const buyUnitEl = widget.querySelector('.stackup-bogo-buy-unit');
+        if (buySubtotalEl) buySubtotalEl.textContent = formatMoney(buyTotal);
+        if (buyUnitEl) buyUnitEl.textContent = formatMoney(buyPrice) + ' per item';
+
+        const getSubtotalEl = widget.querySelector('.stackup-bogo-get-subtotal');
+        const getOriginalEl = widget.querySelector('.stackup-bogo-get-original');
+        const getUnitEl = widget.querySelector('.stackup-bogo-get-unit');
+
+        if (getSubtotalEl) getSubtotalEl.textContent = formatMoney(discountedGetTotal);
+        if (getOriginalEl) getOriginalEl.textContent = formatMoney(getOriginalTotal);
+        if (getUnitEl)
+          getUnitEl.textContent = formatMoney(getQty > 0 ? discountedGetTotal / getQty : 0) + ' per item';
+
+        const discountValEl = widget.querySelector('.stackup-bogo-discount-val');
+        if (discountValEl) discountValEl.textContent = '-' + formatMoney(discountAmount);
+
+        const grandOrigEl = widget.querySelector('.stackup-bogo-grand-original');
+        const grandFinalEl = widget.querySelector('.stackup-bogo-grand-final');
+        if (grandOrigEl) grandOrigEl.textContent = formatMoney(originalGrandTotal);
+        if (grandFinalEl) grandFinalEl.textContent = formatMoney(finalGrandTotal);
+      }
+
+      if (buyVariantSelect && buyVariantSelect.tagName === 'SELECT') {
+        buyVariantSelect.addEventListener('change', updateTotals);
+      }
+      if (getVariantSelect && getVariantSelect.tagName === 'SELECT') {
+        getVariantSelect.addEventListener('change', updateTotals);
+      }
+
+      updateTotals();
+
+      if (addBtn) {
+        addBtn.addEventListener('click', function (e) {
+          e.preventDefault();
+
+          const rawBuyId = buyVariantSelect ? buyVariantSelect.value : null;
+          const rawGetId = getVariantSelect ? getVariantSelect.value : null;
+
+          let buyVariantId = cleanVariantId(rawBuyId);
+          let getVariantId = cleanVariantId(rawGetId);
+
+          if (dealType === 'BOGO' || dealType === 'BUY_X_GET_X') {
+            getVariantId = buyVariantId;
+          }
+
+          if (!buyVariantId || !getVariantId) {
+            alert('Please select the product variant.');
+            return;
+          }
+
+          const iconEl = addBtn.querySelector('.stackup-bogo-btn-icon');
+          const labelEl = addBtn.querySelector('.stackup-bogo-btn-label');
+          const spinnerEl = addBtn.querySelector('.stackup-bogo-btn-spinner');
+
+          addBtn.disabled = true;
+          addBtn.style.opacity = '0.75';
+          addBtn.style.cursor = 'not-allowed';
+          if (iconEl) iconEl.style.display = 'none';
+          if (labelEl) labelEl.style.display = 'none';
+          if (spinnerEl) spinnerEl.style.display = 'inline-flex';
+
+          let items = [];
+          if (dealType === 'BOGO' || dealType === 'BUY_X_GET_X' || buyVariantId === getVariantId) {
+            items.push({
+              id: parseInt(buyVariantId, 10),
+              quantity: buyQty + getQty,
+            });
+          } else {
+            items.push({
+              id: parseInt(buyVariantId, 10),
+              quantity: buyQty,
+            });
+            items.push({
+              id: parseInt(getVariantId, 10),
+              quantity: getQty,
+            });
+          }
+
+          const rootUrl = window.Shopify?.routes?.root || '/';
+
+          fetch(`${rootUrl}cart/add.js`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+            body: JSON.stringify({ items: items }),
+          })
+            .then((res) => {
+              if (!res.ok) {
+                return res.json().then((errData) => {
+                  throw new Error(errData.description || errData.message || 'Error adding to cart.');
+                });
+              }
+              return res.json();
+            })
+            .then((data) => {
+              document.dispatchEvent(new CustomEvent('cart:updated', { bubbles: true }));
+              document.dispatchEvent(new CustomEvent('cart:refresh', { bubbles: true }));
+
+              // Keep loader running while navigating directly to checkout
+              window.location.href = `${rootUrl}checkout`;
+            })
+            .catch((err) => {
+              console.error('[StackUp:BOGO] Add to cart error:', err);
+              alert(err.message || 'Could not add to cart. Please try again.');
+              addBtn.disabled = false;
+              addBtn.style.opacity = '1';
+              addBtn.style.cursor = 'pointer';
+              if (iconEl) iconEl.style.display = 'inline-flex';
+              if (labelEl) labelEl.style.display = 'inline';
+              if (spinnerEl) spinnerEl.style.display = 'none';
+            });
+        });
+      }
+    });
+  }
+
+  function initStackUpVolumeWidgets() {
+    const widgets = document.querySelectorAll('.stackup-volume-widget');
+    if (!widgets || widgets.length === 0) return;
+
+    widgets.forEach((widget) => {
+      if (widget.dataset.initialized) return;
+      widget.dataset.initialized = 'true';
+
+      const cards = widget.querySelectorAll('.stackup-volume-tier-card');
+      const atcBtn = widget.querySelector('.stackup-volume-atc-btn');
+      const atcText = widget.querySelector('.stackup-atc-text');
+      const btnIcon = widget.querySelector('.stackup-btn-icon');
+      const btnSpinner = widget.querySelector('.stackup-btn-spinner');
+      const stockAlert = widget.querySelector('.stackup-volume-stock-alert');
+      const alertText = widget.querySelector('.stackup-volume-alert-text');
+      const savingsBanner = widget.querySelector('.stackup-volume-savings-banner');
+      const savingsAmount = widget.querySelector('.stackup-volume-savings-amount');
+      const savingsPct = widget.querySelector('.stackup-volume-savings-pct');
+      const btnTemplate = widget.getAttribute('data-btn-template') || 'Add {quantity} to Cart';
+      const activeBorder = widget.getAttribute('data-active-border') || '#111827';
+      const activeWidth = widget.getAttribute('data-active-border-width') || '2';
+      const normalBorder = widget.getAttribute('data-normal-border') || '#e5e7eb';
+
+      let activeCard =
+        widget.querySelector(".stackup-volume-tier-card[data-is-default='true']") ||
+        widget.querySelector('.stackup-volume-tier-card.active') ||
+        cards[0];
+
+      function updateUI() {
+        if (!activeCard) return;
+
+        cards.forEach((c) => {
+          const isSel = c === activeCard;
+          c.style.setProperty(
+            'border',
+            isSel ? activeWidth + 'px solid ' + activeBorder : activeWidth + 'px solid ' + normalBorder,
+            'important'
+          );
+          const radio = c.querySelector('.stackup-tier-radio');
+          if (radio) {
+            radio.style.setProperty('border', isSel ? '6px solid ' + activeBorder : '2px solid #9ca3af', 'important');
+            radio.style.setProperty('display', 'flex', 'important');
+            radio.style.setProperty('width', '20px', 'important');
+            radio.style.setProperty('height', '20px', 'important');
+            radio.style.setProperty('min-width', '20px', 'important');
+            radio.style.setProperty('min-height', '20px', 'important');
+            radio.style.setProperty('border-radius', '50%', 'important');
+            radio.style.setProperty('background', '#ffffff', 'important');
+            radio.style.setProperty('box-sizing', 'border-box', 'important');
+            radio.style.setProperty('flex-shrink', '0', 'important');
+          }
+        });
+
+        const qty = activeCard.getAttribute('data-qty') || '1';
+        const priceSpan = activeCard.querySelector('.stackup-tier-price');
+        const formattedPrice = priceSpan ? priceSpan.textContent.trim() : '';
+
+        if (atcText) {
+          const baseTxt = btnTemplate.replace(/\{quantity\}/gi, qty);
+          atcText.textContent = formattedPrice ? `${baseTxt} • ${formattedPrice}` : baseTxt;
+        }
+
+        if (savingsBanner) {
+          const discountVal = parseFloat(activeCard.getAttribute('data-discount') || '0');
+          const origPrice = parseFloat(activeCard.getAttribute('data-orig-price') || '0');
+          const totalPrice = parseFloat(activeCard.getAttribute('data-total-price') || '0');
+          const savedCents = Math.max(0, origPrice - totalPrice);
+
+          if (savedCents > 0 && discountVal > 0) {
+            const currencyPrefix = (formattedPrice.match(/^[^0-9]+/) || ['$'])[0];
+            const savedFmt = currencyPrefix + (savedCents / 100).toFixed(2);
+            if (savingsAmount) savingsAmount.textContent = savedFmt;
+            if (savingsPct) savingsPct.textContent = `(${Math.round(discountVal)}% OFF)`;
+            savingsBanner.style.setProperty('display', 'flex', 'important');
+          } else {
+            savingsBanner.style.setProperty('display', 'none', 'important');
+          }
+        }
+
+        const formQtyInput = document.querySelector('form[action*="/cart/add"] input[name="quantity"]');
+        if (formQtyInput) {
+          formQtyInput.value = qty;
+          formQtyInput.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+      }
+
+      cards.forEach((card) => {
+        card.addEventListener('click', () => {
+          activeCard = card;
+          updateUI();
+        });
+      });
+
+      if (atcBtn) {
+        atcBtn.addEventListener('click', async () => {
+          const qty = parseInt(activeCard?.getAttribute('data-qty') || '1', 10);
+          const variantIdInput =
+            document.querySelector('form[action*="/cart/add"] [name="id"]') ||
+            document.querySelector('select[name="id"], input[name="id"]');
+          const variantId = variantIdInput ? variantIdInput.value : widget.getAttribute('data-default-variant-id');
+
+          if (!variantId) return;
+
+          atcBtn.disabled = true;
+          atcBtn.style.opacity = '0.75';
+          atcBtn.style.cursor = 'not-allowed';
+          if (btnIcon) btnIcon.style.display = 'none';
+          if (atcText) atcText.style.display = 'none';
+          if (btnSpinner) btnSpinner.style.display = 'inline-flex';
+          if (stockAlert) stockAlert.style.display = 'none';
+
+          try {
+            const rootUrl = window.Shopify?.routes?.root || '/';
+            const res = await fetch(`${rootUrl}cart/add.js`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+              body: JSON.stringify({
+                items: [{ id: parseInt(variantId, 10), quantity: qty }],
+              }),
+            });
+
+            const responseData = await res.json().catch(() => ({}));
+
+            if (!res.ok) {
+              throw new Error(
+                responseData.description || responseData.message || 'This product is out of stock, not available.'
+              );
+            }
+
+            document.dispatchEvent(new CustomEvent('cart:updated', { bubbles: true }));
+            document.dispatchEvent(new CustomEvent('cart:refresh', { bubbles: true }));
+
+            window.location.href = `${rootUrl}checkout`;
+          } catch (e) {
+            console.error('[StackUp Volume] Error adding to cart:', e);
+            if (stockAlert && alertText) {
+              alertText.textContent = e.message || 'Could not add items to cart. Please try again.';
+              stockAlert.style.display = 'flex';
+            }
+            if (btnSpinner) btnSpinner.style.display = 'none';
+            if (btnIcon) btnIcon.style.display = 'inline-flex';
+            if (atcText) atcText.style.display = '';
+            atcBtn.style.opacity = '1';
+            atcBtn.style.cursor = 'pointer';
+            atcBtn.disabled = false;
+          }
+        });
+      }
+
+      updateUI();
+    });
+  }
+
   function checkIsAppEnabled() {
     return !!(
       document.querySelector('[data-stackup-embed-active]') ||
@@ -753,7 +1101,7 @@
 
   function initStackUpWidgets() {
     const isEmbedActive = checkIsAppEnabled();
-    const widgets = document.querySelectorAll('.stackup-paired-widget, .stackup-addons-widget, .stackup-volume-widget');
+    const widgets = document.querySelectorAll('.stackup-paired-widget, .stackup-addons-widget, .stackup-volume-widget, .stackup-bogo-container');
 
     if (!isEmbedActive) {
       widgets.forEach((w) => {
@@ -778,6 +1126,70 @@
     } catch (e) {
       console.warn('[StackUp] Add-ons widget init warning:', e);
     }
+    try {
+      initStackUpBogoWidgets();
+    } catch (e) {
+      console.warn('[StackUp] BOGO widget init warning:', e);
+    }
+    try {
+      initStackUpVolumeWidgets();
+    } catch (e) {
+      console.warn('[StackUp] Volume widget init warning:', e);
+    }
+  }
+
+  function resetAllStackUpButtons() {
+    // Reset BOGO buttons
+    document.querySelectorAll('#stackup-bogo-add-btn').forEach((btn) => {
+      btn.disabled = false;
+      btn.style.opacity = '1';
+      btn.style.cursor = 'pointer';
+      const iconEl = btn.querySelector('.stackup-bogo-btn-icon');
+      const labelEl = btn.querySelector('.stackup-bogo-btn-label');
+      const spinnerEl = btn.querySelector('.stackup-bogo-btn-spinner');
+      if (iconEl) iconEl.style.display = 'inline-flex';
+      if (labelEl) labelEl.style.display = 'inline';
+      if (spinnerEl) spinnerEl.style.display = 'none';
+    });
+
+    // Reset Volume buttons
+    document.querySelectorAll('.stackup-volume-atc-btn').forEach((btn) => {
+      btn.disabled = false;
+      btn.style.opacity = '1';
+      btn.style.cursor = 'pointer';
+      const iconEl = btn.querySelector('.stackup-btn-icon');
+      const atcText = btn.querySelector('.stackup-atc-text');
+      const spinnerEl = btn.querySelector('.stackup-btn-spinner');
+      if (iconEl) iconEl.style.display = 'inline-flex';
+      if (atcText) atcText.style.display = '';
+      if (spinnerEl) spinnerEl.style.display = 'none';
+    });
+
+    // Reset Paired bundles buttons
+    document.querySelectorAll('.stackup-add-button').forEach((btn) => {
+      btn.disabled = false;
+      btn.style.opacity = '1';
+      btn.style.cursor = 'pointer';
+      const btnText = btn.querySelector('.stackup-btn-text');
+      const btnIcon = btn.querySelector('.stackup-btn-icon');
+      const btnSpinner = btn.querySelector('.stackup-btn-spinner');
+      if (btnText) btnText.style.display = '';
+      if (btnIcon) btnIcon.style.display = 'inline-flex';
+      if (btnSpinner) btnSpinner.style.display = 'none';
+    });
+
+    // Reset Addons buttons
+    document.querySelectorAll('.stackup-addons-btn').forEach((btn) => {
+      btn.disabled = false;
+      btn.style.opacity = '1';
+      btn.style.cursor = 'pointer';
+      const btnText = btn.querySelector('.stackup-btn-text');
+      const btnIcon = btn.querySelector('.stackup-btn-icon');
+      const btnSpinner = btn.querySelector('.stackup-btn-spinner');
+      if (btnText) btnText.style.display = '';
+      if (btnIcon) btnIcon.style.display = 'inline-flex';
+      if (btnSpinner) btnSpinner.style.display = 'none';
+    });
   }
 
   // Ensure init runs on DOMContentLoaded and immediately if already loaded
@@ -787,6 +1199,11 @@
     initStackUpWidgets();
   }
   window.addEventListener('load', initStackUpWidgets);
+
+  // Restore interactive button state when returning via browser Back/Forward cache (bfcache)
+  window.addEventListener('pageshow', function () {
+    resetAllStackUpButtons();
+  });
 
   // Shopify Theme Editor & Dynamic Section Reload support
   document.addEventListener('shopify:section:load', initStackUpWidgets);

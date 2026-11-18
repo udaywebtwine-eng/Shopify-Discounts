@@ -10,6 +10,11 @@ export function getOfferProducts(offer) {
       const p2 = JSON.parse(offer.subProducts || "[]");
       return [...p1, ...p2];
     }
+    if (offer.type === "BOGO") {
+      const p1 = JSON.parse(offer.mainProducts || "[]");
+      const p2 = JSON.parse(offer.subProducts || "[]");
+      return [...p1, ...p2];
+    }
     if (offer.type === "VOLUME") {
       if (offer.volumeProducts) {
         return JSON.parse(offer.volumeProducts);
@@ -397,6 +402,7 @@ export async function syncRecentOrdersFromShopify(admin, shop) {
       const hasMasterSelected = appliedTitles.some((t) => (t.includes("stackup") || t.includes("stack-up")) && t.includes("selected"));
       const hasMasterPaired = appliedTitles.some((t) => (t.includes("stackup") || t.includes("stack-up")) && t.includes("paired"));
       const hasMasterVolume = appliedTitles.some((t) => ((t.includes("stackup") || t.includes("stack-up")) && (t.includes("volume") || t.includes("quantity"))) || t.includes("volume discount") || t.includes("buy more") || t.includes("quantity break"));
+      const hasMasterBogo = appliedTitles.some((t) => (t.includes("stackup") || t.includes("stack-up")) && (t.includes("bogo") || t.includes("buy x") || t.includes("buy 1")));
 
       const matchedOffers = [];
 
@@ -437,6 +443,8 @@ export async function syncRecentOrdersFromShopify(admin, shop) {
           isMatched = true;
         } else if (off.type === "VOLUME" && hasMasterVolume) {
           isMatched = true;
+        } else if (off.type === "BOGO" && hasMasterBogo) {
+          isMatched = true;
         }
 
         if (!isMatched) {
@@ -466,7 +474,8 @@ export async function syncRecentOrdersFromShopify(admin, shop) {
                 (appTitle && (appTitle === title || appTitle.includes(title))) ||
                 (hasMasterVolume && off.type === "VOLUME") ||
                 (hasMasterSelected && off.type === "SELECTED") ||
-                (hasMasterPaired && off.type === "PAIRED")
+                (hasMasterPaired && off.type === "PAIRED") ||
+                (hasMasterBogo && off.type === "BOGO")
               ) {
                 lineDiscount += parseFloat(alloc.allocatedAmountSet?.shopMoney?.amount) || 0;
               }

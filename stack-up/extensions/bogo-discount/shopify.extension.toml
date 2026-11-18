@@ -1,0 +1,25 @@
+api_version = "2026-07"
+
+[[extensions]]
+name = "t:name"
+handle = "bogo-discount"
+type = "function"
+uid = "050ce38e-0022-3f5b-0588-76a130a3ad3551d3f0b7"
+description = "t:description"
+
+  [[extensions.targeting]]
+  target = "cart.lines.discounts.generate.run"
+  input_query = "src/cart_lines_discounts_generate_run.graphql"
+  export = "cart-lines-discounts-generate-run"
+
+  [extensions.build]
+  command = ""
+  path = "dist/function.wasm"
+
+[[extensions.metafields]]
+namespace = "stack_up"
+key = "stack_up_app_enabled"
+
+[[extensions.metafields]]
+namespace = "stack_up"
+key = "bogo_offers"

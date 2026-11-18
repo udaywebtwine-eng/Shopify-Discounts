@@ -19,6 +19,11 @@ import {
     removeVolumeMetafieldFromProducts,
     getVolumeProductsFromOffer,
 } from "../utils/volumeMetafields.server";
+import {
+    syncAllActiveBogoOffersToShopMetafield,
+    removeBogoMetafieldFromProducts,
+    getBogoBuyProducts,
+} from "../utils/bogoMetafields.server";
 import { ensureMasterDiscounts, cleanupLegacyDiscounts } from "../utils/masterDiscount.server";
 
 export const loader = async ({ request }) => {
@@ -46,6 +51,7 @@ export const loader = async ({ request }) => {
         syncAllActiveOffersToShopMetafield(admin).catch(() => { }),
         syncAllActiveSelectedOffersToShopMetafield(admin).catch(() => { }),
         syncAllActiveVolumeOffersToShopMetafield(admin).catch(() => { }),
+        syncAllActiveBogoOffersToShopMetafield(admin).catch(() => { }),
     ]);
 
     const formattedOffers = dbOffers.map((dbo) => {
@@ -73,6 +79,9 @@ export const loader = async ({ request }) => {
                 }
                 mainCount = prods.length;
                 subCount = tiers.length;
+            } else if (dbo.type === "BOGO") {
+                mainCount = JSON.parse(dbo.mainProducts || "[]").length;
+                subCount = JSON.parse(dbo.subProducts || "[]").length;
             }
         } catch {
             mainCount = 0;
@@ -96,24 +105,33 @@ export const loader = async ({ request }) => {
         const isPaired = dbo.type === "PAIRED";
         const isSelected = dbo.type === "SELECTED";
         const isVolume = dbo.type === "VOLUME";
+        const isBogo = dbo.type === "BOGO";
 
-        const typeLabel = isPaired
-            ? "Frequently Bought"
+        const typeLabel = isBogo
+            ? "BOGO & Gift"
+            : isVolume
+            ? "Quantity Breaks"
             : isSelected
             ? "Product Add-ons"
-            : "Quantity Breaks";
+            : "Frequently Bought";
 
-        const typeBadgeTone = isPaired
-            ? "info"
+        const typeBadgeTone = isBogo
+            ? "magic"
+            : isVolume
+            ? "success"
             : isSelected
             ? "caution"
-            : "success";
+            : "info";
 
-        const productSummary = isPaired
-            ? `${mainCount} Main + ${subCount} Sub`
+        const productSummary = isBogo
+            ? (subCount > 0
+                ? `${mainCount} Buy + ${subCount} Reward`
+                : `${mainCount} Product${mainCount === 1 ? "" : "s"} (BOGO)`)
+            : isVolume
+            ? `${mainCount} Product${mainCount === 1 ? "" : "s"} (${subCount} Tiers)`
             : isSelected
             ? `${mainCount} Target + ${subCount} Add-on`
-            : `${mainCount} Product${mainCount === 1 ? "" : "s"} (${subCount} Tiers)`;
+            : `${mainCount} Main + ${subCount} Sub`;
 
         return {
             id: dbo.discountId,
@@ -179,6 +197,11 @@ export const action = async ({ request }) => {
                 if (mains.length > 0) {
                     await removePairedMetafieldFromProducts(admin, mains.map((p) => p.id));
                 }
+            } else if (offerToDelete && offerToDelete.type === "BOGO") {
+                const prods = getBogoBuyProducts(offerToDelete);
+                if (prods.length > 0) {
+                    await removeBogoMetafieldFromProducts(admin, prods.map((p) => p.id));
+                }
             }
 
             await prisma.offer.deleteMany({ where: whereClause });
@@ -188,6 +211,7 @@ export const action = async ({ request }) => {
                 syncAllActiveOffersToShopMetafield(admin),
                 syncAllActiveSelectedOffersToShopMetafield(admin),
                 syncAllActiveVolumeOffersToShopMetafield(admin),
+                syncAllActiveBogoOffersToShopMetafield(admin),
             ]);
 
             return { success: true };
@@ -264,6 +288,8 @@ export default function AllOffersIndex() {
             navigate(`/app/offers/selected/edit/${offer.numericId}`);
         } else if (offer.type === "VOLUME") {
             navigate(`/app/offers/volume/edit/${offer.numericId}`);
+        } else if (offer.type === "BOGO") {
+            navigate(`/app/offers/bogo/edit/${offer.numericId}`);
         } else {
             navigate(`/app/offers/paired/edit/${offer.numericId}`);
         }
@@ -589,6 +615,7 @@ export default function AllOffersIndex() {
                                 <s-option value="PAIRED">Frequently Bought</s-option>
                                 <s-option value="SELECTED">Product Add-ons</s-option>
                                 <s-option value="VOLUME">Quantity Breaks</s-option>
+                                <s-option value="BOGO">BOGO & Gift</s-option>
                             </s-select>
 
                             <s-box>
@@ -726,6 +753,8 @@ export default function AllOffersIndex() {
                                         ? `/app/offers/selected/edit/${offer.numericId}`
                                         : offer.type === "VOLUME"
                                         ? `/app/offers/volume/edit/${offer.numericId}`
+                                        : offer.type === "BOGO"
+                                        ? `/app/offers/bogo/edit/${offer.numericId}`
                                         : `/app/offers/paired/edit/${offer.numericId}`;
 
                                     return (

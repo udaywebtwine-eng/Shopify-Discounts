@@ -13,6 +13,7 @@
 export const MASTER_SELECTED_TITLE = "StackUp Selected Products (Do Not Delete)";
 export const MASTER_PAIRED_TITLE = "StackUp Paired Products (Do Not Delete)";
 export const MASTER_VOLUME_TITLE = "StackUp Volume Discounts (Do Not Delete)";
+export const MASTER_BOGO_TITLE = "StackUp BOGO & Buy X Get Y (Do Not Delete)";
 
 /**
  * Queries all Shopify Functions installed in the store to find function IDs.
@@ -49,15 +50,23 @@ export async function getInstalledFunctionIds(admin) {
         fn.title?.toLowerCase().includes("volume") ||
         fn.id?.toLowerCase().includes("volume")
     );
+    const bogoFn = functions.find(
+      (fn) =>
+        fn.title?.toLowerCase().includes("bogo") ||
+        fn.id?.toLowerCase().includes("bogo") ||
+        fn.title?.toLowerCase().includes("bxgy") ||
+        fn.id?.toLowerCase().includes("bxgy")
+    );
 
     return {
       selectedFunctionId: selectedFn?.id || null,
       pairedFunctionId: pairedFn?.id || null,
       volumeFunctionId: volumeFn?.id || null,
+      bogoFunctionId: bogoFn?.id || null,
     };
   } catch (err) {
     console.error("[MasterDiscount] Error querying shopifyFunctions:", err);
-    return { selectedFunctionId: null, pairedFunctionId: null };
+    return { selectedFunctionId: null, pairedFunctionId: null, volumeFunctionId: null, bogoFunctionId: null };
   }
 }
 
@@ -97,6 +106,7 @@ export async function getMasterDiscountsStatus(admin) {
     let selectedMaster = null;
     let pairedMaster = null;
     let volumeMaster = null;
+    let bogoMaster = null;
 
     for (const node of nodes) {
       const disc = node.discount;
@@ -139,13 +149,25 @@ export async function getMasterDiscountsStatus(admin) {
             shippingDiscounts: true,
           },
         };
+      } else if (titleLower.includes("stackup bogo") || disc.title === MASTER_BOGO_TITLE) {
+        bogoMaster = {
+          nodeId: node.id,
+          numericId: node.id.split("/").pop(),
+          title: disc.title,
+          status: disc.status,
+          combinesWith: disc.combinesWith || {
+            orderDiscounts: true,
+            productDiscounts: false,
+            shippingDiscounts: true,
+          },
+        };
       }
     }
 
-    return { selectedMaster, pairedMaster, volumeMaster };
+    return { selectedMaster, pairedMaster, volumeMaster, bogoMaster };
   } catch (err) {
     console.error("[MasterDiscount] Error querying master discount nodes:", err);
-    return { selectedMaster: null, pairedMaster: null };
+    return { selectedMaster: null, pairedMaster: null, volumeMaster: null, bogoMaster: null };
   }
 }
 
@@ -315,16 +337,72 @@ export async function createMasterVolumeDiscount(admin, functionId, combinations
 }
 
 /**
- * Ensures both Master Discounts exist in Shopify Admin.
+ * Creates the Master Automatic Discount in Shopify for BOGO & Buy X Get Y.
+ */
+export async function createMasterBogoDiscount(admin, functionId, combinations = {}) {
+  const mutation = `#graphql
+    mutation CreateMasterBogoDiscount($automaticAppDiscount: DiscountAutomaticAppInput!) {
+      discountAutomaticAppCreate(automaticAppDiscount: $automaticAppDiscount) {
+        automaticAppDiscount {
+          discountId
+          title
+          status
+        }
+        userErrors {
+          field
+          message
+        }
+      }
+    }
+  `;
+
+  const variables = {
+    automaticAppDiscount: {
+      title: MASTER_BOGO_TITLE,
+      functionId,
+      startsAt: new Date().toISOString(),
+      discountClasses: ["PRODUCT"],
+      combinesWith: {
+        orderDiscounts: combinations.orderDiscounts !== false,
+        productDiscounts: Boolean(combinations.productDiscounts),
+        shippingDiscounts: combinations.shippingDiscounts !== false,
+      },
+      metafields: [
+        {
+          namespace: "$app:discount",
+          key: "function_configuration",
+          type: "json",
+          value: JSON.stringify({ isMaster: true }),
+        },
+      ],
+    },
+  };
+
+  const res = await admin.graphql(mutation, { variables });
+  const json = await res.json();
+  const userErrors = json.data?.discountAutomaticAppCreate?.userErrors || [];
+  if (userErrors.length > 0) {
+    console.error("[MasterDiscount] Error creating BOGO master discount:", userErrors);
+    throw new Error(userErrors.map((e) => e.message).join(", "));
+  }
+
+  const created = json.data?.discountAutomaticAppCreate?.automaticAppDiscount;
+  console.log("[MasterDiscount] Successfully created BOGO Master Discount:", created?.discountId);
+  return created;
+}
+
+/**
+ * Ensures all Master Discounts exist in Shopify Admin.
  * Recreates them automatically if missing.
  */
 export async function ensureMasterDiscounts(admin, options = {}) {
-  const { selectedMaster, pairedMaster, volumeMaster } = await getMasterDiscountsStatus(admin);
-  const { selectedFunctionId, pairedFunctionId, volumeFunctionId } = await getInstalledFunctionIds(admin);
+  const { selectedMaster, pairedMaster, volumeMaster, bogoMaster } = await getMasterDiscountsStatus(admin);
+  const { selectedFunctionId, pairedFunctionId, volumeFunctionId, bogoFunctionId } = await getInstalledFunctionIds(admin);
 
   let updatedSelected = selectedMaster;
   let updatedPaired = pairedMaster;
   let updatedVolume = volumeMaster;
+  let updatedBogo = bogoMaster;
 
   if (!selectedMaster && selectedFunctionId) {
     console.log("[MasterDiscount] Selected master discount missing in Shopify. Creating now...");
@@ -458,7 +536,56 @@ export async function ensureMasterDiscounts(admin, options = {}) {
     }
   }
 
-  return { selectedMaster: updatedSelected, pairedMaster: updatedPaired, volumeMaster: updatedVolume };
+  if (!bogoMaster && bogoFunctionId) {
+    console.log("[MasterDiscount] BOGO master discount missing in Shopify. Creating now...");
+    try {
+      const created = await createMasterBogoDiscount(admin, bogoFunctionId, options.bogoCombinations);
+      if (created) {
+        updatedBogo = {
+          nodeId: created.discountId,
+          numericId: created.discountId.split("/").pop(),
+          title: created.title,
+          status: created.status,
+          combinesWith: {
+            orderDiscounts: true,
+            productDiscounts: false,
+            shippingDiscounts: true,
+          },
+        };
+      }
+    } catch (e) {
+      console.warn("[MasterDiscount] Could not auto-create BOGO master discount:", e.message);
+    }
+  } else if (bogoMaster && bogoMaster.status !== "ACTIVE" && bogoMaster.nodeId) {
+    // If merchant deactivated it in Shopify Admin, reactivate it automatically
+    try {
+      await admin.graphql(
+        `#graphql
+        mutation ReactivateBogoMaster($id: ID!) {
+          discountAutomaticActivate(id: $id) {
+            automaticDiscountNode {
+              id
+            }
+            userErrors {
+              message
+            }
+          }
+        }`,
+        { variables: { id: bogoMaster.nodeId } }
+      );
+      if (updatedBogo) updatedBogo.status = "ACTIVE";
+      console.log("[MasterDiscount] Automatically reactivated BOGO Master Discount:", bogoMaster.nodeId);
+    } catch (actErr) {
+      console.warn("[MasterDiscount] Could not auto-reactivate BOGO master discount:", actErr);
+    }
+  }
+
+  return {
+    selectedMaster: updatedSelected,
+    pairedMaster: updatedPaired,
+    volumeMaster: updatedVolume,
+    bogoMaster: updatedBogo,
+  };
 }
 
 /**
@@ -517,9 +644,9 @@ export async function updateMasterDiscountCombinations(admin, nodeId, combinatio
  */
 export async function cleanupLegacyDiscounts(admin) {
   try {
-    const { selectedFunctionId, pairedFunctionId, volumeFunctionId } = await getInstalledFunctionIds(admin);
+    const { selectedFunctionId, pairedFunctionId, volumeFunctionId, bogoFunctionId } = await getInstalledFunctionIds(admin);
     const targetFunctionIds = new Set();
-    [selectedFunctionId, pairedFunctionId, volumeFunctionId].filter(Boolean).forEach((id) => {
+    [selectedFunctionId, pairedFunctionId, volumeFunctionId, bogoFunctionId].filter(Boolean).forEach((id) => {
       targetFunctionIds.add(id);
       targetFunctionIds.add(String(id).replace("gid://shopify/ShopifyFunction/", "").trim());
     });
@@ -555,7 +682,8 @@ export async function cleanupLegacyDiscounts(admin) {
       const isMaster =
         title === MASTER_SELECTED_TITLE ||
         title === MASTER_PAIRED_TITLE ||
-        title === MASTER_VOLUME_TITLE;
+        title === MASTER_VOLUME_TITLE ||
+        title === MASTER_BOGO_TITLE;
 
       if (isMaster) continue; // Keep Master discounts safe!
 
