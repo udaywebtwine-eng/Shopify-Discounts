@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>StackUp: Exact App Navigation & Folder Flow</title>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+  <style>
+    :root {
+      --bg: #090d16;
+      --card-bg: #111827;
+      --card-border: #1f2937;
+      --accent: #38bdf8;
+      --text: #f8fafc;
+      --muted: #94a3b8;
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 28px;
+    }
+    .container {
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+    header {
+      margin-bottom: 24px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--card-border);
+    }
+    .brand h1 {
+      margin: 0 0 6px 0;
+      font-size: 26px;
+      color: var(--accent);
+      font-weight: 800;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .live-dot {
+      width: 12px;
+      height: 12px;
+      background: #10b981;
+      border-radius: 50%;
+      box-shadow: 0 0 10px #10b981;
+      animation: pulse 1.8s infinite;
+    }
+    @keyframes pulse {
+      0% { opacity: 0.6; transform: scale(0.9); }
+      50% { opacity: 1; transform: scale(1.15); }
+      100% { opacity: 0.6; transform: scale(0.9); }
+    }
+    .brand p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 15px;
+    }
+
+    /* Top Step Strip */
+    .pipeline-strip {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 12px;
+      padding: 14px 18px;
+      margin-bottom: 24px;
+    }
+    .step-pill {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: #1e293b;
+      padding: 6px 12px;
+      border-radius: 8px;
+      font-size: 13px;
+      border: 1px solid #334155;
+      transition: all 0.2s;
+    }
+    .step-pill:hover {
+      border-color: var(--accent);
+      transform: translateY(-2px);
+    }
+    .step-num {
+      background: #0284c7;
+      color: white;
+      font-size: 11px;
+      font-weight: 700;
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .sep { color: var(--accent); font-weight: bold; }
+
+    /* Graph Card */
+    .graph-card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 16px;
+      padding: 24px;
+      margin-bottom: 30px;
+      box-shadow: 0 15px 30px -10px rgba(0, 0, 0, 0.6);
+      transition: border-color 0.3s;
+    }
+    .graph-card:hover {
+      border-color: #38bdf8;
+    }
+    .graph-card h2 {
+      margin: 0 0 6px 0;
+      font-size: 18px;
+      color: #fff;
+    }
+    .graph-card p {
+      margin: 0 0 18px 0;
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    .mermaid {
+      background: #0b0f19;
+      border: 1px solid #1e293b;
+      border-radius: 12px;
+      padding: 30px 20px;
+      overflow-x: auto;
+      display: flex;
+      justify-content: center;
+    }
+    
+    .mermaid svg {
+      width: 100% !important;
+      min-width: 950px !important;
+      max-width: 1200px !important;
+      height: auto !important;
+      font-size: 14px !important;
+    }
+
+    .mermaid svg .nodeLabel, 
+    .mermaid svg .label,
+    .mermaid svg span {
+      font-size: 14px !important;
+      font-weight: 600 !important;
+      line-height: 1.4 !important;
+    }
+
+    /* Animated flowing lines */
+    .mermaid svg path.flowchart-link,
+    .mermaid svg path.edge-thickness-normal,
+    .mermaid svg path.edgePath,
+    .mermaid svg .edgePaths path {
+      stroke-dasharray: 8, 8 !important;
+      animation: flowStream 1s linear infinite !important;
+      stroke-width: 2.5px !important;
+      filter: drop-shadow(0 0 5px rgba(56, 189, 248, 0.85)) !important;
+    }
+
+    @keyframes flowStream {
+      from { stroke-dashoffset: 32; }
+      to { stroke-dashoffset: 0; }
+    }
+
+    .mermaid svg .node:hover rect,
+    .mermaid svg .node:hover polygon,
+    .mermaid svg .node:hover path {
+      filter: drop-shadow(0 0 12px rgba(56, 189, 248, 0.95)) brightness(1.2);
+      transform: scale(1.02);
+      cursor: pointer;
+    }
+
+    /* Step Breakdown Cards */
+    .node-details-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 16px;
+      margin-bottom: 30px;
+    }
+    .detail-card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 12px;
+      padding: 18px;
+      transition: all 0.25s ease;
+      position: relative;
+      border-left: 4px solid #38bdf8;
+    }
+    .detail-card:hover {
+      transform: translateY(-4px);
+      border-color: #38bdf8;
+      box-shadow: 0 10px 20px -5px rgba(56, 189, 248, 0.2);
+      background: #162032;
+    }
+    .detail-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 6px;
+    }
+    .detail-phase {
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      color: #38bdf8;
+      letter-spacing: 0.5px;
+    }
+    .detail-card h3 {
+      margin: 0 0 6px 0;
+      font-size: 15px;
+      color: #fff;
+    }
+    .detail-card p {
+      margin: 0 0 10px 0;
+      font-size: 13px;
+      color: var(--muted);
+      line-height: 1.45;
+    }
+    .code-chip {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 11px;
+      background: #090d16;
+      border: 1px solid #1e293b;
+      padding: 5px 8px;
+      border-radius: 6px;
+      color: #7dd3fc;
+      display: block;
+      word-break: break-all;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="container">
+    <header>
+      <div class="brand">
+        <h1>
+          <div class="live-dot"></div>
+          StackUp: Exact App Navigation & Folder Flow
+        </h1>
+        <p>From Offers List ➔ Create New ➔ Pick Discount Type ➔ Edit / Customize ➔ Sharding ➔ Theme Widget ➔ Checkout WASM</p>
+      </div>
+    </header>
+
+    <!-- Top Easy Pipeline -->
+    <div class="pipeline-strip">
+      <div class="step-pill"><span class="step-num">1</span> <strong>app.offers._index</strong></div>
+      <span class="sep">➔</span>
+      <div class="step-pill"><span class="step-num">2</span> <strong>app.offers.new</strong></div>
+      <span class="sep">➔</span>
+      <div class="step-pill"><span class="step-num">3</span> <strong>Pick 1 of 4 Types</strong></div>
+      <span class="sep">➔</span>
+      <div class="step-pill"><span class="step-num">4</span> <strong>create / edit / customize</strong></div>
+      <span class="sep">➔</span>
+      <div class="step-pill"><span class="step-num">5</span> <strong>utils/*Metafields</strong></div>
+      <span class="sep">➔</span>
+      <div class="step-pill"><span class="step-num">6</span> <strong>Theme Widget & WASM</strong></div>
+    </div>
+
+    <!-- MAIN EXACT FLOW GRAPH -->
+    <div class="graph-card">
+      <h2>Screen-by-Screen Navigation & Code Path (Moving Data Lines)</h2>
+      <p>Yaha clearly dikh raha hai ki merchant `app.offers` se shuru karke kaise ek-ek screen par jaata hai:</p>
+
+      <div class="mermaid">
+flowchart TD
+    classDef main fill:#1e3a8a,stroke:#60a5fa,stroke-width:2px,color:#fff;
+    classDef pick fill:#4c1d95,stroke:#a78bfa,stroke-width:2px,color:#fff;
+    classDef vol fill:#0369a1,stroke:#38bdf8,stroke-width:2px,color:#fff;
+    classDef bogo fill:#7c2d12,stroke:#fb923c,stroke-width:2px,color:#fff;
+    classDef pair fill:#064e3b,stroke:#34d399,stroke-width:2px,color:#fff;
+    classDef sel fill:#831843,stroke:#f472b6,stroke-width:2px,color:#fff;
+    classDef shard fill:#581c87,stroke:#c084fc,stroke-width:2px,color:#fff;
+    classDef theme fill:#0f766e,stroke:#2dd4bf,stroke-width:2px,color:#fff;
+    classDef wasm fill:#78350f,stroke:#fbbf24,stroke-width:2px,color:#fff;
+
+    %% STEP 1 & 2
+    START["1. Offers Dashboard List<br>app/routes/app.offers._index.jsx<br>(Active, Scheduled, Paused Offers)"]:::main
+    NEW["2. Click 'Create Offer'<br>app/routes/app.offers.new.jsx<br>(Choose from 4 Discount Cards)"]:::pick
+    START -->|Merchant clicks 'Create Offer'| NEW
+
+    %% STEP 3: 4 BRANCHES
+    NEW -->|Pick Volume| VOL_C["Volume Create<br>app.offers.volume.create.jsx"]:::vol
+    NEW -->|Pick BOGO| BOGO_C["BOGO Create<br>app.offers.bogo.create.jsx"]:::bogo
+    NEW -->|Pick Paired| PAIR_C["Paired Create<br>app.offers.paired.create.jsx"]:::pair
+    NEW -->|Pick Selected| SEL_C["Selected Create<br>app.offers.selected.create.jsx"]:::sel
+
+    %% STEP 4: EDIT & CUSTOMIZE SCREENS
+    VOL_C --> VOL_EDIT["Volume Edit & Customize<br>app.offers.volume.edit.$id.jsx<br>app.offers.volume.customize.jsx"]:::vol
+    BOGO_C --> BOGO_EDIT["BOGO Edit & Customize<br>app.offers.bogo.edit.$id.jsx<br>app.offers.bogo.customize.jsx"]:::bogo
+    PAIR_C --> PAIR_EDIT["Paired Edit & Customize<br>app.offers.paired.edit.$id.jsx<br>app.offers.paired.customize.jsx"]:::pair
+    SEL_C --> SEL_EDIT["Selected Edit & Customize<br>app.offers.selected.edit.$id.jsx<br>app.offers.selected.customize.jsx"]:::sel
+
+    %% STEP 5: SAVING & SHARDING UTILS
+    VOL_EDIT --> SH_VOL["utils/volumeMetafields.server.js<br>Shrinks to ~270B Tier JSON"]:::shard
+    BOGO_EDIT --> SH_BOGO["utils/bogoMetafields.server.js<br>Shrinks to ~270B BOGO JSON"]:::shard
+    PAIR_EDIT --> SH_PAIR["utils/bundleMetafields.server.js<br>Shrinks to ~270B Bundle JSON"]:::shard
+    SEL_EDIT --> SH_SEL["utils/selectedOffersMetafields.server.js<br>Shrinks to ~270B Add-on JSON"]:::shard
+
+    %% STEP 6: STOREFRONT LIQUID WIDGETS
+    SH_VOL --> W_VOL["blocks/volume-discount.liquid<br>(Renders Tier Table on PDP)"]:::theme
+    SH_BOGO --> W_BOGO["blocks/bogo-widget.liquid<br>(Renders BOGO Box on PDP)"]:::theme
+    SH_PAIR --> W_PAIR["blocks/paired-products.liquid<br>(Renders FBT Box on PDP)"]:::theme
+    SH_SEL --> W_SEL["blocks/selected-products.liquid<br>(Renders Add-on List on PDP)"]:::theme
+
+    %% STEP 7: CHECKOUT ENGINES (WASM)
+    W_VOL --> FN_VOL["extensions/volume-discount/<br>(Calculates % off for Tier mq)"]:::wasm
+    W_BOGO --> FN_BOGO["extensions/bogo-discount/<br>(Cuts 100% price on free item)"]:::wasm
+    W_PAIR --> FN_PAIR["extensions/paired-products-discount/<br>(Applies bundle package price)"]:::wasm
+    W_SEL --> FN_SEL["extensions/selected-products-discount/<br>(Applies cross-sell add-on discount)"]:::wasm
+      </div>
+    </div>
+
+    <!-- Step Breakdown Cards with Exact Routes -->
+    <div class="node-details-grid">
+      <div class="detail-card" style="border-left-color: #60a5fa;">
+        <div class="detail-header">
+          <span class="detail-phase">Step 1: Dashboard</span>
+          <span>📋</span>
+        </div>
+        <h3>app.offers._index.jsx</h3>
+        <p>Merchant yaha saare offers dekhta hai, toggle se active/pause karta hai, aur "Create Offer" button click karta hai.</p>
+        <span class="code-chip">app/routes/app.offers._index.jsx</span>
+      </div>
+
+      <div class="detail-card" style="border-left-color: #a78bfa;">
+        <div class="detail-header">
+          <span class="detail-phase">Step 2: Selection</span>
+          <span>🎴</span>
+        </div>
+        <h3>app.offers.new.jsx</h3>
+        <p>Yeh screen 4 discount types dikhati hai: Volume, BOGO, Frequently Bought Together (Paired), aur Product Add-ons.</p>
+        <span class="code-chip">app/routes/app.offers.new.jsx</span>
+      </div>
+
+      <div class="detail-card" style="border-left-color: #38bdf8;">
+        <div class="detail-header">
+          <span class="detail-phase">Step 3: Create / Edit</span>
+          <span>✏️</span>
+        </div>
+        <h3>app.offers.[type].create & edit</h3>
+        <p>Merchant product select karta hai aur rules set karta hai (e.g. Buy 2 Get 10% Off). Customize screen se widget text change karta hai.</p>
+        <span class="code-chip">app/routes/app.offers.*.create.jsx</span>
+      </div>
+
+      <div class="detail-card" style="border-left-color: #c084fc;">
+        <div class="detail-header">
+          <span class="detail-phase">Step 4: Sharding</span>
+          <span>📦</span>
+        </div>
+        <h3>app/utils/*Metafields.server.js</h3>
+        <p>Offer save hote hi sharding utility usko ~270 bytes me shrink karke product ke metafield me likhti hai.</p>
+        <span class="code-chip">app/utils/*Metafields.server.js</span>
+      </div>
+
+      <div class="detail-card" style="border-left-color: #2dd4bf;">
+        <div class="detail-header">
+          <span class="detail-phase">Step 5: Theme Widget</span>
+          <span>🛍️</span>
+        </div>
+        <h3>extensions/stack-up-theme-extension/</h3>
+        <p>Liquid blocks wahi metafield padh kar product page par widget dikhate hain, aur stack-up.js cart add handle karta hai.</p>
+        <span class="code-chip">blocks/*.liquid & assets/stack-up.js</span>
+      </div>
+
+      <div class="detail-card" style="border-left-color: #fbbf24;">
+        <div class="detail-header">
+          <span class="detail-phase">Step 6: Checkout WASM</span>
+          <span>⚡</span>
+        </div>
+        <h3>extensions/*-discount/</h3>
+        <p>Customer checkout par jata hai to Shopify ka native WASM function discount calculate karke minus kar deta hai.</p>
+        <span class="code-chip">extensions/*-discount/src/cart_lines_discounts_generate_run.js</span>
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    mermaid.initialize({
+      startOnLoad: true,
+      theme: 'dark',
+      themeVariables: {
+        darkMode: true,
+        background: '#0b0f19',
+        primaryColor: '#1e3a8a',
+        primaryTextColor: '#ffffff',
+        primaryBorderColor: '#60a5fa',
+        lineColor: '#38bdf8',
+        fontSize: '14px'
+      },
+      flowChart: {
+        useMaxWidth: false,
+        htmlLabels: true,
+        curve: 'basis'
+      }
+    });
+  </script>
+</body>
+</html>

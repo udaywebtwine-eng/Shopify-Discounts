@@ -1,0 +1,345 @@
+{
+  "schemaVersion": "1.0.0",
+  "project": {
+    "name": "StackUp Shopify Discounts",
+    "root": "stack-up",
+    "generatedAt": 1794982670,
+    "generator": "understand-anything"
+  },
+  "stats": {
+    "totalNodes": 25,
+    "totalEdges": 24,
+    "domains": [
+      "admin",
+      "data",
+      "metafields",
+      "storefront",
+      "checkout",
+      "analytics"
+    ]
+  },
+  "nodes": [
+    {
+      "id": "stackup:app",
+      "label": "Remix App Core",
+      "type": "domain",
+      "domain": "admin",
+      "description": "Merchant-facing admin application built on Remix and Polaris, handling offer management, settings, and analytics.",
+      "path": "app"
+    },
+    {
+      "id": "stackup:db",
+      "label": "Database & Persistence",
+      "type": "domain",
+      "domain": "data",
+      "description": "PostgreSQL database managed with Prisma ORM storing sessions, offers, and analytics metrics.",
+      "path": "prisma"
+    },
+    {
+      "id": "stackup:theme",
+      "label": "Theme App Extension",
+      "type": "domain",
+      "domain": "storefront",
+      "description": "Storefront UI blocks (Liquid & JS) injecting widgets for Volume, BOGO, Paired, and Selected offers on PDPs.",
+      "path": "extensions/stack-up-theme-extension"
+    },
+    {
+      "id": "stackup:functions",
+      "label": "Shopify Functions",
+      "type": "domain",
+      "domain": "checkout",
+      "description": "Sandboxed WASM runtime functions applying cart line discounts and delivery options directly at checkout.",
+      "path": "extensions"
+    },
+    {
+      "id": "app:shopify.server.js",
+      "label": "shopify.server.js",
+      "type": "file",
+      "domain": "admin",
+      "description": "Configures Shopify App API credentials, Prisma session storage, webhooks, and billing settings.",
+      "path": "app/shopify.server.js"
+    },
+    {
+      "id": "app:db.server.js",
+      "label": "db.server.js",
+      "type": "file",
+      "domain": "data",
+      "description": "Prisma client singleton export for database queries.",
+      "path": "app/db.server.js"
+    },
+    {
+      "id": "app:schema.prisma",
+      "label": "schema.prisma",
+      "type": "file",
+      "domain": "data",
+      "description": "Prisma schema defining Session, Offer, and related data models.",
+      "path": "prisma/schema.prisma"
+    },
+    {
+      "id": "app:utils:volumeMetafields",
+      "label": "volumeMetafields.server.js",
+      "type": "file",
+      "domain": "metafields",
+      "description": "Shards volume discount tiers into ~270B payloads stored on product.metafields.stack_up.volume_tiers.",
+      "path": "app/utils/volumeMetafields.server.js"
+    },
+    {
+      "id": "app:utils:bogoMetafields",
+      "label": "bogoMetafields.server.js",
+      "type": "file",
+      "domain": "metafields",
+      "description": "Shards BOGO discount rules into compact product-level metafields.",
+      "path": "app/utils/bogoMetafields.server.js"
+    },
+    {
+      "id": "app:utils:bundleMetafields",
+      "label": "bundleMetafields.server.js",
+      "type": "file",
+      "domain": "metafields",
+      "description": "Serializes paired / bundle product discounts onto individual product metafields.",
+      "path": "app/utils/bundleMetafields.server.js"
+    },
+    {
+      "id": "app:utils:selectedOffersMetafields",
+      "label": "selectedOffersMetafields.server.js",
+      "type": "file",
+      "domain": "metafields",
+      "description": "Serializes selected / add-on offer definitions onto targeted product metafields.",
+      "path": "app/utils/selectedOffersMetafields.server.js"
+    },
+    {
+      "id": "app:utils:productConflicts",
+      "label": "productConflicts.server.js",
+      "type": "file",
+      "domain": "admin",
+      "description": "Validates that products are not assigned to conflicting offer types before creation or update.",
+      "path": "app/utils/productConflicts.server.js"
+    },
+    {
+      "id": "route:offers:index",
+      "label": "app.offers._index.jsx",
+      "type": "route",
+      "domain": "admin",
+      "description": "Dashboard listing active, scheduled, and draft discount offers with status toggles and delete actions.",
+      "path": "app/routes/app.offers._index.jsx"
+    },
+    {
+      "id": "route:offers:volume:create",
+      "label": "app.offers.volume.create.jsx",
+      "type": "route",
+      "domain": "admin",
+      "description": "Offer creation wizard for Volume/Tiered discounts with product picker and tier builder.",
+      "path": "app/routes/app.offers.volume.create.jsx"
+    },
+    {
+      "id": "route:offers:bogo:create",
+      "label": "app.offers.bogo.create.jsx",
+      "type": "route",
+      "domain": "admin",
+      "description": "Offer creation wizard for Buy One Get One (BOGO) campaigns.",
+      "path": "app/routes/app.offers.bogo.create.jsx"
+    },
+    {
+      "id": "route:offers:paired:create",
+      "label": "app.offers.paired.create.jsx",
+      "type": "route",
+      "domain": "admin",
+      "description": "Offer creation wizard for Frequently Bought Together / Paired discounts.",
+      "path": "app/routes/app.offers.paired.create.jsx"
+    },
+    {
+      "id": "route:offers:selected:create",
+      "label": "app.offers.selected.create.jsx",
+      "type": "route",
+      "domain": "admin",
+      "description": "Offer creation wizard for Selected Products & Cross-sell Add-on campaigns.",
+      "path": "app/routes/app.offers.selected.create.jsx"
+    },
+    {
+      "id": "webhook:orders:create",
+      "label": "webhooks.orders.create.jsx",
+      "type": "webhook",
+      "domain": "analytics",
+      "description": "Captures completed orders, verifies StackUp discount codes, and increments usage counts and attributed revenue.",
+      "path": "app/routes/webhooks.orders.create.jsx"
+    },
+    {
+      "id": "fn:volume-discount",
+      "label": "volume-discount (WASM)",
+      "type": "function",
+      "domain": "checkout",
+      "description": "Shopify Function evaluating cart line quantities against product.metafields.stack_up.volume_tiers.",
+      "path": "extensions/volume-discount"
+    },
+    {
+      "id": "fn:bogo-discount",
+      "label": "bogo-discount (WASM)",
+      "type": "function",
+      "domain": "checkout",
+      "description": "Shopify Function evaluating BOGO pairs and applying percentage or fixed discounts to line items.",
+      "path": "extensions/bogo-discount"
+    },
+    {
+      "id": "fn:paired-discount",
+      "label": "paired-products-discount (WASM)",
+      "type": "function",
+      "domain": "checkout",
+      "description": "Shopify Function verifying bundle co-presence in cart and distributing package discounts.",
+      "path": "extensions/paired-products-discount"
+    },
+    {
+      "id": "fn:selected-discount",
+      "label": "selected-products-discount (WASM)",
+      "type": "function",
+      "domain": "checkout",
+      "description": "Shopify Function evaluating cross-sell add-on products and discounting qualifying lines.",
+      "path": "extensions/selected-products-discount"
+    },
+    {
+      "id": "theme:volume-block",
+      "label": "volume-discount.liquid",
+      "type": "liquid",
+      "domain": "storefront",
+      "description": "Liquid block rendering quantity tier options directly on the Product Detail Page.",
+      "path": "extensions/stack-up-theme-extension/blocks/volume-discount.liquid"
+    },
+    {
+      "id": "theme:bogo-block",
+      "label": "bogo-widget.liquid",
+      "type": "liquid",
+      "domain": "storefront",
+      "description": "Liquid block presenting BOGO options with automatic cart addition.",
+      "path": "extensions/stack-up-theme-extension/blocks/bogo-widget.liquid"
+    },
+    {
+      "id": "theme:stack-up.js",
+      "label": "stack-up.js",
+      "type": "asset",
+      "domain": "storefront",
+      "description": "Storefront client script handling variant switching, AJAX cart updates, and tier selection state.",
+      "path": "extensions/stack-up-theme-extension/assets/stack-up.js"
+    }
+  ],
+  "edges": [
+    {
+      "source": "route:offers:volume:create",
+      "target": "app:utils:volumeMetafields",
+      "type": "calls"
+    },
+    {
+      "source": "route:offers:volume:create",
+      "target": "app:utils:productConflicts",
+      "type": "validates_with"
+    },
+    {
+      "source": "route:offers:volume:create",
+      "target": "app:db.server.js",
+      "type": "persists_via"
+    },
+    {
+      "source": "route:offers:bogo:create",
+      "target": "app:utils:bogoMetafields",
+      "type": "calls"
+    },
+    {
+      "source": "route:offers:bogo:create",
+      "target": "app:utils:productConflicts",
+      "type": "validates_with"
+    },
+    {
+      "source": "route:offers:bogo:create",
+      "target": "app:db.server.js",
+      "type": "persists_via"
+    },
+    {
+      "source": "route:offers:paired:create",
+      "target": "app:utils:bundleMetafields",
+      "type": "calls"
+    },
+    {
+      "source": "route:offers:paired:create",
+      "target": "app:utils:productConflicts",
+      "type": "validates_with"
+    },
+    {
+      "source": "route:offers:paired:create",
+      "target": "app:db.server.js",
+      "type": "persists_via"
+    },
+    {
+      "source": "route:offers:selected:create",
+      "target": "app:utils:selectedOffersMetafields",
+      "type": "calls"
+    },
+    {
+      "source": "route:offers:selected:create",
+      "target": "app:utils:productConflicts",
+      "type": "validates_with"
+    },
+    {
+      "source": "route:offers:selected:create",
+      "target": "app:db.server.js",
+      "type": "persists_via"
+    },
+    {
+      "source": "app:utils:volumeMetafields",
+      "target": "theme:volume-block",
+      "type": "renders_data_for"
+    },
+    {
+      "source": "app:utils:volumeMetafields",
+      "target": "fn:volume-discount",
+      "type": "queries_payload"
+    },
+    {
+      "source": "app:utils:bogoMetafields",
+      "target": "theme:bogo-block",
+      "type": "renders_data_for"
+    },
+    {
+      "source": "app:utils:bogoMetafields",
+      "target": "fn:bogo-discount",
+      "type": "queries_payload"
+    },
+    {
+      "source": "app:utils:bundleMetafields",
+      "target": "fn:paired-discount",
+      "type": "queries_payload"
+    },
+    {
+      "source": "app:utils:selectedOffersMetafields",
+      "target": "fn:selected-discount",
+      "type": "queries_payload"
+    },
+    {
+      "source": "theme:volume-block",
+      "target": "theme:stack-up.js",
+      "type": "controlled_by"
+    },
+    {
+      "source": "theme:bogo-block",
+      "target": "theme:stack-up.js",
+      "type": "controlled_by"
+    },
+    {
+      "source": "fn:volume-discount",
+      "target": "webhook:orders:create",
+      "type": "triggers_analytics_on_order"
+    },
+    {
+      "source": "fn:bogo-discount",
+      "target": "webhook:orders:create",
+      "type": "triggers_analytics_on_order"
+    },
+    {
+      "source": "webhook:orders:create",
+      "target": "app:db.server.js",
+      "type": "updates_metrics"
+    },
+    {
+      "source": "app:db.server.js",
+      "target": "route:offers:index",
+      "type": "feeds_dashboard"
+    }
+  ]
+}
