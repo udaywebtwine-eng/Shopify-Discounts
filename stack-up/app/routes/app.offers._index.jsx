@@ -110,28 +110,28 @@ export const loader = async ({ request }) => {
         const typeLabel = isBogo
             ? "BOGO & Gift"
             : isVolume
-            ? "Quantity Breaks"
-            : isSelected
-            ? "Product Add-ons"
-            : "Frequently Bought";
+                ? "Quantity Breaks"
+                : isSelected
+                    ? "Product Add-ons"
+                    : "Frequently Bought";
 
         const typeBadgeTone = isBogo
             ? "magic"
             : isVolume
-            ? "success"
-            : isSelected
-            ? "caution"
-            : "info";
+                ? "success"
+                : isSelected
+                    ? "caution"
+                    : "info";
 
         const productSummary = isBogo
             ? (subCount > 0
                 ? `${mainCount} Buy + ${subCount} Reward`
                 : `${mainCount} Product${mainCount === 1 ? "" : "s"} (BOGO)`)
             : isVolume
-            ? `${mainCount} Product${mainCount === 1 ? "" : "s"} (${subCount} Tiers)`
-            : isSelected
-            ? `${mainCount} Target + ${subCount} Add-on`
-            : `${mainCount} Main + ${subCount} Sub`;
+                ? `${mainCount} Product${mainCount === 1 ? "" : "s"} (${subCount} Tiers)`
+                : isSelected
+                    ? `${mainCount} Target + ${subCount} Add-on`
+                    : `${mainCount} Main + ${subCount} Sub`;
 
         return {
             id: dbo.discountId,
@@ -552,6 +552,9 @@ export default function AllOffersIndex() {
                 id="customize-menu"
                 accessibilityLabel="Customize widgets"
             >
+                <s-button href="/app/offers/bogo/customize">
+                    Buy One Get One Widget
+                </s-button>
                 <s-button href="/app/offers/volume/customize">
                     Quantity Breaks Widget
                 </s-button>
@@ -563,6 +566,7 @@ export default function AllOffersIndex() {
                 <s-button href="/app/offers/selected/customize">
                     Product Add-ons Widget
                 </s-button>
+
             </s-menu>
             {/* KPI Metric Cards */}
             <s-box border="small" borderRadius="base" padding="small">
@@ -752,10 +756,10 @@ export default function AllOffersIndex() {
                                     const editUrl = offer.type === "SELECTED"
                                         ? `/app/offers/selected/edit/${offer.numericId}`
                                         : offer.type === "VOLUME"
-                                        ? `/app/offers/volume/edit/${offer.numericId}`
-                                        : offer.type === "BOGO"
-                                        ? `/app/offers/bogo/edit/${offer.numericId}`
-                                        : `/app/offers/paired/edit/${offer.numericId}`;
+                                            ? `/app/offers/volume/edit/${offer.numericId}`
+                                            : offer.type === "BOGO"
+                                                ? `/app/offers/bogo/edit/${offer.numericId}`
+                                                : `/app/offers/paired/edit/${offer.numericId}`;
 
                                     return (
                                         <s-table-row key={offer.id}>

@@ -590,8 +590,9 @@ export async function ensureMasterDiscounts(admin, options = {}) {
 
 /**
  * Updates combination rules on a master discount node.
+ * Tries the exact nodeId first, falling back to DiscountAutomaticNode and DiscountNode GIDs.
  */
-export async function updateMasterDiscountCombinations(admin, nodeId, combinations) {
+export async function updateMasterDiscountCombinations(admin, nodeId, combinations, title = null) {
   const mutation = `#graphql
     mutation UpdateMasterDiscountCombinations($id: ID!, $automaticAppDiscount: DiscountAutomaticAppInput!) {
       discountAutomaticAppUpdate(id: $id, automaticAppDiscount: $automaticAppDiscount) {
@@ -614,28 +615,87 @@ export async function updateMasterDiscountCombinations(admin, nodeId, combinatio
   `;
 
   const numericId = String(nodeId).split("/").pop();
-  const canonicalNodeId = `gid://shopify/DiscountAutomaticNode/${numericId}`;
+  const idCandidates = [
+    nodeId,
+    `gid://shopify/DiscountAutomaticNode/${numericId}`,
+    `gid://shopify/DiscountNode/${numericId}`,
+  ].filter(Boolean);
 
-  const res = await admin.graphql(mutation, {
-    variables: {
-      id: canonicalNodeId,
-      automaticAppDiscount: {
-        combinesWith: {
-          orderDiscounts: Boolean(combinations.orderDiscounts),
-          productDiscounts: Boolean(combinations.productDiscounts),
-          shippingDiscounts: Boolean(combinations.shippingDiscounts),
-        },
-      },
+  const input = {
+    combinesWith: {
+      orderDiscounts: Boolean(combinations.orderDiscounts),
+      productDiscounts: Boolean(combinations.productDiscounts),
+      shippingDiscounts: Boolean(combinations.shippingDiscounts),
     },
-  });
-
-  const json = await res.json();
-  const userErrors = json.data?.discountAutomaticAppUpdate?.userErrors || [];
-  if (userErrors.length > 0) {
-    throw new Error(userErrors.map((e) => e.message).join(", "));
+  };
+  if (title) {
+    input.title = title;
   }
 
-  return json.data?.discountAutomaticAppUpdate?.automaticAppDiscount;
+  let lastError = null;
+  for (const candidateId of [...new Set(idCandidates)]) {
+    try {
+      const res = await admin.graphql(mutation, {
+        variables: {
+          id: candidateId,
+          automaticAppDiscount: input,
+        },
+      });
+
+      const json = await res.json();
+      const userErrors = json.data?.discountAutomaticAppUpdate?.userErrors || [];
+      if (userErrors.length === 0 && json.data?.discountAutomaticAppUpdate?.automaticAppDiscount) {
+        return json.data.discountAutomaticAppUpdate.automaticAppDiscount;
+      }
+      if (userErrors.length > 0) {
+        lastError = new Error(userErrors.map((e) => e.message).join(", "));
+      }
+    } catch (err) {
+      lastError = err;
+    }
+  }
+
+  throw lastError || new Error(`Failed to update combinations for master discount ID ${nodeId}`);
+}
+
+/**
+ * Updates combinations across ALL 4 Master Discounts in Shopify Admin:
+ * 1. StackUp Selected Products
+ * 2. StackUp Paired Products
+ * 3. StackUp Volume Discounts
+ * 4. StackUp BOGO & Buy X Get Y
+ */
+export async function updateAllMasterDiscountCombinations(admin, combinations) {
+  const { selectedMaster, pairedMaster, volumeMaster, bogoMaster } = await getMasterDiscountsStatus(admin);
+
+  const targets = [
+    { master: selectedMaster, title: MASTER_SELECTED_TITLE },
+    { master: pairedMaster, title: MASTER_PAIRED_TITLE },
+    { master: volumeMaster, title: MASTER_VOLUME_TITLE },
+    { master: bogoMaster, title: MASTER_BOGO_TITLE },
+  ];
+
+  const results = [];
+  const errors = [];
+
+  for (const { master, title } of targets) {
+    if (master?.nodeId) {
+      try {
+        const updated = await updateMasterDiscountCombinations(
+          admin,
+          master.nodeId,
+          combinations,
+          master.title || title
+        );
+        results.push(updated);
+      } catch (err) {
+        console.warn(`[MasterDiscount] Failed updating combinations for ${master.title || title}:`, err.message);
+        errors.push(`${master.title || title}: ${err.message}`);
+      }
+    }
+  }
+
+  return { results, errors };
 }
 
 /**

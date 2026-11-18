@@ -5,25 +5,26 @@ import { authenticate } from "../shopify.server";
 import db from "../db.server";
 import {
     ensureMasterDiscounts,
-    getMasterDiscountsStatus,
-    updateMasterDiscountCombinations,
+    updateAllMasterDiscountCombinations,
     cleanupLegacyDiscounts,
 } from "../utils/masterDiscount.server";
 import { syncAllActiveOffersToShopMetafield } from "../utils/bundleMetafields.server";
 import { syncAllActiveSelectedOffersToShopMetafield } from "../utils/selectedOffersMetafields.server";
+import { syncAllActiveVolumeOffersToShopMetafield } from "../utils/volumeMetafields.server";
+import { syncAllActiveBogoOffersToShopMetafield } from "../utils/bogoMetafields.server";
 
 export const loader = async ({ request }) => {
     const { admin, session } = await authenticate.admin(request);
     const shopName = session.shop.replace(".myshopify.com", "");
 
-    const [masterDiscounts] = await Promise.all([
-        ensureMasterDiscounts(admin).catch((e) => {
-            console.warn("Could not ensure master discounts:", e);
-            return { selectedMaster: null, pairedMaster: null };
-        }),
-    ]);
+    const masterDiscounts = await ensureMasterDiscounts(admin).catch((e) => {
+        console.warn("Could not ensure master discounts:", e);
+        return { selectedMaster: null, pairedMaster: null, volumeMaster: null, bogoMaster: null };
+    });
 
     const activeCombinations =
+        masterDiscounts?.bogoMaster?.combinesWith ||
+        masterDiscounts?.volumeMaster?.combinesWith ||
         masterDiscounts?.selectedMaster?.combinesWith ||
         masterDiscounts?.pairedMaster?.combinesWith || {
             orderDiscounts: true,
@@ -36,7 +37,7 @@ export const loader = async ({ request }) => {
     return {
         shopName,
         shop: session.shop,
-        masterDiscounts,
+        masterDiscounts, 
         activeCombinations,
         discountsAdminUrl,
     };
@@ -53,20 +54,11 @@ export const action = async ({ request }) => {
         const shippingDiscounts = formData.get("shippingDiscounts") === "true";
 
         const combinations = { orderDiscounts, productDiscounts, shippingDiscounts };
-        const { selectedMaster, pairedMaster } = await getMasterDiscountsStatus(admin);
 
-        if (selectedMaster?.nodeId) {
-            await updateMasterDiscountCombinations(admin, selectedMaster.nodeId, combinations).catch((e) =>
-                console.warn("Update selected master combinations failed:", e)
-            );
-        }
-        if (pairedMaster?.nodeId) {
-            await updateMasterDiscountCombinations(admin, pairedMaster.nodeId, combinations).catch((e) =>
-                console.warn("Update paired master combinations failed:", e)
-            );
-        }
+        // Update ALL 4 master discounts in Shopify Admin (BOGO, Volume, Paired, Selected)
+        const { errors } = await updateAllMasterDiscountCombinations(admin, combinations);
 
-        // Also update in DB for consistency
+        // Also update in DB for consistency across offers
         const shop = session.shop;
         const shopConditions = [
             { shop },
@@ -82,7 +74,17 @@ export const action = async ({ request }) => {
             },
         }).catch(() => { });
 
-        return Response.json({ success: true, message: "Combinations saved successfully!" });
+        if (errors.length > 0) {
+            return Response.json({
+                success: false,
+                message: `Some master discounts could not be updated: ${errors.join("; ")}`,
+            });
+        }
+
+        return Response.json({
+            success: true,
+            message: "Combinations saved successfully across all Master Discounts!",
+        });
     }
 
     if (actionType === "resync_discounts") {
@@ -91,6 +93,8 @@ export const action = async ({ request }) => {
         await Promise.all([
             syncAllActiveOffersToShopMetafield(admin).catch(() => { }),
             syncAllActiveSelectedOffersToShopMetafield(admin).catch(() => { }),
+            syncAllActiveVolumeOffersToShopMetafield(admin).catch(() => { }),
+            syncAllActiveBogoOffersToShopMetafield(admin).catch(() => { }),
         ]);
         return Response.json({ success: true, message: "Master discounts resynced successfully!", masterDiscounts: res });
     }

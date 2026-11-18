@@ -177,7 +177,7 @@ export default function NewOfferSelect() {
                     background="surface"
                   >
                     <s-image
-                      src="/img3.svg"
+                      src="/img3.png"
                       alt="Quantity Breaks Volume Discount Preview"
                       aspectRatio="16/9"
                       objectFit="contain"
@@ -229,7 +229,7 @@ export default function NewOfferSelect() {
                     background="surface"
                   >
                     <s-image
-                      src="/img1.png"
+                      src="/img4.png"
                       alt="Automatic BOGO & Buy X Get Y Preview"
                       aspectRatio="16/9"
                       objectFit="contain"
