@@ -2,35 +2,31 @@ import { useState, useEffect, useMemo } from "react";
 import { useLoaderData, useActionData, useSubmit, useNavigation } from "react-router";
 import { useAppBridge, SaveBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
-import VolumeWidgetPreview from "./components/Preview/VolumeWidgetPreview";
 
 // Default settings used as fallback if merchant hasn't saved customizations yet
 const DEFAULT_SETTINGS = {
   content: {
     heading: "{widgettitle}",
-    buttonText: "Add {quantity} to Cart",
-    badgeText: "Most popular",
-    savingsText: "Save {amount} ({percentage}% OFF)",
+    buttonText: "Add Both to Cart",
+    badgeText: "Save {percentage}% OFF",
+    subProductLabel: "Pair with:",
   },
   styles: {
     cardSurface: "#ffffff",
     borderColor: "#e5e7eb",
     borderWidth: 1,
-    borderRadius: 14,
-    activeBorderColor: "#111827",
-    activeBorderWidth: 2,
-    badgeBg: "#c50707",
-    badgeTextColor: "#ffffff",
+    borderRadius: 12,
+    totalBoxBg: "#f9fafb",
+    badgeBg: "#ede9fe",
+    badgeTextColor: "#6d28d9",
     buttonBg: "#111827",
     buttonTextColor: "#ffffff",
-    savingsBg: "#ecfdf5",
-    savingsTextColor: "#059669",
   },
   display: {
     showWidgetTitle: true,
-    showDivider: true,
-    showBadge: true,
-    showSavings: true,
+    showTotalBox: true,
+    showPlusIcon: true,
+    showSaleBadge: true,
     showAddToCart: true,
   },
 };
@@ -48,10 +44,10 @@ export const loader = async ({ request }) => {
   try {
     const response = await admin.graphql(
       `#graphql
-      query GetVolumeWidgetSettingsAndTheme {
+      query GetWidgetSettingsAndTheme {
         shop {
           id
-          metafield(namespace: "stack_up", key: "volume_widget_settings") {
+          metafield(namespace: "stack_up", key: "paired_widget_settings") {
             value
           }
         }
@@ -67,23 +63,26 @@ export const loader = async ({ request }) => {
     if (rawMetafield) {
       try {
         savedSettings = JSON.parse(rawMetafield);
-        if (savedSettings?.content?.heading === "Buy more, Save more") {
+        if (
+          !savedSettings?.content?.heading ||
+          savedSettings?.content?.heading === "Frequently Bought Together"
+        ) {
+          if (!savedSettings.content) savedSettings.content = {};
           savedSettings.content.heading = "{widgettitle}";
         }
       } catch (e) {
-        console.warn("Failed to parse volume_widget_settings:", e);
+        console.warn("Failed to parse paired_widget_settings:", e);
       }
     }
     const themeNode = json.data?.themes?.nodes?.[0];
     activeThemeId = themeNode?.id?.split("/").pop() || null;
   } catch (err) {
-    console.warn("Error fetching volume widget settings:", err);
+    console.warn("Error fetching widget settings:", err);
   }
 
   const themeEditorUrl = activeThemeId
-    ? `https://admin.shopify.com/store/${shopName}/themes/${activeThemeId}/editor?context=apps${
-        clientId ? `&activateAppId=${encodeURIComponent(`${clientId}/volume-discount`)}` : ""
-      }`
+    ? `https://admin.shopify.com/store/${shopName}/themes/${activeThemeId}/editor?context=apps${clientId ? `&activateAppId=${encodeURIComponent(`${clientId}/app-embed`)}` : ""
+    }`
     : `https://admin.shopify.com/store/${shopName}/themes/current/editor?context=apps`;
 
   return {
@@ -120,7 +119,7 @@ export const action = async ({ request }) => {
 
     const mutationRes = await admin.graphql(
       `#graphql
-      mutation SaveVolumeWidgetSettings($metafields: [MetafieldsSetInput!]!) {
+      mutation SaveWidgetSettings($metafields: [MetafieldsSetInput!]!) {
         metafieldsSet(metafields: $metafields) {
           metafields {
             id
@@ -138,7 +137,7 @@ export const action = async ({ request }) => {
             {
               ownerId: shopId,
               namespace: "stack_up",
-              key: "volume_widget_settings",
+              key: "paired_widget_settings",
               type: "json",
               value: String(rawPayload),
             },
@@ -155,12 +154,12 @@ export const action = async ({ request }) => {
 
     return { success: true };
   } catch (err) {
-    console.error("Error saving volume widget settings:", err);
+    console.error("Error saving widget settings:", err);
     return { error: "Failed to save widget settings. Please try again." };
   }
 };
 
-export default function VolumeDiscountCustomize() {
+export default function PairedProductsCustomize() {
   const { settings: initialSettings, themeEditorUrl } = useLoaderData();
   const actionData = useActionData();
   const submit = useSubmit();
@@ -174,7 +173,7 @@ export default function VolumeDiscountCustomize() {
   const [styles, setStyles] = useState(initialSettings.styles || DEFAULT_SETTINGS.styles);
   const [display, setDisplay] = useState(initialSettings.display || DEFAULT_SETTINGS.display);
 
-  // Accordion Expansion State
+  // Accordion Section Expansion State
   const [expanded, setExpanded] = useState({
     content: true,
     styles: true,
@@ -195,7 +194,7 @@ export default function VolumeDiscountCustomize() {
     setContent(initialSettings.content || DEFAULT_SETTINGS.content);
     setStyles(initialSettings.styles || DEFAULT_SETTINGS.styles);
     setDisplay(initialSettings.display || DEFAULT_SETTINGS.display);
-    shopify.saveBar?.hide("customize-volume-widget-savebar");
+    shopify.saveBar?.hide("customize-paired-widget-savebar");
   };
 
   // Handle SaveBar save
@@ -214,20 +213,20 @@ export default function VolumeDiscountCustomize() {
   useEffect(() => {
     if (actionData?.success) {
       shopify.toast.show("Widget customizations saved!");
-      shopify.saveBar?.hide("customize-volume-widget-savebar");
+      shopify.saveBar?.hide("customize-paired-widget-savebar");
     } else if (actionData?.error) {
       shopify.toast.show(actionData.error, { isError: true });
     }
   }, [actionData, shopify]);
 
   return (
-    <s-page heading="Quantity Breaks Customization">
-      <s-link slot="breadcrumb-actions" href="/app/offers">
-        All Discounts
+    <s-page heading="Paired Products Customization">
+      <s-link slot="breadcrumb-actions" href="/app/customize">
+        Customization
       </s-link>
 
       {/* SaveBar from App Bridge */}
-      <SaveBar id="customize-volume-widget-savebar" open={isDirty}>
+      <SaveBar id="customize-paired-widget-savebar" open={isDirty}>
         <button variant="primary" onClick={handleSave} disabled={isSaving}>
           {isSaving ? "Saving..." : "Save"}
         </button>
@@ -250,7 +249,7 @@ export default function VolumeDiscountCustomize() {
           {/* Top Banner / Theme Integration Alert */}
           <s-banner tone="info" heading="Storefront Theme Block">
             <s-paragraph>
-              Customize how your Quantity Breaks / Volume Discount cards look on product pages. These settings automatically apply to all active volume offers.
+              Customize how your Paired Product bundle looks on product pages. Changes apply to all active paired offers.
             </s-paragraph>
             <s-button
               slot="secondary-actions"
@@ -295,23 +294,25 @@ export default function VolumeDiscountCustomize() {
                     value={content.heading}
                     onInput={(e) => setContent({ ...content, heading: e.target.value })}
                     placeholder="e.g. {widgettitle}"
-                    details="Use {widgettitle} to dynamically display each offer's individual title set in the offer editor (defaults to 'Buy more, Save more')."
+                    details="Use {widgettitle} to dynamically display each offer's individual title set in the offer editor."
                   ></s-text-field>
-
                   <s-text-field
-                    label="Button Text (Use {quantity} variable)"
+                    label="Button Text"
                     value={content.buttonText}
                     onInput={(e) => setContent({ ...content, buttonText: e.target.value })}
-                    placeholder="Add {quantity} to Cart"
-                    details="Use {quantity} to dynamically insert the number of items for the currently selected tier."
+                    placeholder="Add Both to Cart"
                   ></s-text-field>
-
                   <s-text-field
-                    label="Default Badge Ribbon Label"
+                    label="Badge Label (Use {percentage} variable)"
                     value={content.badgeText}
                     onInput={(e) => setContent({ ...content, badgeText: e.target.value })}
-                    placeholder="Most popular"
-                    details="Default text displayed on highlight ribbons if not specified per tier."
+                    placeholder="Save {percentage}% OFF"
+                  ></s-text-field>
+                  <s-text-field
+                    label="Sub-Product Prefix"
+                    value={content.subProductLabel}
+                    onInput={(e) => setContent({ ...content, subProductLabel: e.target.value })}
+                    placeholder="Pair with:"
                   ></s-text-field>
                 </s-grid>
               </>
@@ -383,39 +384,27 @@ export default function VolumeDiscountCustomize() {
                     ></s-number-field>
                   </s-grid>
 
-                  <s-divider />
-
-                  {/* Active Card Border Color */}
-                  <s-grid gridTemplateColumns="1fr 1fr" gap="base">
-                    <s-color-field
-                      label="Active Tier Border Color"
-                      value={styles.activeBorderColor}
-                      onInput={(e) => setStyles({ ...styles, activeBorderColor: e.target.value })}
-                      onChange={(e) => setStyles({ ...styles, activeBorderColor: e.target.value })}
-                    ></s-color-field>
-
-                    <s-number-field
-                      label="Active Border Width (px)"
-                      value={String(styles.activeBorderWidth || 2)}
-                      min={1}
-                      max={8}
-                      onInput={(e) => setStyles({ ...styles, activeBorderWidth: Number(e.target.value) })}
-                    ></s-number-field>
-                  </s-grid>
+                  {/* Total Box Background */}
+                  <s-color-field
+                    label="Total Box Background"
+                    value={styles.totalBoxBg}
+                    onInput={(e) => setStyles({ ...styles, totalBoxBg: e.target.value })}
+                    onChange={(e) => setStyles({ ...styles, totalBoxBg: e.target.value })}
+                  ></s-color-field>
 
                   <s-divider />
 
-                  {/* Badge Ribbon Colors */}
+                  {/* Badge Colors */}
                   <s-grid gridTemplateColumns="1fr 1fr" gap="base">
                     <s-color-field
-                      label="Badge Ribbon Background"
+                      label="Badge Background"
                       value={styles.badgeBg}
                       onInput={(e) => setStyles({ ...styles, badgeBg: e.target.value })}
                       onChange={(e) => setStyles({ ...styles, badgeBg: e.target.value })}
                     ></s-color-field>
 
                     <s-color-field
-                      label="Badge Ribbon Text"
+                      label="Badge Text Color"
                       value={styles.badgeTextColor}
                       onInput={(e) => setStyles({ ...styles, badgeTextColor: e.target.value })}
                       onChange={(e) => setStyles({ ...styles, badgeTextColor: e.target.value })}
@@ -438,25 +427,6 @@ export default function VolumeDiscountCustomize() {
                       value={styles.buttonTextColor}
                       onInput={(e) => setStyles({ ...styles, buttonTextColor: e.target.value })}
                       onChange={(e) => setStyles({ ...styles, buttonTextColor: e.target.value })}
-                    ></s-color-field>
-                  </s-grid>
-
-                  <s-divider />
-
-                  {/* Total Savings Banner Colors */}
-                  <s-grid gridTemplateColumns="1fr 1fr" gap="base">
-                    <s-color-field
-                      label="Savings Banner Background"
-                      value={styles.savingsBg}
-                      onInput={(e) => setStyles({ ...styles, savingsBg: e.target.value })}
-                      onChange={(e) => setStyles({ ...styles, savingsBg: e.target.value })}
-                    ></s-color-field>
-
-                    <s-color-field
-                      label="Savings Banner Text"
-                      value={styles.savingsTextColor}
-                      onInput={(e) => setStyles({ ...styles, savingsTextColor: e.target.value })}
-                      onChange={(e) => setStyles({ ...styles, savingsTextColor: e.target.value })}
                     ></s-color-field>
                   </s-grid>
                 </s-grid>
@@ -500,26 +470,26 @@ export default function VolumeDiscountCustomize() {
                   ></s-checkbox>
 
                   <s-checkbox
-                    label="Show divider line next to title"
-                    checked={Boolean(display.showDivider)}
-                    onChange={(e) => setDisplay({ ...display, showDivider: e.target.checked })}
+                    label="Show total & savings summary box"
+                    checked={Boolean(display.showTotalBox)}
+                    onChange={(e) => setDisplay({ ...display, showTotalBox: e.target.checked })}
                   ></s-checkbox>
 
                   <s-checkbox
-                    label="Show badge ribbon (e.g. Most popular)"
-                    checked={Boolean(display.showBadge)}
-                    onChange={(e) => setDisplay({ ...display, showBadge: e.target.checked })}
+                    label="Show plus (+) separator icon"
+                    checked={Boolean(display.showPlusIcon)}
+                    onChange={(e) => setDisplay({ ...display, showPlusIcon: e.target.checked })}
                   ></s-checkbox>
 
                   <s-checkbox
-                    label="Show Total Savings highlight banner"
-                    checked={Boolean(display.showSavings)}
-                    onChange={(e) => setDisplay({ ...display, showSavings: e.target.checked })}
+                    label="Show discount sale badge"
+                    checked={Boolean(display.showSaleBadge)}
+                    onChange={(e) => setDisplay({ ...display, showSaleBadge: e.target.checked })}
                   ></s-checkbox>
 
                   <s-checkbox
                     label="Show Add to Cart button inside widget"
-                    checked={Boolean(display.showAddToCart)}
+                    checked={Boolean(display.showAddToCart !== false)}
                     onChange={(e) => setDisplay({ ...display, showAddToCart: e.target.checked })}
                   ></s-checkbox>
                 </s-grid>
@@ -528,7 +498,7 @@ export default function VolumeDiscountCustomize() {
           </s-section>
         </div>
 
-        {/* ===================== RIGHT COLUMN: STICKY LIVE PREVIEW ===================== */}
+        {/* ===================== RIGHT COLUMN: LIVE STOREFRONT PREVIEW ===================== */}
         <div style={{ position: "sticky", top: "20px", minWidth: 0 }}>
           <div
             style={{
@@ -564,11 +534,11 @@ export default function VolumeDiscountCustomize() {
                   color: "#6b7280",
                   flex: 1,
                   textAlign: "center",
-                  maxWidth: "260px",
+                  maxWidth: "240px",
                   margin: "0 auto",
                 }}
               >
-                store.myshopify.com/products/premium-hoodie
+                store.myshopify.com/products/everyday-tee
               </div>
             </div>
 
@@ -607,29 +577,277 @@ export default function VolumeDiscountCustomize() {
                 </div>
               </div>
 
-              {/* LIVE WIDGET PREVIEW */}
-              <VolumeWidgetPreview
-                title="Diwali Bumper Offer"
-                widgetTitle="Buy more, Save more"
-                products={[
-                  {
-                    title: "Premium Essential Hoodie",
-                    price: "125.40",
-                    image: "https://cdn.shopify.com/s/files/1/0533/2089/files/placeholder-images-lifestyle-1_large.png",
-                  },
-                ]}
-                tiers={[
-                  { quantity: 1, discountType: "none", value: 0, title: "Buy 1", label: "Standard", badge: "", isDefault: true },
-                  { quantity: 2, discountType: "percent", value: 10, title: "Buy 2", label: "Save 10%", badge: "Most popular", isDefault: false },
-                  { quantity: 3, discountType: "percent", value: 20, title: "Buy 3+", label: "Save 20%", badge: "", isDefault: false },
-                ]}
-                asSection={true}
-                widgetSettings={{
-                  content,
-                  styles,
-                  display,
+              {/* ================= LIVE WIDGET PREVIEW CARD ================= */}
+              <div
+                style={{
+                  background: styles.cardSurface,
+                  borderRadius: `${styles.borderRadius}px`,
+                  border: `${styles.borderWidth}px solid ${styles.borderColor}`,
+                  padding: "18px",
+                  boxShadow: "0 4px 20px -2px rgba(0,0,0,0.05), 0 2px 6px -1px rgba(0,0,0,0.02)",
+                  transition: "all 0.15s ease",
                 }}
-              />
+              >
+                {/* Widget Heading */}
+                {display.showWidgetTitle && (
+                  <div
+                    style={{
+                      fontSize: "15px",
+                      fontWeight: 700,
+                      color: "#0f172a",
+                      marginBottom: "14px",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "6px",
+                    }}
+                  >
+                    <span>✨</span>
+                    <span>
+                      {(content.heading || "{widgettitle}")
+                        .replace(/{widgettitle}/gi, "Frequently Bought Together")
+                        .replace(/{widgetname}/gi, "Summer Combo")
+                        .replace(/{percentage}/gi, "20")}
+                    </span>
+                  </div>
+                )}
+
+                {/* Products Stack */}
+                <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                  {/* Item 1: Main Product */}
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "12px",
+                      padding: "10px 12px",
+                      background: "#ffffff",
+                      border: `1px solid ${styles.borderColor}`,
+                      borderRadius: `${Math.max(6, styles.borderRadius - 4)}px`,
+                      boxShadow: "0 1px 2px rgba(0,0,0,0.02)",
+                    }}
+                  >
+                    <div
+                      style={{
+                        width: "20px",
+                        height: "20px",
+                        borderRadius: "5px",
+                        background: styles.buttonBg,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        color: styles.buttonTextColor,
+                        flexShrink: 0,
+                      }}
+                    >
+                      <svg width="11" height="9" viewBox="0 0 11 9" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                        <polyline points="1.5 4.5 4 7 9.5 1.5" />
+                      </svg>
+                    </div>
+                    <div
+                      style={{
+                        width: "48px",
+                        height: "48px",
+                        background: "#f8fafc",
+                        border: "1px solid #f1f5f9",
+                        borderRadius: "8px",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        fontSize: "22px",
+                        flexShrink: 0,
+                      }}
+                    >
+                      👕
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: "14px", fontWeight: 600, color: "#0f172a" }}>Everyday Cotton Tee</div>
+                      <div style={{ fontSize: "12px", color: "#64748b", marginTop: "2px" }}>Size: M • White</div>
+                      <div style={{ marginTop: "4px" }}>
+                        <span style={{ fontSize: "11px", fontWeight: 600, background: "#f1f5f9", color: "#334155", padding: "2px 8px", borderRadius: "12px", border: "1px solid #e2e8f0" }}>
+                          Qty: 2
+                        </span>
+                      </div>
+                    </div>
+                    <div style={{ textAlign: "right", flexShrink: 0 }}>
+                      <div style={{ fontSize: "15px", fontWeight: 700, color: "#0f172a" }}>$48.00</div>
+                      <div style={{ fontSize: "11px", color: "#64748b", fontWeight: 500, marginTop: "2px" }}>($24.00 each)</div>
+                    </div>
+                  </div>
+
+                  {/* Plus Icon Separator */}
+                  {display.showPlusIcon && (
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "8px", margin: "-2px 0" }}>
+                      <div style={{ flex: 1, height: "1px", background: "#f1f5f9" }} />
+                      <div
+                        style={{
+                          width: "24px",
+                          height: "24px",
+                          borderRadius: "50%",
+                          background: styles.plusIconBg,
+                          color: styles.plusIconColor,
+                          border: `1px solid ${styles.borderColor}`,
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          fontSize: "14px",
+                          fontWeight: "bold",
+                          boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
+                          flexShrink: 0,
+                        }}
+                      >
+                        +
+                      </div>
+                      <div style={{ flex: 1, height: "1px", background: "#f1f5f9" }} />
+                    </div>
+                  )}
+
+                  {/* Item 2: Sub / Add-on Product */}
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "12px",
+                      padding: "10px 12px",
+                      background: "#ffffff",
+                      border: `1px solid ${styles.borderColor}`,
+                      borderRadius: `${Math.max(6, styles.borderRadius - 4)}px`,
+                      boxShadow: "0 1px 2px rgba(0,0,0,0.02)",
+                    }}
+                  >
+                    <div
+                      style={{
+                        width: "20px",
+                        height: "20px",
+                        borderRadius: "5px",
+                        background: styles.buttonBg,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        color: styles.buttonTextColor,
+                        flexShrink: 0,
+                      }}
+                    >
+                      <svg width="11" height="9" viewBox="0 0 11 9" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                        <polyline points="1.5 4.5 4 7 9.5 1.5" />
+                      </svg>
+                    </div>
+                    <div
+                      style={{
+                        width: "48px",
+                        height: "48px",
+                        background: "#f8fafc",
+                        border: "1px solid #f1f5f9",
+                        borderRadius: "8px",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        fontSize: "22px",
+                        flexShrink: 0,
+                      }}
+                    >
+                      🧢
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: "14px", fontWeight: 600, color: "#0f172a" }}>Summer Classic Cap</div>
+                      <div style={{ fontSize: "12px", color: "#64748b", marginTop: "2px" }}>Color: Navy Blue</div>
+                    </div>
+                    <div style={{ textAlign: "right", flexShrink: 0 }}>
+                      <div style={{ fontSize: "15px", fontWeight: 700, color: "#0f172a" }}>$24.00</div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Total & Savings Box */}
+                {display.showTotalBox && (
+                  <div
+                    style={{
+                      marginTop: "14px",
+                      padding: "12px 14px",
+                      background: styles.totalBoxBg,
+                      borderRadius: `${Math.max(6, styles.borderRadius - 4)}px`,
+                      border: `1px solid ${styles.totalBoxBorderColor}`,
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      gap: "10px",
+                    }}
+                  >
+                    <div>
+                      <div style={{ fontSize: "11px", fontWeight: 600, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.04em" }}>Bundle Subtotal</div>
+                      <div style={{ display: "flex", alignItems: "baseline", gap: "8px", marginTop: "3px" }}>
+                        <span style={{ fontSize: "18px", fontWeight: 800, color: "#0f172a" }}>$57.60</span>
+                        <span style={{ fontSize: "13px", color: "#94a3b8", textDecoration: "line-through" }}>$72.00</span>
+                      </div>
+                    </div>
+                    {display.showSaleBadge && (
+                      <div style={{ textAlign: "right" }}>
+                        <span
+                          style={{
+                            background: styles.badgeBg || "#ede9fe",
+                            color: styles.badgeTextColor || "#6d28d9",
+                            fontSize: "11px",
+                            fontWeight: 700,
+                            padding: "5px 10px",
+                            borderRadius: "20px",
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: "4px",
+                            boxShadow: "0 1px 2px rgba(0, 0, 0, 0.05)",
+                          }}
+                        >
+                          <span>⚡</span>
+                          <span>{content.badgeText ? content.badgeText.replace("{percentage}", "20") : "Save 20% OFF"}</span>
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Primary Add to Cart Action */}
+                {display.showAddToCart !== false && (
+                  <button
+                    type="button"
+                    style={{
+                      width: "100%",
+                      marginTop: "14px",
+                      padding: "14px 20px",
+                      background: styles.buttonBg,
+                      color: styles.buttonTextColor,
+                      borderRadius: `${styles.borderRadius}px`,
+                      border: "none",
+                      fontWeight: 700,
+                      fontSize: "15px",
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      gap: "8px",
+                      boxShadow: "0 4px 12px rgba(0,0,0,0.12)",
+                      transition: "all 0.15s ease",
+                    }}
+                  >
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z" />
+                      <line x1="3" y1="6" x2="21" y2="6" />
+                      <path d="M16 10a4 4 0 0 1-8 0" />
+                    </svg>
+                    <span>{content.buttonText || "Add Both to Cart"}</span>
+                  </button>
+                )}
+              </div>
+
+              {/* Helper Footer Note */}
+              <div
+                style={{
+                  fontSize: "10px",
+                  color: "#9ca3af",
+                  textAlign: "center",
+                  marginTop: "14px",
+                  fontStyle: "italic",
+                }}
+              >
+                Above preview demonstrates styling in real time. Product images and prices match each offer automatically.
+              </div>
             </div>
           </div>
         </div>
@@ -637,4 +855,3 @@ export default function VolumeDiscountCustomize() {
     </s-page>
   );
 }
-

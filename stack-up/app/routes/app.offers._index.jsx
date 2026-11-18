@@ -31,7 +31,7 @@ export const loader = async ({ request }) => {
     const { admin, session } = await authenticate.admin(request);
     const shopName = session.shop.replace(".myshopify.com", "");
 
-    const [shopTimezone, dbOffers] = await Promise.all([
+    const [shopTimezone, dbOffers, masterDiscounts] = await Promise.all([
         getShopTimezone(admin, session.shop).catch(() => "UTC"),
         prisma.offer.findMany({
             where: {
@@ -46,13 +46,26 @@ export const loader = async ({ request }) => {
             console.warn("Could not fetch DB offers:", e);
             return [];
         }),
-        ensureMasterDiscounts(admin).catch(() => { }),
+        ensureMasterDiscounts(admin).catch(() => null),
         cleanupLegacyDiscounts(admin).catch(() => { }),
         syncAllActiveOffersToShopMetafield(admin).catch(() => { }),
         syncAllActiveSelectedOffersToShopMetafield(admin).catch(() => { }),
         syncAllActiveVolumeOffersToShopMetafield(admin).catch(() => { }),
         syncAllActiveBogoOffersToShopMetafield(admin).catch(() => { }),
     ]);
+
+    // Extract the live store-wide combinations directly from master discounts in Shopify
+    const masterCombines =
+        masterDiscounts?.bogoMaster?.combinesWith ||
+        masterDiscounts?.volumeMaster?.combinesWith ||
+        masterDiscounts?.selectedMaster?.combinesWith ||
+        masterDiscounts?.pairedMaster?.combinesWith;
+
+    const activeCombinations = {
+        orderDiscounts: Boolean(masterCombines?.orderDiscounts === true),
+        productDiscounts: Boolean(masterCombines?.productDiscounts === true),
+        shippingDiscounts: Boolean(masterCombines?.shippingDiscounts === true),
+    };
 
     const formattedOffers = dbOffers.map((dbo) => {
         let mainCount = 0;
@@ -147,9 +160,9 @@ export const loader = async ({ request }) => {
             subProductCount: subCount,
             status: computedStatus,
             combinesWith: {
-                orderDiscounts: dbo.combinesWithOrder,
-                productDiscounts: dbo.combinesWithProduct,
-                shippingDiscounts: dbo.combinesWithShipping,
+                orderDiscounts: activeCombinations.orderDiscounts,
+                productDiscounts: activeCombinations.productDiscounts,
+                shippingDiscounts: activeCombinations.shippingDiscounts,
             },
             usageCount: dbo.usageCount || 0,
             startDate: dbo.startsAt ? formatDateInShopTimezone(dbo.startsAt, shopTimezone) : "Immediate",
@@ -552,18 +565,18 @@ export default function AllOffersIndex() {
                 id="customize-menu"
                 accessibilityLabel="Customize widgets"
             >
-                <s-button href="/app/offers/bogo/customize">
+                <s-button href="/app/customize/bogo">
                     Buy One Get One Widget
                 </s-button>
-                <s-button href="/app/offers/volume/customize">
+                <s-button href="/app/customize/volume">
                     Quantity Breaks Widget
                 </s-button>
 
-                <s-button href="/app/offers/paired/customize">
+                <s-button href="/app/customize/paired">
                     Frequently Bought Widget
                 </s-button>
 
-                <s-button href="/app/offers/selected/customize">
+                <s-button href="/app/customize/selected">
                     Product Add-ons Widget
                 </s-button>
 
@@ -760,7 +773,7 @@ export default function AllOffersIndex() {
                                             : offer.type === "BOGO"
                                                 ? `/app/offers/bogo/edit/${offer.numericId}`
                                                 : `/app/offers/paired/edit/${offer.numericId}`;
-
+                                    console.log(offer.combinesWith.productDiscounts, "offerrr")
                                     return (
                                         <s-table-row key={offer.id}>
                                             {/* Offer Name */}
@@ -805,12 +818,44 @@ export default function AllOffersIndex() {
                                             {/* Combinations */}
                                             <s-table-cell>
                                                 <s-tooltip id={`combo-tip-${offer.numericId}`}>
-                                                    Combinations are managed store-wide in App Settings
+                                                    {[
+                                                        offer.combinesWith.productDiscounts ? "Product" : null,
+                                                        offer.combinesWith.orderDiscounts ? "Order" : null,
+                                                        offer.combinesWith.shippingDiscounts ? "Shipping" : null,
+                                                    ].filter(Boolean).length > 0
+                                                        ? `Combines with: ${[
+                                                            offer.combinesWith.productDiscounts ? "Product" : null,
+                                                            offer.combinesWith.orderDiscounts ? "Order" : null,
+                                                            offer.combinesWith.shippingDiscounts ? "Shipping" : null,
+                                                        ].filter(Boolean).join(", ")} · Click to edit in Settings`
+                                                        : "Does not combine with other discounts · Click to edit in Settings"}
                                                 </s-tooltip>
-                                                <s-link href="/app/settings">
-                                                    <s-badge tone="info" interestFor={`combo-tip-${offer.numericId}`}>
-                                                        Store-wide
-                                                    </s-badge>
+                                                <s-link href="/app/settings" interestFor={`combo-tip-${offer.numericId}`}>
+                                                    <s-stack direction="inline" gap="small-400" alignItems="center">
+                                                        {/* Product Discounts Icon */}
+                                                        <s-icon
+                                                            type="product-add"
+                                                            size="small"
+                                                            tone={offer.combinesWith.productDiscounts ? "auto" : "subdued"}
+                                                            color={offer.combinesWith.productDiscounts ? "base" : "subdued"}
+                                                        />
+
+                                                        {/* Order Discounts Icon */}
+                                                        <s-icon
+                                                            type="order"
+                                                            size="small"
+                                                            tone={offer.combinesWith.orderDiscounts ? "auto" : "subdued"}
+                                                            color={offer.combinesWith.orderDiscounts ? "base" : "subdued"}
+                                                        />
+
+                                                        {/* Shipping Discounts Icon */}
+                                                        <s-icon
+                                                            type="delivery"
+                                                            size="small"
+                                                            tone={offer.combinesWith.shippingDiscounts ? "auto" : "subdued"}
+                                                            color={offer.combinesWith.shippingDiscounts ? "base" : "subdued"}
+                                                        />
+                                                    </s-stack>
                                                 </s-link>
                                             </s-table-cell>
 

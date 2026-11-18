@@ -2,34 +2,33 @@ import { useState, useEffect, useMemo } from "react";
 import { useLoaderData, useActionData, useSubmit, useNavigation } from "react-router";
 import { useAppBridge, SaveBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
-import BogoWidgetPreview from "./components/Preview/BogoWidgetPreview";
+import VolumeWidgetPreview from "./components/Preview/VolumeWidgetPreview";
 
 // Default settings used as fallback if merchant hasn't saved customizations yet
 const DEFAULT_SETTINGS = {
   content: {
     heading: "{widgettitle}",
-    buttonText: "Add {total} items to Cart",
-    badgeText: "Add {get_qty} items for {discount}",
-    buyTagText: "Buy {buy_qty}/{buy_qty}",
-    getTagText: "Get {get_qty}/{get_qty}",
+    buttonText: "Add {quantity} to Cart",
+    badgeText: "Most popular",
+    savingsText: "Save {amount} ({percentage}% OFF)",
   },
   styles: {
     cardSurface: "#ffffff",
     borderColor: "#e5e7eb",
     borderWidth: 1,
-    borderRadius: 12,
-    badgeBg: "#ede9fe",
-    badgeTextColor: "#6366f1",
-    plusBg: "#ede9fe",
-    plusColor: "#6366f1",
-    buttonBg: "#1f2937",
+    borderRadius: 14,
+    activeBorderColor: "#111827",
+    activeBorderWidth: 2,
+    badgeBg: "#c50707",
+    badgeTextColor: "#ffffff",
+    buttonBg: "#111827",
     buttonTextColor: "#ffffff",
-    buttonBorderRadius: 8,
+    savingsBg: "#ecfdf5",
+    savingsTextColor: "#059669",
   },
   display: {
     showWidgetTitle: true,
     showDivider: true,
-    showPlusIcon: true,
     showBadge: true,
     showSavings: true,
     showAddToCart: true,
@@ -49,10 +48,10 @@ export const loader = async ({ request }) => {
   try {
     const response = await admin.graphql(
       `#graphql
-      query GetBogoWidgetSettingsAndTheme {
+      query GetVolumeWidgetSettingsAndTheme {
         shop {
           id
-          metafield(namespace: "stack_up", key: "bogo_widget_settings") {
+          metafield(namespace: "stack_up", key: "volume_widget_settings") {
             value
           }
         }
@@ -68,26 +67,22 @@ export const loader = async ({ request }) => {
     if (rawMetafield) {
       try {
         savedSettings = JSON.parse(rawMetafield);
-        if (
-          !savedSettings?.content?.heading ||
-          savedSettings?.content?.heading === "Buy 1 Get 1 with 100% off"
-        ) {
-          if (!savedSettings.content) savedSettings.content = {};
+        if (savedSettings?.content?.heading === "Buy more, Save more") {
           savedSettings.content.heading = "{widgettitle}";
         }
       } catch (e) {
-        console.warn("Failed to parse bogo_widget_settings:", e);
+        console.warn("Failed to parse volume_widget_settings:", e);
       }
     }
     const themeNode = json.data?.themes?.nodes?.[0];
     activeThemeId = themeNode?.id?.split("/").pop() || null;
   } catch (err) {
-    console.warn("Error fetching bogo widget settings:", err);
+    console.warn("Error fetching volume widget settings:", err);
   }
 
   const themeEditorUrl = activeThemeId
     ? `https://admin.shopify.com/store/${shopName}/themes/${activeThemeId}/editor?context=apps${
-        clientId ? `&activateAppId=${encodeURIComponent(`${clientId}/bogo-widget`)}` : ""
+        clientId ? `&activateAppId=${encodeURIComponent(`${clientId}/volume-discount`)}` : ""
       }`
     : `https://admin.shopify.com/store/${shopName}/themes/current/editor?context=apps`;
 
@@ -95,7 +90,6 @@ export const loader = async ({ request }) => {
     settings: savedSettings || DEFAULT_SETTINGS,
     themeEditorUrl,
     shopName,
-    shop: session.shop,
   };
 };
 
@@ -126,7 +120,7 @@ export const action = async ({ request }) => {
 
     const mutationRes = await admin.graphql(
       `#graphql
-      mutation SaveBogoWidgetSettings($metafields: [MetafieldsSetInput!]!) {
+      mutation SaveVolumeWidgetSettings($metafields: [MetafieldsSetInput!]!) {
         metafieldsSet(metafields: $metafields) {
           metafields {
             id
@@ -144,7 +138,7 @@ export const action = async ({ request }) => {
             {
               ownerId: shopId,
               namespace: "stack_up",
-              key: "bogo_widget_settings",
+              key: "volume_widget_settings",
               type: "json",
               value: String(rawPayload),
             },
@@ -161,13 +155,13 @@ export const action = async ({ request }) => {
 
     return { success: true };
   } catch (err) {
-    console.error("Error saving bogo widget settings:", err);
+    console.error("Error saving volume widget settings:", err);
     return { error: "Failed to save widget settings. Please try again." };
   }
 };
 
-export default function BogoCustomize() {
-  const { settings: initialSettings, themeEditorUrl, shopName, shop } = useLoaderData();
+export default function VolumeDiscountCustomize() {
+  const { settings: initialSettings, themeEditorUrl } = useLoaderData();
   const actionData = useActionData();
   const submit = useSubmit();
   const navigation = useNavigation();
@@ -180,7 +174,7 @@ export default function BogoCustomize() {
   const [styles, setStyles] = useState(initialSettings.styles || DEFAULT_SETTINGS.styles);
   const [display, setDisplay] = useState(initialSettings.display || DEFAULT_SETTINGS.display);
 
-  // Accordion Section Expansion State
+  // Accordion Expansion State
   const [expanded, setExpanded] = useState({
     content: true,
     styles: true,
@@ -201,7 +195,7 @@ export default function BogoCustomize() {
     setContent(initialSettings.content || DEFAULT_SETTINGS.content);
     setStyles(initialSettings.styles || DEFAULT_SETTINGS.styles);
     setDisplay(initialSettings.display || DEFAULT_SETTINGS.display);
-    shopify.saveBar?.hide("customize-bogo-widget-savebar");
+    shopify.saveBar?.hide("customize-volume-widget-savebar");
   };
 
   // Handle SaveBar save
@@ -220,20 +214,20 @@ export default function BogoCustomize() {
   useEffect(() => {
     if (actionData?.success) {
       shopify.toast.show("Widget customizations saved!");
-      shopify.saveBar?.hide("customize-bogo-widget-savebar");
+      shopify.saveBar?.hide("customize-volume-widget-savebar");
     } else if (actionData?.error) {
       shopify.toast.show(actionData.error, { isError: true });
     }
   }, [actionData, shopify]);
 
   return (
-    <s-page heading="BOGO & Buy X Get Y Customization">
-      <s-link slot="breadcrumb-actions" href="/app/offers">
-        All Discounts
+    <s-page heading="Quantity Breaks Customization">
+      <s-link slot="breadcrumb-actions" href="/app/customize">
+        Customization
       </s-link>
 
       {/* SaveBar from App Bridge */}
-      <SaveBar id="customize-bogo-widget-savebar" open={isDirty}>
+      <SaveBar id="customize-volume-widget-savebar" open={isDirty}>
         <button variant="primary" onClick={handleSave} disabled={isSaving}>
           {isSaving ? "Saving..." : "Save"}
         </button>
@@ -256,7 +250,7 @@ export default function BogoCustomize() {
           {/* Top Banner / Theme Integration Alert */}
           <s-banner tone="info" heading="Storefront Theme Block">
             <s-paragraph>
-              Customize how your BOGO and Buy X Get Y deals look on product pages. These settings automatically apply to all active BOGO offers.
+              Customize how your Quantity Breaks / Volume Discount cards look on product pages. These settings automatically apply to all active volume offers.
             </s-paragraph>
             <s-button
               slot="secondary-actions"
@@ -301,31 +295,23 @@ export default function BogoCustomize() {
                     value={content.heading}
                     onInput={(e) => setContent({ ...content, heading: e.target.value })}
                     placeholder="e.g. {widgettitle}"
-                    details="Use {widgettitle} to dynamically display each offer's individual title set in the offer editor."
+                    details="Use {widgettitle} to dynamically display each offer's individual title set in the offer editor (defaults to 'Buy more, Save more')."
                   ></s-text-field>
+
                   <s-text-field
-                    label="Button Text (Use {total} variable)"
+                    label="Button Text (Use {quantity} variable)"
                     value={content.buttonText}
                     onInput={(e) => setContent({ ...content, buttonText: e.target.value })}
-                    placeholder="Add {total} items to Cart"
+                    placeholder="Add {quantity} to Cart"
+                    details="Use {quantity} to dynamically insert the number of items for the currently selected tier."
                   ></s-text-field>
+
                   <s-text-field
-                    label="Reward Badge Label (Use {get_qty} and {discount} variables)"
+                    label="Default Badge Ribbon Label"
                     value={content.badgeText}
                     onInput={(e) => setContent({ ...content, badgeText: e.target.value })}
-                    placeholder="Add {get_qty} items for {discount}"
-                  ></s-text-field>
-                  <s-text-field
-                    label="Buy Step Tag"
-                    value={content.buyTagText}
-                    onInput={(e) => setContent({ ...content, buyTagText: e.target.value })}
-                    placeholder="Buy {buy_qty}/{buy_qty}"
-                  ></s-text-field>
-                  <s-text-field
-                    label="Get Step Tag"
-                    value={content.getTagText}
-                    onInput={(e) => setContent({ ...content, getTagText: e.target.value })}
-                    placeholder="Get {get_qty}/{get_qty}"
+                    placeholder="Most popular"
+                    details="Default text displayed on highlight ribbons if not specified per tier."
                   ></s-text-field>
                 </s-grid>
               </>
@@ -399,37 +385,40 @@ export default function BogoCustomize() {
 
                   <s-divider />
 
-                  {/* Reward Badge Colors */}
+                  {/* Active Card Border Color */}
                   <s-grid gridTemplateColumns="1fr 1fr" gap="base">
                     <s-color-field
-                      label="Reward Badge Background"
+                      label="Active Tier Border Color"
+                      value={styles.activeBorderColor}
+                      onInput={(e) => setStyles({ ...styles, activeBorderColor: e.target.value })}
+                      onChange={(e) => setStyles({ ...styles, activeBorderColor: e.target.value })}
+                    ></s-color-field>
+
+                    <s-number-field
+                      label="Active Border Width (px)"
+                      value={String(styles.activeBorderWidth || 2)}
+                      min={1}
+                      max={8}
+                      onInput={(e) => setStyles({ ...styles, activeBorderWidth: Number(e.target.value) })}
+                    ></s-number-field>
+                  </s-grid>
+
+                  <s-divider />
+
+                  {/* Badge Ribbon Colors */}
+                  <s-grid gridTemplateColumns="1fr 1fr" gap="base">
+                    <s-color-field
+                      label="Badge Ribbon Background"
                       value={styles.badgeBg}
                       onInput={(e) => setStyles({ ...styles, badgeBg: e.target.value })}
                       onChange={(e) => setStyles({ ...styles, badgeBg: e.target.value })}
                     ></s-color-field>
 
                     <s-color-field
-                      label="Reward Badge Text Color"
+                      label="Badge Ribbon Text"
                       value={styles.badgeTextColor}
                       onInput={(e) => setStyles({ ...styles, badgeTextColor: e.target.value })}
                       onChange={(e) => setStyles({ ...styles, badgeTextColor: e.target.value })}
-                    ></s-color-field>
-                  </s-grid>
-
-                  {/* Plus Icon Colors */}
-                  <s-grid gridTemplateColumns="1fr 1fr" gap="base">
-                    <s-color-field
-                      label="Plus (+) Icon Background"
-                      value={styles.plusBg || "#ede9fe"}
-                      onInput={(e) => setStyles({ ...styles, plusBg: e.target.value })}
-                      onChange={(e) => setStyles({ ...styles, plusBg: e.target.value })}
-                    ></s-color-field>
-
-                    <s-color-field
-                      label="Plus (+) Icon Color"
-                      value={styles.plusColor || "#6366f1"}
-                      onInput={(e) => setStyles({ ...styles, plusColor: e.target.value })}
-                      onChange={(e) => setStyles({ ...styles, plusColor: e.target.value })}
                     ></s-color-field>
                   </s-grid>
 
@@ -452,13 +441,24 @@ export default function BogoCustomize() {
                     ></s-color-field>
                   </s-grid>
 
-                  <s-number-field
-                    label="Button Corner Radius (px)"
-                    value={String(styles.buttonBorderRadius)}
-                    min={0}
-                    max={50}
-                    onInput={(e) => setStyles({ ...styles, buttonBorderRadius: Number(e.target.value) })}
-                  ></s-number-field>
+                  <s-divider />
+
+                  {/* Total Savings Banner Colors */}
+                  <s-grid gridTemplateColumns="1fr 1fr" gap="base">
+                    <s-color-field
+                      label="Savings Banner Background"
+                      value={styles.savingsBg}
+                      onInput={(e) => setStyles({ ...styles, savingsBg: e.target.value })}
+                      onChange={(e) => setStyles({ ...styles, savingsBg: e.target.value })}
+                    ></s-color-field>
+
+                    <s-color-field
+                      label="Savings Banner Text"
+                      value={styles.savingsTextColor}
+                      onInput={(e) => setStyles({ ...styles, savingsTextColor: e.target.value })}
+                      onChange={(e) => setStyles({ ...styles, savingsTextColor: e.target.value })}
+                    ></s-color-field>
+                  </s-grid>
                 </s-grid>
               </>
             )}
@@ -506,26 +506,20 @@ export default function BogoCustomize() {
                   ></s-checkbox>
 
                   <s-checkbox
-                    label="Show plus (+) separator icon"
-                    checked={Boolean(display.showPlusIcon)}
-                    onChange={(e) => setDisplay({ ...display, showPlusIcon: e.target.checked })}
-                  ></s-checkbox>
-
-                  <s-checkbox
-                    label="Show reward discount badge"
+                    label="Show badge ribbon (e.g. Most popular)"
                     checked={Boolean(display.showBadge)}
                     onChange={(e) => setDisplay({ ...display, showBadge: e.target.checked })}
                   ></s-checkbox>
 
                   <s-checkbox
-                    label="Show total & savings summary"
+                    label="Show Total Savings highlight banner"
                     checked={Boolean(display.showSavings)}
                     onChange={(e) => setDisplay({ ...display, showSavings: e.target.checked })}
                   ></s-checkbox>
 
                   <s-checkbox
                     label="Show Add to Cart button inside widget"
-                    checked={Boolean(display.showAddToCart !== false)}
+                    checked={Boolean(display.showAddToCart)}
                     onChange={(e) => setDisplay({ ...display, showAddToCart: e.target.checked })}
                   ></s-checkbox>
                 </s-grid>
@@ -574,7 +568,7 @@ export default function BogoCustomize() {
                   margin: "0 auto",
                 }}
               >
-                {shopName || "store"}.myshopify.com/products/summer-sandals
+                store.myshopify.com/products/premium-hoodie
               </div>
             </div>
 
@@ -595,7 +589,7 @@ export default function BogoCustomize() {
                     fontSize: "28px",
                   }}
                 >
-                  👠
+                  👕
                 </div>
                 <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: "6px" }}>
                   <div style={{ height: "14px", width: "70%", background: "#e5e7eb", borderRadius: "4px" }} />
@@ -614,20 +608,27 @@ export default function BogoCustomize() {
               </div>
 
               {/* LIVE WIDGET PREVIEW */}
-              <BogoWidgetPreview
-                dealType="BUY_X_GET_Y"
-                buyQty={1}
-                getQty={1}
-                discountType="PERCENTAGE"
-                discountValue={50}
-                widgetTitle="Buy 1 Get 1 Special Deal"
+              <VolumeWidgetPreview
+                title="Diwali Bumper Offer"
+                widgetTitle="Buy more, Save more"
+                products={[
+                  {
+                    title: "Premium Essential Hoodie",
+                    price: "125.40",
+                    image: "https://cdn.shopify.com/s/files/1/0533/2089/files/placeholder-images-lifestyle-1_large.png",
+                  },
+                ]}
+                tiers={[
+                  { quantity: 1, discountType: "none", value: 0, title: "Buy 1", label: "Standard", badge: "", isDefault: true },
+                  { quantity: 2, discountType: "percent", value: 10, title: "Buy 2", label: "Save 10%", badge: "Most popular", isDefault: false },
+                  { quantity: 3, discountType: "percent", value: 20, title: "Buy 3+", label: "Save 20%", badge: "", isDefault: false },
+                ]}
+                asSection={true}
                 widgetSettings={{
                   content,
                   styles,
                   display,
                 }}
-                shopDomain={shop}
-                asSection={false}
               />
             </div>
           </div>
@@ -636,3 +637,4 @@ export default function BogoCustomize() {
     </s-page>
   );
 }
+

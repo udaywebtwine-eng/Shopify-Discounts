@@ -2,31 +2,36 @@ import { useState, useEffect, useMemo } from "react";
 import { useLoaderData, useActionData, useSubmit, useNavigation } from "react-router";
 import { useAppBridge, SaveBar } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
+import BogoWidgetPreview from "./components/Preview/BogoWidgetPreview";
 
 // Default settings used as fallback if merchant hasn't saved customizations yet
 const DEFAULT_SETTINGS = {
   content: {
     heading: "{widgettitle}",
-    buttonText: "Add Both to Cart",
-    badgeText: "Save {percentage}% OFF",
-    subProductLabel: "Pair with:",
+    buttonText: "Add {total} items to Cart",
+    badgeText: "Add {get_qty} items for {discount}",
+    buyTagText: "Buy {buy_qty}/{buy_qty}",
+    getTagText: "Get {get_qty}/{get_qty}",
   },
   styles: {
     cardSurface: "#ffffff",
     borderColor: "#e5e7eb",
     borderWidth: 1,
     borderRadius: 12,
-    totalBoxBg: "#f9fafb",
     badgeBg: "#ede9fe",
-    badgeTextColor: "#6d28d9",
-    buttonBg: "#111827",
+    badgeTextColor: "#6366f1",
+    plusBg: "#ede9fe",
+    plusColor: "#6366f1",
+    buttonBg: "#1f2937",
     buttonTextColor: "#ffffff",
+    buttonBorderRadius: 8,
   },
   display: {
     showWidgetTitle: true,
-    showTotalBox: true,
+    showDivider: true,
     showPlusIcon: true,
-    showSaleBadge: true,
+    showBadge: true,
+    showSavings: true,
     showAddToCart: true,
   },
 };
@@ -44,10 +49,10 @@ export const loader = async ({ request }) => {
   try {
     const response = await admin.graphql(
       `#graphql
-      query GetWidgetSettingsAndTheme {
+      query GetBogoWidgetSettingsAndTheme {
         shop {
           id
-          metafield(namespace: "stack_up", key: "paired_widget_settings") {
+          metafield(namespace: "stack_up", key: "bogo_widget_settings") {
             value
           }
         }
@@ -65,30 +70,32 @@ export const loader = async ({ request }) => {
         savedSettings = JSON.parse(rawMetafield);
         if (
           !savedSettings?.content?.heading ||
-          savedSettings?.content?.heading === "Frequently Bought Together"
+          savedSettings?.content?.heading === "Buy 1 Get 1 with 100% off"
         ) {
           if (!savedSettings.content) savedSettings.content = {};
           savedSettings.content.heading = "{widgettitle}";
         }
       } catch (e) {
-        console.warn("Failed to parse paired_widget_settings:", e);
+        console.warn("Failed to parse bogo_widget_settings:", e);
       }
     }
     const themeNode = json.data?.themes?.nodes?.[0];
     activeThemeId = themeNode?.id?.split("/").pop() || null;
   } catch (err) {
-    console.warn("Error fetching widget settings:", err);
+    console.warn("Error fetching bogo widget settings:", err);
   }
 
   const themeEditorUrl = activeThemeId
-    ? `https://admin.shopify.com/store/${shopName}/themes/${activeThemeId}/editor?context=apps${clientId ? `&activateAppId=${encodeURIComponent(`${clientId}/app-embed`)}` : ""
-    }`
+    ? `https://admin.shopify.com/store/${shopName}/themes/${activeThemeId}/editor?context=apps${
+        clientId ? `&activateAppId=${encodeURIComponent(`${clientId}/bogo-widget`)}` : ""
+      }`
     : `https://admin.shopify.com/store/${shopName}/themes/current/editor?context=apps`;
 
   return {
     settings: savedSettings || DEFAULT_SETTINGS,
     themeEditorUrl,
     shopName,
+    shop: session.shop,
   };
 };
 
@@ -119,7 +126,7 @@ export const action = async ({ request }) => {
 
     const mutationRes = await admin.graphql(
       `#graphql
-      mutation SaveWidgetSettings($metafields: [MetafieldsSetInput!]!) {
+      mutation SaveBogoWidgetSettings($metafields: [MetafieldsSetInput!]!) {
         metafieldsSet(metafields: $metafields) {
           metafields {
             id
@@ -137,7 +144,7 @@ export const action = async ({ request }) => {
             {
               ownerId: shopId,
               namespace: "stack_up",
-              key: "paired_widget_settings",
+              key: "bogo_widget_settings",
               type: "json",
               value: String(rawPayload),
             },
@@ -154,13 +161,13 @@ export const action = async ({ request }) => {
 
     return { success: true };
   } catch (err) {
-    console.error("Error saving widget settings:", err);
+    console.error("Error saving bogo widget settings:", err);
     return { error: "Failed to save widget settings. Please try again." };
   }
 };
 
-export default function PairedProductsCustomize() {
-  const { settings: initialSettings, themeEditorUrl } = useLoaderData();
+export default function BogoCustomize() {
+  const { settings: initialSettings, themeEditorUrl, shopName, shop } = useLoaderData();
   const actionData = useActionData();
   const submit = useSubmit();
   const navigation = useNavigation();
@@ -194,7 +201,7 @@ export default function PairedProductsCustomize() {
     setContent(initialSettings.content || DEFAULT_SETTINGS.content);
     setStyles(initialSettings.styles || DEFAULT_SETTINGS.styles);
     setDisplay(initialSettings.display || DEFAULT_SETTINGS.display);
-    shopify.saveBar?.hide("customize-paired-widget-savebar");
+    shopify.saveBar?.hide("customize-bogo-widget-savebar");
   };
 
   // Handle SaveBar save
@@ -213,20 +220,20 @@ export default function PairedProductsCustomize() {
   useEffect(() => {
     if (actionData?.success) {
       shopify.toast.show("Widget customizations saved!");
-      shopify.saveBar?.hide("customize-paired-widget-savebar");
+      shopify.saveBar?.hide("customize-bogo-widget-savebar");
     } else if (actionData?.error) {
       shopify.toast.show(actionData.error, { isError: true });
     }
   }, [actionData, shopify]);
 
   return (
-    <s-page heading="Paired Products Customization">
-      <s-link slot="breadcrumb-actions" href="/app/offers">
-        All Discounts
+    <s-page heading="BOGO & Buy X Get Y Customization">
+      <s-link slot="breadcrumb-actions" href="/app/customize">
+        Customization
       </s-link>
 
       {/* SaveBar from App Bridge */}
-      <SaveBar id="customize-paired-widget-savebar" open={isDirty}>
+      <SaveBar id="customize-bogo-widget-savebar" open={isDirty}>
         <button variant="primary" onClick={handleSave} disabled={isSaving}>
           {isSaving ? "Saving..." : "Save"}
         </button>
@@ -249,7 +256,7 @@ export default function PairedProductsCustomize() {
           {/* Top Banner / Theme Integration Alert */}
           <s-banner tone="info" heading="Storefront Theme Block">
             <s-paragraph>
-              Customize how your Paired Product bundle looks on product pages. Changes apply to all active paired offers.
+              Customize how your BOGO and Buy X Get Y deals look on product pages. These settings automatically apply to all active BOGO offers.
             </s-paragraph>
             <s-button
               slot="secondary-actions"
@@ -297,22 +304,28 @@ export default function PairedProductsCustomize() {
                     details="Use {widgettitle} to dynamically display each offer's individual title set in the offer editor."
                   ></s-text-field>
                   <s-text-field
-                    label="Button Text"
+                    label="Button Text (Use {total} variable)"
                     value={content.buttonText}
                     onInput={(e) => setContent({ ...content, buttonText: e.target.value })}
-                    placeholder="Add Both to Cart"
+                    placeholder="Add {total} items to Cart"
                   ></s-text-field>
                   <s-text-field
-                    label="Badge Label (Use {percentage} variable)"
+                    label="Reward Badge Label (Use {get_qty} and {discount} variables)"
                     value={content.badgeText}
                     onInput={(e) => setContent({ ...content, badgeText: e.target.value })}
-                    placeholder="Save {percentage}% OFF"
+                    placeholder="Add {get_qty} items for {discount}"
                   ></s-text-field>
                   <s-text-field
-                    label="Sub-Product Prefix"
-                    value={content.subProductLabel}
-                    onInput={(e) => setContent({ ...content, subProductLabel: e.target.value })}
-                    placeholder="Pair with:"
+                    label="Buy Step Tag"
+                    value={content.buyTagText}
+                    onInput={(e) => setContent({ ...content, buyTagText: e.target.value })}
+                    placeholder="Buy {buy_qty}/{buy_qty}"
+                  ></s-text-field>
+                  <s-text-field
+                    label="Get Step Tag"
+                    value={content.getTagText}
+                    onInput={(e) => setContent({ ...content, getTagText: e.target.value })}
+                    placeholder="Get {get_qty}/{get_qty}"
                   ></s-text-field>
                 </s-grid>
               </>
@@ -384,30 +397,39 @@ export default function PairedProductsCustomize() {
                     ></s-number-field>
                   </s-grid>
 
-                  {/* Total Box Background */}
-                  <s-color-field
-                    label="Total Box Background"
-                    value={styles.totalBoxBg}
-                    onInput={(e) => setStyles({ ...styles, totalBoxBg: e.target.value })}
-                    onChange={(e) => setStyles({ ...styles, totalBoxBg: e.target.value })}
-                  ></s-color-field>
-
                   <s-divider />
 
-                  {/* Badge Colors */}
+                  {/* Reward Badge Colors */}
                   <s-grid gridTemplateColumns="1fr 1fr" gap="base">
                     <s-color-field
-                      label="Badge Background"
+                      label="Reward Badge Background"
                       value={styles.badgeBg}
                       onInput={(e) => setStyles({ ...styles, badgeBg: e.target.value })}
                       onChange={(e) => setStyles({ ...styles, badgeBg: e.target.value })}
                     ></s-color-field>
 
                     <s-color-field
-                      label="Badge Text Color"
+                      label="Reward Badge Text Color"
                       value={styles.badgeTextColor}
                       onInput={(e) => setStyles({ ...styles, badgeTextColor: e.target.value })}
                       onChange={(e) => setStyles({ ...styles, badgeTextColor: e.target.value })}
+                    ></s-color-field>
+                  </s-grid>
+
+                  {/* Plus Icon Colors */}
+                  <s-grid gridTemplateColumns="1fr 1fr" gap="base">
+                    <s-color-field
+                      label="Plus (+) Icon Background"
+                      value={styles.plusBg || "#ede9fe"}
+                      onInput={(e) => setStyles({ ...styles, plusBg: e.target.value })}
+                      onChange={(e) => setStyles({ ...styles, plusBg: e.target.value })}
+                    ></s-color-field>
+
+                    <s-color-field
+                      label="Plus (+) Icon Color"
+                      value={styles.plusColor || "#6366f1"}
+                      onInput={(e) => setStyles({ ...styles, plusColor: e.target.value })}
+                      onChange={(e) => setStyles({ ...styles, plusColor: e.target.value })}
                     ></s-color-field>
                   </s-grid>
 
@@ -429,6 +451,14 @@ export default function PairedProductsCustomize() {
                       onChange={(e) => setStyles({ ...styles, buttonTextColor: e.target.value })}
                     ></s-color-field>
                   </s-grid>
+
+                  <s-number-field
+                    label="Button Corner Radius (px)"
+                    value={String(styles.buttonBorderRadius)}
+                    min={0}
+                    max={50}
+                    onInput={(e) => setStyles({ ...styles, buttonBorderRadius: Number(e.target.value) })}
+                  ></s-number-field>
                 </s-grid>
               </>
             )}
@@ -470,9 +500,9 @@ export default function PairedProductsCustomize() {
                   ></s-checkbox>
 
                   <s-checkbox
-                    label="Show total & savings summary box"
-                    checked={Boolean(display.showTotalBox)}
-                    onChange={(e) => setDisplay({ ...display, showTotalBox: e.target.checked })}
+                    label="Show divider line next to title"
+                    checked={Boolean(display.showDivider)}
+                    onChange={(e) => setDisplay({ ...display, showDivider: e.target.checked })}
                   ></s-checkbox>
 
                   <s-checkbox
@@ -482,9 +512,15 @@ export default function PairedProductsCustomize() {
                   ></s-checkbox>
 
                   <s-checkbox
-                    label="Show discount sale badge"
-                    checked={Boolean(display.showSaleBadge)}
-                    onChange={(e) => setDisplay({ ...display, showSaleBadge: e.target.checked })}
+                    label="Show reward discount badge"
+                    checked={Boolean(display.showBadge)}
+                    onChange={(e) => setDisplay({ ...display, showBadge: e.target.checked })}
+                  ></s-checkbox>
+
+                  <s-checkbox
+                    label="Show total & savings summary"
+                    checked={Boolean(display.showSavings)}
+                    onChange={(e) => setDisplay({ ...display, showSavings: e.target.checked })}
                   ></s-checkbox>
 
                   <s-checkbox
@@ -498,7 +534,7 @@ export default function PairedProductsCustomize() {
           </s-section>
         </div>
 
-        {/* ===================== RIGHT COLUMN: LIVE STOREFRONT PREVIEW ===================== */}
+        {/* ===================== RIGHT COLUMN: STICKY LIVE PREVIEW ===================== */}
         <div style={{ position: "sticky", top: "20px", minWidth: 0 }}>
           <div
             style={{
@@ -534,11 +570,11 @@ export default function PairedProductsCustomize() {
                   color: "#6b7280",
                   flex: 1,
                   textAlign: "center",
-                  maxWidth: "240px",
+                  maxWidth: "260px",
                   margin: "0 auto",
                 }}
               >
-                store.myshopify.com/products/everyday-tee
+                {shopName || "store"}.myshopify.com/products/summer-sandals
               </div>
             </div>
 
@@ -559,7 +595,7 @@ export default function PairedProductsCustomize() {
                     fontSize: "28px",
                   }}
                 >
-                  👕
+                  👠
                 </div>
                 <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: "6px" }}>
                   <div style={{ height: "14px", width: "70%", background: "#e5e7eb", borderRadius: "4px" }} />
@@ -577,277 +613,22 @@ export default function PairedProductsCustomize() {
                 </div>
               </div>
 
-              {/* ================= LIVE WIDGET PREVIEW CARD ================= */}
-              <div
-                style={{
-                  background: styles.cardSurface,
-                  borderRadius: `${styles.borderRadius}px`,
-                  border: `${styles.borderWidth}px solid ${styles.borderColor}`,
-                  padding: "18px",
-                  boxShadow: "0 4px 20px -2px rgba(0,0,0,0.05), 0 2px 6px -1px rgba(0,0,0,0.02)",
-                  transition: "all 0.15s ease",
+              {/* LIVE WIDGET PREVIEW */}
+              <BogoWidgetPreview
+                dealType="BUY_X_GET_Y"
+                buyQty={1}
+                getQty={1}
+                discountType="PERCENTAGE"
+                discountValue={50}
+                widgetTitle="Buy 1 Get 1 Special Deal"
+                widgetSettings={{
+                  content,
+                  styles,
+                  display,
                 }}
-              >
-                {/* Widget Heading */}
-                {display.showWidgetTitle && (
-                  <div
-                    style={{
-                      fontSize: "15px",
-                      fontWeight: 700,
-                      color: "#0f172a",
-                      marginBottom: "14px",
-                      display: "flex",
-                      alignItems: "center",
-                      gap: "6px",
-                    }}
-                  >
-                    <span>✨</span>
-                    <span>
-                      {(content.heading || "{widgettitle}")
-                        .replace(/{widgettitle}/gi, "Frequently Bought Together")
-                        .replace(/{widgetname}/gi, "Summer Combo")
-                        .replace(/{percentage}/gi, "20")}
-                    </span>
-                  </div>
-                )}
-
-                {/* Products Stack */}
-                <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-                  {/* Item 1: Main Product */}
-                  <div
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: "12px",
-                      padding: "10px 12px",
-                      background: "#ffffff",
-                      border: `1px solid ${styles.borderColor}`,
-                      borderRadius: `${Math.max(6, styles.borderRadius - 4)}px`,
-                      boxShadow: "0 1px 2px rgba(0,0,0,0.02)",
-                    }}
-                  >
-                    <div
-                      style={{
-                        width: "20px",
-                        height: "20px",
-                        borderRadius: "5px",
-                        background: styles.buttonBg,
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        color: styles.buttonTextColor,
-                        flexShrink: 0,
-                      }}
-                    >
-                      <svg width="11" height="9" viewBox="0 0 11 9" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                        <polyline points="1.5 4.5 4 7 9.5 1.5" />
-                      </svg>
-                    </div>
-                    <div
-                      style={{
-                        width: "48px",
-                        height: "48px",
-                        background: "#f8fafc",
-                        border: "1px solid #f1f5f9",
-                        borderRadius: "8px",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        fontSize: "22px",
-                        flexShrink: 0,
-                      }}
-                    >
-                      👕
-                    </div>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: "14px", fontWeight: 600, color: "#0f172a" }}>Everyday Cotton Tee</div>
-                      <div style={{ fontSize: "12px", color: "#64748b", marginTop: "2px" }}>Size: M • White</div>
-                      <div style={{ marginTop: "4px" }}>
-                        <span style={{ fontSize: "11px", fontWeight: 600, background: "#f1f5f9", color: "#334155", padding: "2px 8px", borderRadius: "12px", border: "1px solid #e2e8f0" }}>
-                          Qty: 2
-                        </span>
-                      </div>
-                    </div>
-                    <div style={{ textAlign: "right", flexShrink: 0 }}>
-                      <div style={{ fontSize: "15px", fontWeight: 700, color: "#0f172a" }}>$48.00</div>
-                      <div style={{ fontSize: "11px", color: "#64748b", fontWeight: 500, marginTop: "2px" }}>($24.00 each)</div>
-                    </div>
-                  </div>
-
-                  {/* Plus Icon Separator */}
-                  {display.showPlusIcon && (
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "8px", margin: "-2px 0" }}>
-                      <div style={{ flex: 1, height: "1px", background: "#f1f5f9" }} />
-                      <div
-                        style={{
-                          width: "24px",
-                          height: "24px",
-                          borderRadius: "50%",
-                          background: styles.plusIconBg,
-                          color: styles.plusIconColor,
-                          border: `1px solid ${styles.borderColor}`,
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          fontSize: "14px",
-                          fontWeight: "bold",
-                          boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
-                          flexShrink: 0,
-                        }}
-                      >
-                        +
-                      </div>
-                      <div style={{ flex: 1, height: "1px", background: "#f1f5f9" }} />
-                    </div>
-                  )}
-
-                  {/* Item 2: Sub / Add-on Product */}
-                  <div
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: "12px",
-                      padding: "10px 12px",
-                      background: "#ffffff",
-                      border: `1px solid ${styles.borderColor}`,
-                      borderRadius: `${Math.max(6, styles.borderRadius - 4)}px`,
-                      boxShadow: "0 1px 2px rgba(0,0,0,0.02)",
-                    }}
-                  >
-                    <div
-                      style={{
-                        width: "20px",
-                        height: "20px",
-                        borderRadius: "5px",
-                        background: styles.buttonBg,
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        color: styles.buttonTextColor,
-                        flexShrink: 0,
-                      }}
-                    >
-                      <svg width="11" height="9" viewBox="0 0 11 9" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                        <polyline points="1.5 4.5 4 7 9.5 1.5" />
-                      </svg>
-                    </div>
-                    <div
-                      style={{
-                        width: "48px",
-                        height: "48px",
-                        background: "#f8fafc",
-                        border: "1px solid #f1f5f9",
-                        borderRadius: "8px",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        fontSize: "22px",
-                        flexShrink: 0,
-                      }}
-                    >
-                      🧢
-                    </div>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: "14px", fontWeight: 600, color: "#0f172a" }}>Summer Classic Cap</div>
-                      <div style={{ fontSize: "12px", color: "#64748b", marginTop: "2px" }}>Color: Navy Blue</div>
-                    </div>
-                    <div style={{ textAlign: "right", flexShrink: 0 }}>
-                      <div style={{ fontSize: "15px", fontWeight: 700, color: "#0f172a" }}>$24.00</div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Total & Savings Box */}
-                {display.showTotalBox && (
-                  <div
-                    style={{
-                      marginTop: "14px",
-                      padding: "12px 14px",
-                      background: styles.totalBoxBg,
-                      borderRadius: `${Math.max(6, styles.borderRadius - 4)}px`,
-                      border: `1px solid ${styles.totalBoxBorderColor}`,
-                      display: "flex",
-                      justifyContent: "space-between",
-                      alignItems: "center",
-                      gap: "10px",
-                    }}
-                  >
-                    <div>
-                      <div style={{ fontSize: "11px", fontWeight: 600, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.04em" }}>Bundle Subtotal</div>
-                      <div style={{ display: "flex", alignItems: "baseline", gap: "8px", marginTop: "3px" }}>
-                        <span style={{ fontSize: "18px", fontWeight: 800, color: "#0f172a" }}>$57.60</span>
-                        <span style={{ fontSize: "13px", color: "#94a3b8", textDecoration: "line-through" }}>$72.00</span>
-                      </div>
-                    </div>
-                    {display.showSaleBadge && (
-                      <div style={{ textAlign: "right" }}>
-                        <span
-                          style={{
-                            background: styles.badgeBg || "#ede9fe",
-                            color: styles.badgeTextColor || "#6d28d9",
-                            fontSize: "11px",
-                            fontWeight: 700,
-                            padding: "5px 10px",
-                            borderRadius: "20px",
-                            display: "inline-flex",
-                            alignItems: "center",
-                            gap: "4px",
-                            boxShadow: "0 1px 2px rgba(0, 0, 0, 0.05)",
-                          }}
-                        >
-                          <span>⚡</span>
-                          <span>{content.badgeText ? content.badgeText.replace("{percentage}", "20") : "Save 20% OFF"}</span>
-                        </span>
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* Primary Add to Cart Action */}
-                {display.showAddToCart !== false && (
-                  <button
-                    type="button"
-                    style={{
-                      width: "100%",
-                      marginTop: "14px",
-                      padding: "14px 20px",
-                      background: styles.buttonBg,
-                      color: styles.buttonTextColor,
-                      borderRadius: `${styles.borderRadius}px`,
-                      border: "none",
-                      fontWeight: 700,
-                      fontSize: "15px",
-                      cursor: "pointer",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      gap: "8px",
-                      boxShadow: "0 4px 12px rgba(0,0,0,0.12)",
-                      transition: "all 0.15s ease",
-                    }}
-                  >
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z" />
-                      <line x1="3" y1="6" x2="21" y2="6" />
-                      <path d="M16 10a4 4 0 0 1-8 0" />
-                    </svg>
-                    <span>{content.buttonText || "Add Both to Cart"}</span>
-                  </button>
-                )}
-              </div>
-
-              {/* Helper Footer Note */}
-              <div
-                style={{
-                  fontSize: "10px",
-                  color: "#9ca3af",
-                  textAlign: "center",
-                  marginTop: "14px",
-                  fontStyle: "italic",
-                }}
-              >
-                Above preview demonstrates styling in real time. Product images and prices match each offer automatically.
-              </div>
+                shopDomain={shop}
+                asSection={false}
+              />
             </div>
           </div>
         </div>

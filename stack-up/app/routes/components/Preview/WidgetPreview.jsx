@@ -576,7 +576,7 @@ export default function WidgetPreview({
 
         {/* Widget Settings link */}
         <div style={{ textAlign: "center", display: "flex", justifyContent: "center" }}>
-          <s-link href="/app/offers/paired/customize">
+          <s-link href="/app/customize/paired">
             <s-stack direction="inline" alignItems="center" gap="small-400">
               <s-icon type="edit" size="small" />
               Widget Settings
