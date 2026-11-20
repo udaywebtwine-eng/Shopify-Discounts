@@ -176,14 +176,16 @@ export async function removeVolumeMetafieldFromProducts(admin, productIds = []) 
  * so it never consumes shop-level space.
  * 
  * @param {object} admin - Authenticated Shopify GraphQL admin client
+ * @param {string} [shopDomain] - Optional explicit shop domain from session
  */
-export async function syncAllActiveVolumeOffersToShopMetafield(admin) {
+export async function syncAllActiveVolumeOffersToShopMetafield(admin, shopDomain = null) {
   try {
     const shopRes = await admin.graphql(
       `#graphql
       query GetShopId {
         shop {
           id
+          myshopifyDomain
         }
       }`
     );
@@ -191,9 +193,28 @@ export async function syncAllActiveVolumeOffersToShopMetafield(admin) {
     const shopId = shopJson.data?.shop?.id;
     if (!shopId) return;
 
-    // 1. Fetch all Volume offers from DB
+    const canonicalShop = (shopDomain || shopJson.data?.shop?.myshopifyDomain || "").trim();
+    if (!canonicalShop) {
+      console.warn("[VolumeSync] No shop domain available, aborting metafield sync.");
+      return;
+    }
+    const cleanShop = canonicalShop.replace(".myshopify.com", "");
+    const shopFilter = {
+      OR: [
+        { shop: canonicalShop },
+        { shop: cleanShop },
+        { shop: `${cleanShop}.myshopify.com` },
+      ],
+    };
+
+    // 1. Fetch all Volume offers from DB strictly for this authenticated shop
     const allOffers = await prisma.offer.findMany({
-      where: { type: "VOLUME" },
+      where: {
+        AND: [
+          shopFilter,
+          { type: "VOLUME" },
+        ],
+      },
     });
 
     const activeOffers = [];

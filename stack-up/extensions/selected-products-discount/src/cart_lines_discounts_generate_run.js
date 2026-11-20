@@ -94,6 +94,12 @@ export function cartLinesDiscountsGenerateRun(input) {
     return { operations: [] };
   }
 
+  // 1b. Validate discount class (PRODUCT)
+  const discountClasses = input.discount?.discountClasses;
+  if (Array.isArray(discountClasses) && !discountClasses.includes("PRODUCT")) {
+    return { operations: [] };
+  }
+
   // 2. Guard: Cart must have items
   if (!input.cart?.lines?.length) {
     return { operations: [] };
@@ -162,36 +168,37 @@ export function cartLinesDiscountsGenerateRun(input) {
 
         const itemNumId = getNumericId(item.id || item.numericId);
         const reqQty = Math.max(1, parseInt(item.q ?? item.quantity ?? 1, 10) || 1);
-        const totalAddonInCart = cartProductQuantities.get(itemNumId) || 0;
+        const specificVarIds = Array.isArray(item.vids) && item.vids.length > 0
+          ? new Set(item.vids.map((v) => getNumericId(v)))
+          : null;
 
-        if (totalAddonInCart >= reqQty) {
-          const addonLines = cartLinesByProduct.get(itemNumId) || [];
-          const specificVarIds = Array.isArray(item.vids) && item.vids.length > 0
-            ? new Set(item.vids.map((v) => getNumericId(v)))
-            : null;
+        const addonLines = cartLinesByProduct.get(itemNumId) || [];
+        // Filter lines matching the allowed variants (excluding the target product itself)
+        const matchingLines = addonLines.filter((entry) => {
+          if (entry.line.id === line.id) return false;
+          return !specificVarIds || specificVarIds.size === 0 || specificVarIds.has(entry.numVarId);
+        });
 
-          for (const entry of addonLines) {
-            // Target product is sold at regular price; only companion add-on lines qualify
-            if (entry.line.id === line.id) continue;
-
-            const matchesVariant = !specificVarIds || specificVarIds.size === 0 || specificVarIds.has(entry.numVarId);
-            if (matchesVariant) {
-              qualifyingLineIds.push(entry.line.id);
-            }
+        // Strictly verify that required quantity is satisfied by allowed variants
+        const matchingInCart = matchingLines.reduce((sum, entry) => sum + entry.qty, 0);
+        if (matchingInCart >= reqQty) {
+          for (const entry of matchingLines) {
+            qualifyingLineIds.push(entry.line.id);
           }
         }
       }
 
       if (qualifyingLineIds.length > 0) {
         if (offerId) processedOfferIds.add(offerId);
+        const clampedPct = Math.min(100, Math.max(0, discountPercentage));
         candidates.push({
-          message: offer.t || offer.title || `${discountPercentage}% OFF Add-on`,
+          message: offer.t || offer.title || `${clampedPct}% OFF Add-on`,
           targets: qualifyingLineIds.map((id) => ({
             cartLine: { id },
           })),
           value: {
             percentage: {
-              value: discountPercentage,
+              value: clampedPct,
             },
           },
         });
@@ -253,14 +260,15 @@ export function cartLinesDiscountsGenerateRun(input) {
       }
 
       if (qualifyingLineIds.length > 0) {
+        const clampedPercentage = Math.min(100, Math.max(0, percentage));
         candidates.push({
-          message: offer.title || offer.t || `${percentage}% OFF`,
+          message: offer.title || offer.t || `${clampedPercentage}% OFF`,
           targets: qualifyingLineIds.map((id) => ({
             cartLine: { id },
           })),
           value: {
             percentage: {
-              value: percentage,
+              value: clampedPercentage,
             },
           },
         });

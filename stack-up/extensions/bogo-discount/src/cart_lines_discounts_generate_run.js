@@ -65,6 +65,15 @@ export function cartLinesDiscountsGenerateRun(input) {
     return { operations: [] };
   }
 
+  // 1b. Validate discountClasses eligibility
+  const classes = input.discount?.discountClasses || [];
+  const isLineEligible = classes.length === 0 || classes.some(
+    (c) => String(c).toUpperCase() === "PRODUCT" || String(c).toUpperCase() === "ORDER"
+  );
+  if (!isLineEligible) {
+    return { operations: [] };
+  }
+
   // 2. Check if app is enabled globally in merchant settings
   const appStatusMeta = input.shop?.appStatus?.value;
   if (appStatusMeta !== undefined && appStatusMeta !== null && String(appStatusMeta).toLowerCase() === 'false') {
@@ -140,6 +149,12 @@ export function cartLinesDiscountsGenerateRun(input) {
 
     if (dVal <= 0) continue;
 
+    const rawRate = parseFloat(input.presentmentCurrencyRate);
+    const currencyRate = (Number.isFinite(rawRate) && rawRate > 0) ? rawRate : 1.0;
+    const isFixed = (dType === 'F' || dType === 'FIXED' || dType === 'FIXED_AMOUNT');
+    const convertedDVal = isFixed ? (dVal * currencyRate) : dVal;
+    const convertedMaxD = (maxD && Number(maxD) > 0) ? (Number(maxD) * currencyRate) : 0;
+
     const targets = [];
     let totalDiscountEstimate = 0;
 
@@ -180,12 +195,12 @@ export function cartLinesDiscountsGenerateRun(input) {
           },
         });
 
-        // Compute estimated raw discount for this line
+        // Compute estimated raw discount for this line (converted to presentment currency)
         const lineCost = Number(line.cost?.subtotalAmount?.amount) || 0;
         const unitPrice = lineCost / lineQty;
-        const lineDiscount = dType === 'F'
-          ? dVal * targetedFromLine
-          : (unitPrice * targetedFromLine * (dVal / 100));
+        const lineDiscount = isFixed
+          ? convertedDVal * targetedFromLine
+          : (unitPrice * targetedFromLine * (Math.min(100, Math.max(0, dVal)) / 100));
 
         totalDiscountEstimate += lineDiscount;
         remainingRewardToTarget -= targetedFromLine;
@@ -232,11 +247,9 @@ export function cartLinesDiscountsGenerateRun(input) {
 
         const lineCost = Number(line.cost?.subtotalAmount?.amount) || 0;
         const unitPrice = lineCost / lineQty;
-        const currencyRate = parseFloat(input.presentmentCurrencyRate) || 1.0;
-        const convertedDVal = dType === 'F' ? (Number(dVal) * currencyRate) : Number(dVal);
-        const lineDiscount = dType === 'F'
+        const lineDiscount = isFixed
           ? convertedDVal * targetedFromLine
-          : (unitPrice * targetedFromLine * (dVal / 100));
+          : (unitPrice * targetedFromLine * (Math.min(100, Math.max(0, dVal)) / 100));
 
         totalDiscountEstimate += lineDiscount;
         remainingRewardToTarget -= targetedFromLine;
@@ -245,10 +258,7 @@ export function cartLinesDiscountsGenerateRun(input) {
 
     if (targets.length === 0) continue;
 
-    const currencyRate = parseFloat(input.presentmentCurrencyRate) || 1.0;
-    const convertedDVal = dType === 'F' ? (Number(dVal) * currencyRate) : Number(dVal);
-    const convertedMaxD = maxD > 0 ? (Number(maxD) * currencyRate) : 0;
-    const discountDisplayStr = dType === 'F' ? `${convertedDVal.toFixed(2)} OFF` : `${dVal}% OFF`;
+    const discountDisplayStr = isFixed ? `${convertedDVal.toFixed(2)} OFF` : `${dVal}% OFF`;
 
     // Display title on savings pill
     const message = offerTitle || (
@@ -271,7 +281,7 @@ export function cartLinesDiscountsGenerateRun(input) {
         },
       });
     } else {
-      if (dType === 'F') {
+      if (isFixed) {
         candidates.push({
           message,
           targets,
@@ -283,12 +293,13 @@ export function cartLinesDiscountsGenerateRun(input) {
           },
         });
       } else {
+        const clampedPercentage = Math.min(100, Math.max(0, dVal));
         candidates.push({
           message,
           targets,
           value: {
             percentage: {
-              value: Math.min(100, Math.max(0, dVal)),
+              value: clampedPercentage,
             },
           },
         });

@@ -128,7 +128,7 @@ export function normalizeCartGoalTiers(rawTiers = [], currencyCode = "") {
  * @param {object} admin - Authenticated Shopify GraphQL admin client
  * @returns {Promise<{success: boolean, activeOffersCount: number, error?: string}>}
  */
-export async function syncAllActiveCartGoalOffersToShopMetafield(admin) {
+export async function syncAllActiveCartGoalOffersToShopMetafield(admin, shopDomain = null) {
   if (!admin) {
     console.warn("[CartGoalMetafields] Admin client required for synchronization");
     return { success: false, activeOffersCount: 0, error: "Admin client required" };
@@ -154,7 +154,7 @@ export async function syncAllActiveCartGoalOffersToShopMetafield(admin) {
     const shopData = shopJson.data?.shop;
     const shopId = shopData?.id;
     const shopCurrency = shopData?.currencyCode || "";
-    const shopDomain = shopData?.myshopifyDomain || "";
+    const shopDomainFromAdmin = shopData?.myshopifyDomain || "";
     const shopTimezone = shopData?.ianaTimezone || "UTC";
 
     if (!shopId) {
@@ -162,24 +162,30 @@ export async function syncAllActiveCartGoalOffersToShopMetafield(admin) {
     }
 
     const rawWidgetSettings = shopData?.widgetSettings?.value;
-    const cleanShopDomain = shopDomain.replace(/^https?:\/\//, "").replace(/\/.*$/, "").toLowerCase();
+    const canonicalShop = (shopDomain || shopDomainFromAdmin || "").trim();
+    if (!canonicalShop) {
+      console.warn("[CartGoalSync] No shop domain available, aborting metafield sync.");
+      return { success: false, activeOffersCount: 0, error: "No shop domain" };
+    }
+    const cleanShop = canonicalShop.replace(".myshopify.com", "");
+    const shopFilter = {
+      OR: [
+        { shop: canonicalShop },
+        { shop: cleanShop },
+        { shop: `${cleanShop}.myshopify.com` },
+      ],
+    };
 
-    // 2. Query all CART_GOAL offers from PostgreSQL DB
-    let allOffers = await prisma.offer.findMany({
+    // 2. Query all CART_GOAL offers from PostgreSQL DB strictly for this authenticated shop
+    const allOffers = await prisma.offer.findMany({
       where: {
-        type: "CART_GOAL",
-        ...(cleanShopDomain ? { shop: { contains: cleanShopDomain } } : {}),
+        AND: [
+          shopFilter,
+          { type: "CART_GOAL" },
+        ],
       },
       orderBy: { createdAt: "desc" },
     });
-
-    // Fallback if no domain filter matched
-    if (allOffers.length === 0) {
-      allOffers = await prisma.offer.findMany({
-        where: { type: "CART_GOAL" },
-        orderBy: { createdAt: "desc" },
-      });
-    }
 
     // 3. Filter active offers based on timezone & schedule
     const activeOffersPayload = [];

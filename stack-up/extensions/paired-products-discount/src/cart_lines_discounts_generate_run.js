@@ -78,13 +78,14 @@ function getOffersList(input) {
         const bundle = parseJson(bundleMeta);
         if (bundle && typeof bundle === 'object') {
           const idKey = String(bundle.id || bundle.numericId || bundle.t || bundle.title || product.id);
+          const mainQty = Number(bundle.mq || bundle.mainQuantity) || 1;
+          const mainProdEntry = { id: product.id, quantity: mainQty };
+          if (Array.isArray(bundle.mvids) && bundle.mvids.length > 0) {
+            mainProdEntry.vids = bundle.mvids;
+          }
+
           if (!seen.has(idKey)) {
             seen.add(idKey);
-            const mainQty = Number(bundle.mq || bundle.mainQuantity) || 1;
-            const mainProdEntry = { id: product.id, quantity: mainQty };
-            if (Array.isArray(bundle.mvids) && bundle.mvids.length > 0) {
-              mainProdEntry.vids = bundle.mvids;
-            }
             list.push({
               ...bundle,
               mainProducts: [mainProdEntry],
@@ -92,6 +93,15 @@ function getOffersList(input) {
               percentage: Number(bundle.d ?? bundle.percentage) || 0,
               title: bundle.t || bundle.title || '',
             });
+          } else {
+            // Offer already registered for another main product: merge this main product into it!
+            const existingOffer = list.find((o) => String(o.id || o.numericId || o.t || o.title) === idKey);
+            if (existingOffer && Array.isArray(existingOffer.mainProducts)) {
+              const alreadyHas = existingOffer.mainProducts.some((p) => getNumericId(p.id) === getNumericId(product.id));
+              if (!alreadyHas) {
+                existingOffer.mainProducts.push(mainProdEntry);
+              }
+            }
           }
         }
       }
@@ -133,6 +143,12 @@ function getOffersList(input) {
 export function cartLinesDiscountsGenerateRun(input) {
   // 1. Check if StackUp is enabled in the shop metafield
   if (input.shop?.appStatus?.value === 'false') {
+    return { operations: [] };
+  }
+
+  // 1b. Validate discount class (PRODUCT)
+  const discountClasses = input.discount?.discountClasses;
+  if (Array.isArray(discountClasses) && !discountClasses.includes("PRODUCT")) {
     return { operations: [] };
   }
 
@@ -248,18 +264,54 @@ export function cartLinesDiscountsGenerateRun(input) {
       }
     });
 
-    // Check if Main Product is in cart with required quantity
-    const hasMainProduct = Array.from(mainProductIds).some((id) => {
-      const requiredQty = mainProductQuantities[id] || 1;
-      const inCartQty = cartProductQuantities.get(id) || 0;
-      return inCartQty >= requiredQty;
+    // Check if Main Product is in cart with required quantity (strictly respecting variant restrictions)
+    const hasMainProduct = rawMains.some((item) => {
+      const fullId = String(item.id).trim();
+      const numId = getNumericId(fullId);
+      const requiredQty = Number(item.quantity) || 1;
+      const specificVids = item.vids || (Array.isArray(item.variants) && item.variants.length > 0 && typeof item.variants[0] === 'string' ? item.variants : null);
+      const vidsSet = Array.isArray(specificVids) && specificVids.length > 0
+        ? new Set(specificVids.flatMap((v) => [String(typeof v === 'object' ? v.id : v).trim(), getNumericId(typeof v === 'object' ? v.id : v)]))
+        : null;
+
+      let matchingQty = 0;
+      for (const line of input.cart?.lines || []) {
+        if (line.merchandise?.__typename === 'ProductVariant') {
+          const prodId = String(line.merchandise.product?.id || '').trim();
+          const varId = String(line.merchandise.id || '').trim();
+          if (prodId === fullId || getNumericId(prodId) === numId) {
+            if (!vidsSet || vidsSet.has(varId) || vidsSet.has(getNumericId(varId))) {
+              matchingQty += Number(line.quantity) || 1;
+            }
+          }
+        }
+      }
+      return matchingQty >= requiredQty;
     });
 
-    // Check if Sub Product is in cart with required quantity
-    let hasSubProduct = Array.from(subProductIds).some((id) => {
-      const requiredQty = subProductQuantities[id] || 1;
-      const inCartQty = cartProductQuantities.get(id) || 0;
-      return inCartQty >= requiredQty;
+    // Check if Sub Product is in cart with required quantity (strictly respecting variant restrictions)
+    let hasSubProduct = rawSubs.some((item) => {
+      const fullId = String(item.id).trim();
+      const numId = getNumericId(fullId);
+      const requiredQty = Number(item.quantity || item.q) || 1;
+      const specificVids = item.vids || (Array.isArray(item.variants) && item.variants.length > 0 && typeof item.variants[0] === 'string' ? item.variants : null);
+      const vidsSet = Array.isArray(specificVids) && specificVids.length > 0
+        ? new Set(specificVids.flatMap((v) => [String(typeof v === 'object' ? v.id : v).trim(), getNumericId(typeof v === 'object' ? v.id : v)]))
+        : null;
+
+      let matchingQty = 0;
+      for (const line of input.cart?.lines || []) {
+        if (line.merchandise?.__typename === 'ProductVariant') {
+          const prodId = String(line.merchandise.product?.id || '').trim();
+          const varId = String(line.merchandise.id || '').trim();
+          if (prodId === fullId || getNumericId(prodId) === numId) {
+            if (!vidsSet || vidsSet.has(varId) || vidsSet.has(getNumericId(varId))) {
+              matchingQty += Number(line.quantity) || 1;
+            }
+          }
+        }
+      }
+      return matchingQty >= requiredQty;
     });
 
     // Fallback: If no explicit sub products chosen, check product's suggested_products metafield

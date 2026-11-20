@@ -47,13 +47,24 @@ export const loader = async ({ request, params }) => {
   const currentTime = getShopCurrentTime(shopTimezone);
 
   // Find offer in database
+  const cleanShop = shop.replace(".myshopify.com", "");
   const offer = await prisma.offer.findFirst({
     where: {
-      shop,
       type: "CART_GOAL",
-      OR: [
-        { id: idOrNumericId },
-        { numericId: idOrNumericId },
+      AND: [
+        {
+          OR: [
+            { shop },
+            { shop: cleanShop },
+            { shop: `${cleanShop}.myshopify.com` },
+          ],
+        },
+        {
+          OR: [
+            { id: idOrNumericId },
+            { numericId: idOrNumericId },
+          ],
+        },
       ],
     },
   });
@@ -129,20 +140,27 @@ export const action = async ({ request, params }) => {
   const formData = await request.formData();
   const intent = formData.get("intent") || "update";
 
-  const offerWhere = {
-    type: "CART_GOAL",
-    OR: [
-      { id: idOrNumericId },
-      { numericId: idOrNumericId },
-    ],
-  };
-
+  const cleanShop = shop.replace(".myshopify.com", "");
   const existingOffer = await prisma.offer.findFirst({
     where: {
-      ...(shop ? { shop } : {}),
-      ...offerWhere,
+      type: "CART_GOAL",
+      AND: [
+        {
+          OR: [
+            { shop },
+            { shop: cleanShop },
+            { shop: `${cleanShop}.myshopify.com` },
+          ],
+        },
+        {
+          OR: [
+            { id: idOrNumericId },
+            { numericId: idOrNumericId },
+          ],
+        },
+      ],
     },
-  }) || await prisma.offer.findFirst({ where: offerWhere });
+  });
 
   if (!existingOffer) {
     return redirect("/app/offers");

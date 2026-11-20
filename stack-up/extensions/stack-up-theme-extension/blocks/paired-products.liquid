@@ -302,7 +302,12 @@
               data-available="{{ sub_first_v_avail }}"
             >
               <label class="stackup-checkbox-wrap">
-                <input type="checkbox" class="stackup-item-check" data-role="sub" checked>
+                <input
+                  type="checkbox"
+                  class="stackup-item-check"
+                  data-role="sub"
+                  {% if sub_first_v_avail == false %}disabled{% else %}checked{% endif %}
+                >
                 <span class="stackup-custom-check">
                   <svg
                     width="11"

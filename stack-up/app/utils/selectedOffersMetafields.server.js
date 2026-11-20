@@ -145,14 +145,16 @@ export async function removeSelectedMetafieldFromProducts(admin, productIds = []
  * so it never consumes shop-level space or crashes checkout.
  * 
  * @param {object} admin - Authenticated Shopify GraphQL admin client
+ * @param {string} [shopDomain] - Optional explicit shop domain from session
  */
-export async function syncAllActiveSelectedOffersToShopMetafield(admin) {
+export async function syncAllActiveSelectedOffersToShopMetafield(admin, shopDomain = null) {
   try {
     const shopRes = await admin.graphql(
       `#graphql
       query GetShopId {
         shop {
           id
+          myshopifyDomain
         }
       }`
     );
@@ -160,9 +162,28 @@ export async function syncAllActiveSelectedOffersToShopMetafield(admin) {
     const shopId = shopJson.data?.shop?.id;
     if (!shopId) return;
 
-    // 1. Fetch all Selected product offers from DB
+    const canonicalShop = (shopDomain || shopJson.data?.shop?.myshopifyDomain || "").trim();
+    if (!canonicalShop) {
+      console.warn("[SelectedSync] No shop domain available, aborting metafield sync.");
+      return;
+    }
+    const cleanShop = canonicalShop.replace(".myshopify.com", "");
+    const shopFilter = {
+      OR: [
+        { shop: canonicalShop },
+        { shop: cleanShop },
+        { shop: `${cleanShop}.myshopify.com` },
+      ],
+    };
+
+    // 1. Fetch all Selected product offers from DB strictly for this authenticated shop
     const allOffers = await prisma.offer.findMany({
-      where: { type: "SELECTED" },
+      where: {
+        AND: [
+          shopFilter,
+          { type: "SELECTED" },
+        ],
+      },
     });
 
     const activeOffers = [];

@@ -78,13 +78,25 @@ export const loader = async ({ request, params }) => {
     console.warn("Could not load bogo_widget_settings:", err);
   }
 
+  const cleanShop = shop.replace(".myshopify.com", "");
   const offer = await prisma.offer.findFirst({
     where: {
       type: "BOGO",
-      OR: [
-        { numericId },
-        { discountId: `gid://shopify/BogoOffer/${numericId}` },
-        { discountId: { contains: numericId } },
+      AND: [
+        {
+          OR: [
+            { shop },
+            { shop: cleanShop },
+            { shop: `${cleanShop}.myshopify.com` },
+          ],
+        },
+        {
+          OR: [
+            { numericId },
+            { id: numericId },
+            { discountId: `gid://shopify/BogoOffer/${numericId}` },
+          ],
+        },
       ],
     },
   });
@@ -291,16 +303,29 @@ export const loader = async ({ request, params }) => {
 export const action = async ({ request, params }) => {
   const { admin, session } = await authenticate.admin(request);
   const { id: numericId } = params;
+  const shop = session?.shop || "";
   const formData = await request.formData();
   const intent = formData.get("intent") || "update";
 
+  const cleanShop = shop.replace(".myshopify.com", "");
   const offer = await prisma.offer.findFirst({
     where: {
       type: "BOGO",
-      OR: [
-        { numericId },
-        { discountId: `gid://shopify/BogoOffer/${numericId}` },
-        { discountId: { contains: numericId } },
+      AND: [
+        {
+          OR: [
+            { shop },
+            { shop: cleanShop },
+            { shop: `${cleanShop}.myshopify.com` },
+          ],
+        },
+        {
+          OR: [
+            { numericId },
+            { id: numericId },
+            { discountId: `gid://shopify/BogoOffer/${numericId}` },
+          ],
+        },
       ],
     },
   });

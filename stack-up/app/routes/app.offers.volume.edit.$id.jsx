@@ -94,13 +94,25 @@ export const loader = async ({ request, params }) => {
   const timezoneAbbr = getTimezoneAbbr(shopTimezone);
   const currentTime = getShopCurrentTime(shopTimezone);
 
+  const cleanShop = shop.replace(".myshopify.com", "");
   const offer = await prisma.offer.findFirst({
     where: {
       type: "VOLUME",
-      OR: [
-        { numericId },
-        { discountId: `gid://shopify/VolumeOffer/${numericId}` },
-        { discountId: { contains: numericId } },
+      AND: [
+        {
+          OR: [
+            { shop },
+            { shop: cleanShop },
+            { shop: `${cleanShop}.myshopify.com` },
+          ],
+        },
+        {
+          OR: [
+            { numericId },
+            { id: numericId },
+            { discountId: `gid://shopify/VolumeOffer/${numericId}` },
+          ],
+        },
       ],
     },
   });
@@ -221,15 +233,28 @@ export const loader = async ({ request, params }) => {
 export const action = async ({ request, params }) => {
   const { admin, session } = await authenticate.admin(request);
   const { id: numericId } = params;
+  const shop = session?.shop || "";
+  const cleanShop = shop.replace(".myshopify.com", "");
   const formData = await request.formData();
   const intent = formData.get("intent") || "update";
 
   const offerWhere = {
     type: "VOLUME",
-    OR: [
-      { numericId },
-      { discountId: `gid://shopify/VolumeOffer/${numericId}` },
-      { discountId: { contains: numericId } },
+    AND: [
+      {
+        OR: [
+          { shop },
+          { shop: cleanShop },
+          { shop: `${cleanShop}.myshopify.com` },
+        ],
+      },
+      {
+        OR: [
+          { numericId },
+          { id: numericId },
+          { discountId: `gid://shopify/VolumeOffer/${numericId}` },
+        ],
+      },
     ],
   };
 

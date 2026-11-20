@@ -18,7 +18,7 @@ description = "Stores configuration (mode, percentage, product IDs) for the disc
 admin = "merchant_read_write"
 
 [webhooks]
-api_version = "2027-01"
+api_version = "2026-07"
 
 [[webhooks.subscriptions]]
 uri = "/webhooks/app/uninstalled"
@@ -31,10 +31,6 @@ topics = ["app/scopes_update"]
 [[webhooks.subscriptions]]
 uri = "/webhooks/orders/create"
 topics = ["orders/create"]
-
-[[webhooks.subscriptions]]
-uri = "/webhooks/themes/publish"
-topics = ["themes/publish"]
 
 [auth]
 redirect_urls = ["https://example.com/api/auth"]

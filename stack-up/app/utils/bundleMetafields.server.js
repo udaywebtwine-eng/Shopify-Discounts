@@ -131,14 +131,16 @@ export async function removePairedMetafieldFromProducts(admin, productIds = []) 
  * Automatically saves `product.metafields.stack_up.paired_bundle` on each Main Product,
  * cleans up inactive/expired products, and empties out the legacy shop metafield.
  * @param {object} admin Shopify Admin GraphQL client
+ * @param {string} [shopDomain] Optional explicit shop domain from session
  */
-export async function syncAllActiveOffersToShopMetafield(admin) {
+export async function syncAllActiveOffersToShopMetafield(admin, shopDomain = null) {
   try {
     const shopRes = await admin.graphql(
       `#graphql
       query GetShopId {
         shop {
           id
+          myshopifyDomain
         }
       }`
     );
@@ -146,9 +148,28 @@ export async function syncAllActiveOffersToShopMetafield(admin) {
     const shopId = shopJson.data?.shop?.id;
     if (!shopId) return;
 
-    // 1. Fetch all PAIRED offers from DB
+    const canonicalShop = (shopDomain || shopJson.data?.shop?.myshopifyDomain || "").trim();
+    if (!canonicalShop) {
+      console.warn("[PairedSync] No shop domain available, aborting metafield sync.");
+      return;
+    }
+    const cleanShop = canonicalShop.replace(".myshopify.com", "");
+    const shopFilter = {
+      OR: [
+        { shop: canonicalShop },
+        { shop: cleanShop },
+        { shop: `${cleanShop}.myshopify.com` },
+      ],
+    };
+
+    // 1. Fetch all PAIRED offers from DB strictly for this authenticated shop
     const allOffers = await prisma.offer.findMany({
-      where: { type: "PAIRED" },
+      where: {
+        AND: [
+          shopFilter,
+          { type: "PAIRED" },
+        ],
+      },
     });
 
     const activeOffers = [];

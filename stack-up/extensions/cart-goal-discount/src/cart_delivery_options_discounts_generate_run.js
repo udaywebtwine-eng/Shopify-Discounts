@@ -75,13 +75,22 @@ export function cartDeliveryOptionsDiscountsGenerateRun(input) {
         const lineProdId = line.merchandise?.product?.id || "";
         const lineProdNum = lineProdId.split("/").pop();
 
-        if (offer.applyTo === "PRODUCTS" && Array.isArray(offer.products) && offer.products.length > 0) {
-          isEligible = offer.products.some((p) => {
-            const pid = String(p.id || p).split("/").pop();
-            return pid === lineProdNum;
-          });
-        } else if (offer.applyTo === "COLLECTIONS" && Array.isArray(offer.collectionProductIds) && offer.collectionProductIds.length > 0) {
-          isEligible = offer.collectionProductIds.includes(lineProdNum);
+        // Check explicitly excluded products
+        if (Array.isArray(offer.excludedProductIds) && offer.excludedProductIds.length > 0) {
+          if (offer.excludedProductIds.some((id) => String(id).split("/").pop() === lineProdNum)) {
+            isEligible = false;
+          }
+        }
+
+        if (isEligible) {
+          if (offer.applyTo === "PRODUCTS") {
+            isEligible = Array.isArray(offer.products) && offer.products.length > 0 && offer.products.some((p) => {
+              const pid = String(p.id || p).split("/").pop();
+              return pid === lineProdNum;
+            });
+          } else if (offer.applyTo === "COLLECTIONS") {
+            isEligible = Array.isArray(offer.collectionProductIds) && offer.collectionProductIds.length > 0 && offer.collectionProductIds.includes(lineProdNum);
+          }
         }
 
         if (isEligible) {
@@ -107,22 +116,17 @@ export function cartDeliveryOptionsDiscountsGenerateRun(input) {
     return { operations: [] };
   }
 
-  // Target delivery groups that have shipping methods
-  let targets = (input.cart.deliveryGroups || [])
+  // Target ONLY delivery groups that have legitimate shipping methods (never pickup/retail groups)
+  const targets = (input.cart.deliveryGroups || [])
     .filter(({ deliveryOptions }) =>
       !deliveryOptions || deliveryOptions.length === 0 ||
       deliveryOptions.some(
         ({ deliveryMethodType }) =>
-          !deliveryMethodType ||
           deliveryMethodType === DeliveryMethod.Shipping ||
           String(deliveryMethodType).toUpperCase() === "SHIPPING"
       ),
     )
     .map(({ id }) => ({ deliveryGroup: { id } }));
-
-  if (targets.length === 0 && input.cart.deliveryGroups?.length > 0) {
-    targets = input.cart.deliveryGroups.map(({ id }) => ({ deliveryGroup: { id } }));
-  }
 
   if (targets.length === 0) {
     return { operations: [] };

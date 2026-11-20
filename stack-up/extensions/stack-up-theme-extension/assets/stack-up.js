@@ -10,8 +10,8 @@
   function formatMoney(cents) {
     if (typeof cents !== 'number' || isNaN(cents)) cents = parseFloat(cents) || 0;
     const activeCurrency = window.Shopify?.currency?.active || '';
-    if (window.Shopify && typeof window.Shopify.formatMoney === 'function') {
-      return window.Shopify.formatMoney(cents, window.Shopify.money_format || '{{amount}}');
+    if (window.Shopify && typeof window.Shopify.formatMoney === 'function' && window.Shopify.money_format) {
+      return window.Shopify.formatMoney(cents, window.Shopify.money_format);
     }
     try {
       if (activeCurrency) {
@@ -22,6 +22,9 @@
         }).format(cents / 100);
       }
     } catch { }
+    if (window.Shopify && typeof window.Shopify.formatMoney === 'function') {
+      return window.Shopify.formatMoney(cents, '{{amount}}') + (activeCurrency ? ` ${activeCurrency}` : '');
+    }
     return (cents / 100).toFixed(2) + (activeCurrency ? ` ${activeCurrency}` : '');
   }
 
@@ -142,13 +145,23 @@
             unitElem.textContent = '(' + formatMoney(subUnitPrice) + ' each)';
           }
 
-          // Stock Badge Indicator for Sub Item
+          // Stock Badge Indicator & Checkbox state for Sub Item
           if (!isSubAvailable) {
             subItem.classList.add('is-out-of-stock');
-            if (stockBadge) stockBadge.style.display = 'inline-flex';
+            if (stockBadge) {
+              stockBadge.textContent = 'Unavailable';
+              stockBadge.style.display = 'inline-flex';
+            }
+            if (checkbox) {
+              checkbox.checked = false;
+              checkbox.disabled = true;
+            }
           } else {
             subItem.classList.remove('is-out-of-stock');
             if (stockBadge) stockBadge.style.display = 'none';
+            if (checkbox) {
+              checkbox.disabled = false;
+            }
           }
 
           // Accumulate if checked
@@ -555,10 +568,20 @@
 
           if (!isAvailable) {
             item.classList.add('is-out-of-stock');
-            if (stockBadge) stockBadge.style.display = 'inline-flex';
+            if (stockBadge) {
+              stockBadge.textContent = 'Unavailable';
+              stockBadge.style.display = 'inline-flex';
+            }
+            if (checkbox) {
+              checkbox.checked = false;
+              checkbox.disabled = true;
+            }
           } else {
             item.classList.remove('is-out-of-stock');
             if (stockBadge) stockBadge.style.display = 'none';
+            if (checkbox) {
+              checkbox.disabled = false;
+            }
           }
 
           if (isChecked) {
@@ -838,7 +861,8 @@
         const buyTotal = buyPrice * buyQty;
         const getOriginalTotal = getPrice * getQty;
 
-        const currencyRate = parseFloat(window.Shopify?.currency?.rate) || 1.0;
+        const rawRate = window.Shopify && window.Shopify.currency && parseFloat(window.Shopify.currency.rate);
+        const currencyRate = (!rawRate || isNaN(rawRate) || rawRate <= 0) ? 1.0 : rawRate;
         let rawDiscount = 0;
         if (discountType === 'F') {
           rawDiscount = discountVal * currencyRate * 100 * getQty;
@@ -876,6 +900,29 @@
         const grandFinalEl = widget.querySelector('.stackup-bogo-grand-final');
         if (grandOrigEl) grandOrigEl.textContent = formatMoney(originalGrandTotal);
         if (grandFinalEl) grandFinalEl.textContent = formatMoney(finalGrandTotal);
+
+        // Availability check: disable button if any selected variant is out of stock
+        const buyOpt = buyVariantSelect?.tagName === 'SELECT' ? buyVariantSelect.options[buyVariantSelect.selectedIndex] : null;
+        const buyAvailable = buyOpt ? buyOpt.dataset?.available !== 'false' : (buyVariantSelect?.dataset?.available !== 'false');
+        const getOpt = getVariantSelect?.tagName === 'SELECT' ? getVariantSelect.options[getVariantSelect.selectedIndex] : null;
+        const getAvailable = (dealType === 'BOGO' || dealType === 'BUY_X_GET_X')
+          ? buyAvailable
+          : (getOpt ? getOpt.dataset?.available !== 'false' : (getVariantSelect?.dataset?.available !== 'false'));
+
+        if (addBtn) {
+          const labelEl = addBtn.querySelector('.stackup-bogo-btn-label');
+          if (!buyAvailable || !getAvailable) {
+            addBtn.disabled = true;
+            addBtn.style.opacity = '0.6';
+            addBtn.style.cursor = 'not-allowed';
+            if (labelEl) labelEl.textContent = 'Unavailable (Out of stock)';
+          } else {
+            addBtn.disabled = false;
+            addBtn.style.opacity = '1';
+            addBtn.style.cursor = 'pointer';
+            if (labelEl) labelEl.textContent = widget.dataset.btnText || 'Claim Deal & Add to Cart';
+          }
+        }
       }
 
       if (buyVariantSelect && buyVariantSelect.tagName === 'SELECT') {
@@ -1364,15 +1411,19 @@
     if (w) {
       if (w.cardSurface) card.style.setProperty('--stackup-goal-card-bg', w.cardSurface);
       if (w.borderColor) card.style.setProperty('--stackup-goal-border-color', w.borderColor);
+      if (w.borderWidth !== undefined) card.style.setProperty('--stackup-goal-border-width', `${w.borderWidth}px`);
       if (w.borderRadius !== undefined) card.style.setProperty('--stackup-goal-card-radius', `${w.borderRadius}px`);
       if (w.barColor) card.style.setProperty('--stackup-goal-fill-color', w.barColor);
       if (w.trackColor) card.style.setProperty('--stackup-goal-track-color', w.trackColor);
       if (w.achievedColor) card.style.setProperty('--stackup-goal-completed-color', w.achievedColor);
+      if (w.barHeight !== undefined) card.style.setProperty('--stackup-goal-track-height', `${w.barHeight}px`);
       if (w.textColor) card.style.setProperty('--stackup-goal-text-color', w.textColor);
+      if (w.milestoneTextColor) card.style.setProperty('--stackup-goal-milestone-color', w.milestoneTextColor);
     }
 
-    // Optional widget headline if defined
-    if (offer && offer.widgetTitle && offer.widgetTitle.trim()) {
+    // Optional widget headline if defined and enabled
+    const showWidgetTitle = customSettings?.display?.showWidgetTitle !== false;
+    if (showWidgetTitle && offer && offer.widgetTitle && offer.widgetTitle.trim()) {
       const headline = document.createElement('div');
       headline.className = 'stackup-cart-goal-headline';
       headline.textContent = offer.widgetTitle;
@@ -1398,11 +1449,20 @@
     // Never auto-inject drawer widget on full /cart page (user added the Cart Goal Progress Bar theme block)
     if (isCartPage()) return null;
 
+    const customSettings = getCartGoalWidgetSettings();
+    if (customSettings?.display?.showInCartDrawer === false) {
+      const existingDrawerWidget = document.getElementById('stackup-cart-goal-bar-drawer');
+      if (existingDrawerWidget) existingDrawerWidget.style.display = 'none';
+      return null;
+    }
+
     let widget = document.getElementById('stackup-cart-goal-bar-drawer');
 
-    // 1. Locate the drawer container
+    // 1. Locate the drawer container (checking customDrawerSelector first if configured)
+    const customSelector = (customSettings?.display?.customDrawerSelector || '').trim();
+    const selectors = customSelector ? [customSelector, ...CART_DRAWER_SELECTORS] : CART_DRAWER_SELECTORS;
     let drawer = null;
-    for (const sel of CART_DRAWER_SELECTORS) {
+    for (const sel of selectors) {
       try {
         const elem = document.querySelector(sel);
         if (elem) {
@@ -1459,6 +1519,14 @@
     const oldPageWidget = document.getElementById('stackup-cart-goal-bar-page');
     if (oldPageWidget) {
       oldPageWidget.remove();
+    }
+
+    const customSettings = getCartGoalWidgetSettings();
+    if (isCartPage() && customSettings?.display?.showOnCartPage === false) {
+      document.querySelectorAll('.stackup-cart-goal-wrapper').forEach((w) => {
+        w.style.display = 'none';
+      });
+      return [];
     }
 
     const widgets = [];
@@ -1679,7 +1747,7 @@
         }
         const giftTier = achieved.slice().reverse().find(t => t.freeGift && (t.freeGift.title || t.freeGift.variantId));
         if (giftTier) {
-          parts.push(`Free ${giftTier.freeGift.title || 'Gift'}`);
+          parts.push(`Free ${escapeHtml(giftTier.freeGift.title || 'Gift')}`);
         }
         return parts.length > 0 ? parts.join(' + ') : 'maximum savings';
       }
@@ -1697,32 +1765,67 @@
           parts.push('Free Shipping');
         }
         if (tier.freeGift && (tier.freeGift.title || tier.freeGift.variantId)) {
-          parts.push(`Free ${tier.freeGift.title || 'Gift'}`);
+          parts.push(`Free ${escapeHtml(tier.freeGift.title || 'Gift')}`);
         }
-        return parts.length > 0 ? parts.join(' + ') : (tier.label || 'next tier');
+        return parts.length > 0 ? parts.join(' + ') : escapeHtml(tier.label || 'next tier');
+      }
+
+      const customSettings = getCartGoalWidgetSettings();
+      const contentConfig = customSettings?.content || {};
+      const celebrationEmoji = (customSettings?.display?.showCelebrationEmojis !== false) ? '🎉 ' : '';
+
+      function interpolateTemplate(tpl, vars) {
+        let msg = tpl;
+        if (customSettings?.display?.showCelebrationEmojis === false) {
+          msg = msg.replace(/🎉\s*/g, '');
+        }
+        for (const [key, val] of Object.entries(vars)) {
+          msg = msg.split(`{{${key}}}`).join(val);
+        }
+        return msg;
       }
 
       let motivationalHtml = '';
       if (progressPercent >= 100) {
         const unlockedRewardText = formatCumulativeRewards(achievedTiers.length > 0 ? achievedTiers : sortedTiers);
-        motivationalHtml = `<span class="stackup-goal-unlocked-text">🎉 Congratulations!</span> <span class="stackup-goal-next-text">You unlocked <strong>${unlockedRewardText}</strong>!</span>`;
+        if (contentConfig.completedMessage) {
+          motivationalHtml = `<span class="stackup-goal-unlocked-text">${interpolateTemplate(contentConfig.completedMessage, {
+            reward: `<strong>${unlockedRewardText}</strong>`
+          })}</span>`;
+        } else {
+          motivationalHtml = `<span class="stackup-goal-unlocked-text">${celebrationEmoji}Congratulations!</span> <span class="stackup-goal-next-text">You unlocked <strong>${unlockedRewardText}</strong>!</span>`;
+        }
       } else if (achievedTiers.length > 0 && nextTier) {
         const nextThreshold = (Number(nextTier.minAmount) || 0) * currencyRate;
         const remaining = Math.max(0, nextThreshold - progressSubtotal);
         const remainingStr = formatCartGoalMoney(remaining, cartCurrencyCode);
         const currentRewardText = formatCumulativeRewards(achievedTiers);
         const nextRewardText = formatTierNewReward(nextTier);
-        motivationalHtml = `<span class="stackup-goal-unlocked-text">🎉 ${currentRewardText} unlocked!</span> <span class="stackup-goal-next-text">Add <strong>${remainingStr}</strong> for <strong>${nextRewardText}</strong>!</span>`;
+        if (contentConfig.progressMessage) {
+          motivationalHtml = interpolateTemplate(contentConfig.progressMessage, {
+            current_tier: `<strong>${currentRewardText}</strong>`,
+            remaining: `<strong>${remainingStr}</strong>`,
+            next_tier: `<strong>${nextRewardText}</strong>`
+          });
+        } else {
+          motivationalHtml = `<span class="stackup-goal-unlocked-text">${celebrationEmoji}${currentRewardText} unlocked!</span> <span class="stackup-goal-next-text">Add <strong>${remainingStr}</strong> for <strong>${nextRewardText}</strong>!</span>`;
+        }
       } else if (nextTier) {
         const nextThreshold = (Number(nextTier.minAmount) || 0) * currencyRate;
         const remaining = Math.max(0, nextThreshold - progressSubtotal);
         const remainingStr = formatCartGoalMoney(remaining, cartCurrencyCode);
         const nextRewardText = formatTierNewReward(nextTier);
-        motivationalHtml = `<span class="stackup-goal-next-text">Add <strong>${remainingStr}</strong>  more to unlock <strong>${nextRewardText}</strong>!</span>`;
+        if (contentConfig.initialMessage) {
+          motivationalHtml = `<span class="stackup-goal-next-text">${interpolateTemplate(contentConfig.initialMessage, {
+            remaining: `<strong>${remainingStr}</strong>`,
+            next_tier: `<strong>${nextRewardText}</strong>`
+          })}</span>`;
+        } else {
+          motivationalHtml = `<span class="stackup-goal-next-text">Add <strong>${remainingStr}</strong>  more to unlock <strong>${nextRewardText}</strong>!</span>`;
+        }
       }
 
       // Update all active instances (Page and/or Drawer)
-      const customSettings = getCartGoalWidgetSettings();
       const wStyles = customSettings?.styles || offer?.widget || {};
 
       widgets.forEach((widget) => {
@@ -1737,22 +1840,32 @@
         if (card && wStyles) {
           if (wStyles.cardSurface) card.style.setProperty('--stackup-goal-card-bg', wStyles.cardSurface);
           if (wStyles.borderColor) card.style.setProperty('--stackup-goal-border-color', wStyles.borderColor);
+          if (wStyles.borderWidth !== undefined) card.style.setProperty('--stackup-goal-border-width', `${wStyles.borderWidth}px`);
           if (wStyles.borderRadius !== undefined) card.style.setProperty('--stackup-goal-card-radius', `${wStyles.borderRadius}px`);
           if (wStyles.barColor) card.style.setProperty('--stackup-goal-fill-color', wStyles.barColor);
           if (wStyles.trackColor) card.style.setProperty('--stackup-goal-track-color', wStyles.trackColor);
           if (wStyles.achievedColor) card.style.setProperty('--stackup-goal-completed-color', wStyles.achievedColor);
+          if (wStyles.barHeight !== undefined) card.style.setProperty('--stackup-goal-track-height', `${wStyles.barHeight}px`);
           if (wStyles.textColor) card.style.setProperty('--stackup-goal-text-color', wStyles.textColor);
+          if (wStyles.milestoneTextColor) card.style.setProperty('--stackup-goal-milestone-color', wStyles.milestoneTextColor);
         }
 
         // Headline
-        if (offer && offer.widgetTitle && offer.widgetTitle.trim()) {
+        const showWidgetTitle = customSettings?.display?.showWidgetTitle !== false;
+        if (showWidgetTitle && offer && offer.widgetTitle && offer.widgetTitle.trim()) {
           let headline = widget.querySelector('.stackup-cart-goal-headline');
           if (!headline && card) {
             headline = document.createElement('div');
             headline.className = 'stackup-cart-goal-headline';
             card.insertBefore(headline, card.firstChild);
           }
-          if (headline) headline.textContent = offer.widgetTitle;
+          if (headline) {
+            headline.textContent = offer.widgetTitle;
+            headline.style.display = '';
+          }
+        } else {
+          const headline = widget.querySelector('.stackup-cart-goal-headline');
+          if (headline) headline.style.display = 'none';
         }
 
         // Scope Badge: Informs customers when progress applies only to specific collections or products
@@ -1817,6 +1930,8 @@
           markersContainer.dataset.tierCount = String(sortedTiers.length);
           markersContainer.innerHTML = '';
 
+          const showIcons = customSettings?.display?.showMilestoneIcons !== false;
+
           sortedTiers.forEach((tier, idx) => {
             const isFirst = idx === 0;
             const isLast = idx === sortedTiers.length - 1;
@@ -1835,8 +1950,9 @@
             if (tier.discountValue > 0) icon = '%';
 
             const markerTitle = tier.label || `${formatCartGoalMoney(tierThreshold, cartCurrencyCode)}`;
+            const safeTitle = escapeHtml(markerTitle);
             marker.innerHTML = `
-              <div class="stackup-goal-marker-dot" title="${markerTitle}">${icon}</div>
+              <div class="stackup-goal-marker-dot" title="${safeTitle}">${showIcons ? icon : ''}</div>
             `;
             markersContainer.appendChild(marker);
           });
@@ -1894,6 +2010,7 @@
           const variants = Array.isArray(p.variants) && p.variants.length > 0 ? p.variants : [];
           const hasMultipleVariants = variants.length > 1 && variants.some(v => v.title && v.title !== 'Default Title');
           const firstVariant = variants[0] || {};
+          const isFirstAvail = firstVariant.available !== false && firstVariant.availableForSale !== false;
           const rawPrice = firstVariant.price || p.price || 0;
           const price = rawPrice * (currencyRate || 1);
 
@@ -1908,13 +2025,16 @@
                   ${price > 0 ? `<span class="stackup-cart-goal-product-price">${formatCartGoalMoney(price, currencyCode)}</span>` : ''}
                   ${hasMultipleVariants ? `
                     <select class="stackup-cart-goal-variant-select" data-product-id="${pId}">
-                      ${variants.map(v => `<option value="${escapeHtml(v.id)}">${escapeHtml(v.title)}</option>`).join('')}
+                      ${variants.map(v => {
+                        const isAvail = v.available !== false && v.availableForSale !== false;
+                        return `<option value="${escapeHtml(v.id)}" data-available="${isAvail}">${escapeHtml(v.title)}${!isAvail ? ' (Unavailable)' : ''}</option>`;
+                      }).join('')}
                     </select>
                   ` : ''}
                 </div>
               </div>
               <div class="stackup-cart-goal-product-actions">
-                <button type="button" class="stackup-cart-goal-btn-add" data-product-id="${pId}" data-variant-id="${escapeHtml(firstVariant.id || '')}">+ Add</button>
+                <button type="button" class="stackup-cart-goal-btn-add" data-product-id="${pId}" data-variant-id="${escapeHtml(firstVariant.id || '')}" ${!isFirstAvail ? 'disabled style="opacity:0.6;cursor:not-allowed;"' : ''}>${isFirstAvail ? '+ Add' : 'Unavailable'}</button>
                 ${handle ? `<a href="/products/${handle}" class="stackup-cart-goal-btn-view" target="_blank" rel="noopener noreferrer">View</a>` : ''}
               </div>
             </div>
@@ -1980,6 +2100,19 @@
             const addBtn = container.querySelector(`.stackup-cart-goal-btn-add[data-product-id="${pId}"]`);
             if (addBtn) {
               addBtn.dataset.variantId = e.target.value;
+              const opt = sel.options[sel.selectedIndex];
+              const isAvail = opt ? opt.dataset?.available !== 'false' : true;
+              if (!isAvail) {
+                addBtn.disabled = true;
+                addBtn.textContent = 'Unavailable';
+                addBtn.style.opacity = '0.6';
+                addBtn.style.cursor = 'not-allowed';
+              } else {
+                addBtn.disabled = false;
+                addBtn.textContent = '+ Add';
+                addBtn.style.opacity = '1';
+                addBtn.style.cursor = 'pointer';
+              }
             }
           });
         });

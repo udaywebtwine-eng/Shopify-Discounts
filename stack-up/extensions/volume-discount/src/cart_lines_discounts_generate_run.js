@@ -59,6 +59,12 @@ export function cartLinesDiscountsGenerateRun(input) {
     return { operations: [] };
   }
 
+  // 1b. Validate discount class (PRODUCT)
+  const discountClasses = input.discount?.discountClasses;
+  if (Array.isArray(discountClasses) && !discountClasses.includes("PRODUCT")) {
+    return { operations: [] };
+  }
+
   // 2. Check if app is enabled globally in merchant settings
   const appStatusMeta = input.shop?.appStatus?.value;
   if (appStatusMeta !== undefined && appStatusMeta !== null && String(appStatusMeta).toLowerCase() === 'false') {
@@ -161,18 +167,20 @@ export function cartLinesDiscountsGenerateRun(input) {
       continue;
     }
 
-    const currencyRate = parseFloat(input.presentmentCurrencyRate) || 1.0;
+    const rawRate = parseFloat(input.presentmentCurrencyRate);
+    const currencyRate = (Number.isFinite(rawRate) && rawRate > 0) ? rawRate : 1.0;
     const discountType = String(qualifyingTier.t ?? qualifyingTier.type ?? 'P').toUpperCase();
-    const isFixed = (discountType === 'F' || discountType === 'FIXED');
+    const isFixed = (discountType === 'F' || discountType === 'FIXED' || discountType === 'FIXED_AMOUNT');
     const convertedDiscountVal = isFixed ? (discountVal * currencyRate) : discountVal;
     const tierMinQty = Number(qualifyingTier.mq ?? qualifyingTier.minQty ?? qualifyingTier.quantity ?? 0);
     const badgeText = qualifyingTier.b ?? qualifyingTier.badge ?? '';
     const subtitleText = qualifyingTier.s ?? qualifyingTier.subtitle ?? '';
 
     // Dynamic message for the checkout savings pill (currency-aware, no hardcoded symbols)
-    const discountText = isFixed ? `${convertedDiscountVal.toFixed(2)} OFF` : `${discountVal}% OFF`;
+    const clampedDiscountVal = isFixed ? convertedDiscountVal : Math.min(100, Math.max(0, discountVal));
+    const discountText = isFixed ? `${clampedDiscountVal.toFixed(2)} OFF` : `${clampedDiscountVal}% OFF`;
     const message = offerTitle ||
-      (subtitleText ? `${subtitleText}` : `Buy ${tierMinQty}+ (${discountText})`);
+      (subtitleText ? `${subtitleText}` : (badgeText ? `${badgeText} (${discountText})` : `Buy ${tierMinQty}+ (${discountText})`));
 
     const targets = group.lines.map((l) => ({
       cartLine: {
@@ -193,13 +201,13 @@ export function cartLinesDiscountsGenerateRun(input) {
         },
       });
     } else {
-      // Default: Percentage discount
+      // Default: Percentage discount (strictly clamped between 0 and 100)
       candidates.push({
         message,
         targets,
         value: {
           percentage: {
-            value: discountVal,
+            value: clampedDiscountVal,
           },
         },
       });

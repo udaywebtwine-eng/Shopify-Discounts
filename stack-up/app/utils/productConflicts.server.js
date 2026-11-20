@@ -32,12 +32,16 @@ export async function getActiveMainProductsMap({
   excludeDiscountId = null,
   excludeNumericId = null,
 }) {
-  const shopName = (shop || "").replace(".myshopify.com", "");
+  const canonicalShop = (shop || "").trim();
+  if (!canonicalShop) {
+    return new Map();
+  }
+  const cleanShop = canonicalShop.replace(".myshopify.com", "");
   const shopCondition = {
     OR: [
-      { shop: shop || "" },
-      { shop: shopName },
-      { shop: { contains: shopName } },
+      { shop: canonicalShop },
+      { shop: cleanShop },
+      { shop: `${cleanShop}.myshopify.com` },
     ],
   };
 

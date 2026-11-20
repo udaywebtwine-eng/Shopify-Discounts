@@ -377,5 +377,136 @@ describe("Cart Goal Functions - Multi-Currency Precision Tests", () => {
       expect(deliveryCandidates[0].targets[0].deliveryGroup.id).toBe("gid://shopify/DeliveryGroup/1");
     });
   });
+
+  describe("Security & Calculation Hardening Tests", () => {
+    it("prevents customer cart attribute spoofing: does not grant 100% discount on non-configured item even if _stackup_free_gift is true", () => {
+      const tiers = [
+        {
+          minAmount: 100,
+          hasDiscount: false,
+          freeGift: {
+            variantId: "gid://shopify/ProductVariant/GIFT_999",
+            productId: "gid://shopify/Product/GIFT_PROD",
+            title: "Bonus Keychain",
+          },
+        },
+      ];
+
+      // Rogue customer adds a $500 jacket with _stackup_free_gift = "true"
+      const rogueInput = {
+        presentmentCurrencyRate: "1.0",
+        discount: { discountClasses: ["PRODUCT"] },
+        shop: {
+          appStatus: { value: "true" },
+          cartGoalOffers: { value: baseOfferMetafield(tiers) },
+        },
+        cart: {
+          lines: [
+            {
+              id: "gid://shopify/CartLine/1",
+              cost: { subtotalAmount: { amount: "150.00" } },
+              merchandise: { __typename: "ProductVariant", id: "gid://shopify/ProductVariant/NORMAL_ITEM" },
+            },
+            {
+              id: "gid://shopify/CartLine/ROGUE",
+              cost: { subtotalAmount: { amount: "500.00" } },
+              merchandise: { __typename: "ProductVariant", id: "gid://shopify/ProductVariant/EXPENSIVE_JACKET" },
+              attribute: { value: "true" },
+            },
+          ],
+        },
+      };
+
+      const result = cartLinesDiscountsGenerateRun(rogueInput);
+      // Rogue item should NOT be targeted with a 100% discount!
+      const giftCandidates = (result.operations[0]?.productDiscountsAdd?.candidates || []).filter(
+        (c) => c.value?.percentage?.value === 100
+      );
+      expect(giftCandidates).toEqual([]);
+    });
+
+    it("applies fixed amount discount correctly across multiple lines without under-applying (appliesToEachItem: false)", () => {
+      const tiers = [
+        {
+          minAmount: 50,
+          discountType: "FIXED_AMOUNT",
+          discountValue: 20, // $20 off total
+          hasDiscount: true,
+          label: "$20 off",
+        },
+      ];
+
+      const multiLineInput = {
+        presentmentCurrencyRate: "1.0",
+        discount: { discountClasses: ["PRODUCT"] },
+        shop: {
+          appStatus: { value: "true" },
+          cartGoalOffers: { value: baseOfferMetafield(tiers) },
+        },
+        cart: {
+          lines: [
+            {
+              id: "gid://shopify/CartLine/1",
+              cost: { subtotalAmount: { amount: "60.00" } },
+              merchandise: { __typename: "ProductVariant", id: "gid://shopify/ProductVariant/1" },
+            },
+            {
+              id: "gid://shopify/CartLine/2",
+              cost: { subtotalAmount: { amount: "40.00" } },
+              merchandise: { __typename: "ProductVariant", id: "gid://shopify/ProductVariant/2" },
+            },
+          ],
+        },
+      };
+
+      const result = cartLinesDiscountsGenerateRun(multiLineInput);
+      expect(result.operations.length).toBe(1);
+      const candidate = result.operations[0].productDiscountsAdd.candidates[0];
+      // Should give full $20 across targets, with appliesToEachItem: false
+      expect(candidate.value.fixedAmount.amount).toBe("20.00");
+      expect(candidate.value.fixedAmount.appliesToEachItem).toBe(false);
+      expect(candidate.targets.length).toBe(2);
+    });
+
+    it("enforces maxCap on percentage discounts when calculated savings exceed the cap", () => {
+      const tiers = [
+        {
+          minAmount: 100,
+          discountType: "PERCENTAGE",
+          discountValue: 20, // 20%
+          maxCap: 30, // Capped at $30 max
+          hasDiscount: true,
+          label: "20% off",
+        },
+      ];
+
+      // Cart subtotal is $300. 20% of $300 would be $60, but maxCap is $30.
+      const cappedInput = {
+        presentmentCurrencyRate: "1.0",
+        discount: { discountClasses: ["PRODUCT"] },
+        shop: {
+          appStatus: { value: "true" },
+          cartGoalOffers: { value: baseOfferMetafield(tiers) },
+        },
+        cart: {
+          lines: [
+            {
+              id: "gid://shopify/CartLine/1",
+              cost: { subtotalAmount: { amount: "300.00" } },
+              merchandise: { __typename: "ProductVariant", id: "gid://shopify/ProductVariant/1" },
+            },
+          ],
+        },
+      };
+
+      const result = cartLinesDiscountsGenerateRun(cappedInput);
+      expect(result.operations.length).toBe(1);
+      const candidate = result.operations[0].productDiscountsAdd.candidates[0];
+      // Must be capped at $30 fixedAmount with appliesToEachItem: false
+      expect(candidate.value.fixedAmount).toBeDefined();
+      expect(candidate.value.fixedAmount.amount).toBe("30.00");
+      expect(candidate.value.fixedAmount.appliesToEachItem).toBe(false);
+    });
+  });
 });
 

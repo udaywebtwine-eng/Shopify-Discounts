@@ -108,7 +108,7 @@ export async function removeBogoMetafieldFromProducts(admin, productIds = []) {
     const deleteInputs = chunk.map((ownerId) => ({
       ownerId,
       namespace: "stack_up",
-      key: "bogo_offer",
+      key: "bogo_offer",yes
     }));
 
     try {
@@ -146,8 +146,9 @@ export async function removeBogoMetafieldFromProducts(admin, productIds = []) {
  *   `product.metafields.stack_up.bogo_offer`
  * 
  * @param {object} admin - Authenticated Shopify GraphQL admin client
+ * @param {string} [shopDomain] - Optional explicit shop domain from session
  */
-export async function syncAllActiveBogoOffersToShopMetafield(admin) {
+export async function syncAllActiveBogoOffersToShopMetafield(admin, shopDomain = null) {
   if (!admin) return;
 
   try {
@@ -156,6 +157,7 @@ export async function syncAllActiveBogoOffersToShopMetafield(admin) {
       query GetShopIdForBogoMetafield {
         shop {
           id
+          myshopifyDomain
         }
       }`
     );
@@ -163,9 +165,28 @@ export async function syncAllActiveBogoOffersToShopMetafield(admin) {
     const shopId = shopJson.data?.shop?.id;
     if (!shopId) return;
 
-    // 1. Fetch all BOGO offers from database
+    const canonicalShop = (shopDomain || shopJson.data?.shop?.myshopifyDomain || "").trim();
+    if (!canonicalShop) {
+      console.warn("[BogoSync] No shop domain available, aborting metafield sync.");
+      return;
+    }
+    const cleanShop = canonicalShop.replace(".myshopify.com", "");
+    const shopFilter = {
+      OR: [
+        { shop: canonicalShop },
+        { shop: cleanShop },
+        { shop: `${cleanShop}.myshopify.com` },
+      ],
+    };
+
+    // 1. Fetch all BOGO offers from database strictly for this authenticated shop
     const allOffers = await prisma.offer.findMany({
-      where: { type: "BOGO" },
+      where: {
+        AND: [
+          shopFilter,
+          { type: "BOGO" },
+        ],
+      },
     });
 
     const activeOffers = [];

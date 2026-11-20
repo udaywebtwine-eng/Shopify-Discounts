@@ -85,13 +85,22 @@ export function cartLinesDiscountsGenerateRun(input) {
       const lineProdId = line.merchandise?.product?.id || "";
       const lineProdNum = lineProdId.split("/").pop();
 
-      if (offer.applyTo === "PRODUCTS" && Array.isArray(offer.products) && offer.products.length > 0) {
-        isEligible = offer.products.some((p) => {
-          const pid = String(p.id || p).split("/").pop();
-          return pid === lineProdNum;
-        });
-      } else if (offer.applyTo === "COLLECTIONS" && Array.isArray(offer.collectionProductIds) && offer.collectionProductIds.length > 0) {
-        isEligible = offer.collectionProductIds.includes(lineProdNum);
+      // Check explicitly excluded products
+      if (Array.isArray(offer.excludedProductIds) && offer.excludedProductIds.length > 0) {
+        if (offer.excludedProductIds.some((id) => String(id).split("/").pop() === lineProdNum)) {
+          isEligible = false;
+        }
+      }
+
+      if (isEligible) {
+        if (offer.applyTo === "PRODUCTS") {
+          isEligible = Array.isArray(offer.products) && offer.products.length > 0 && offer.products.some((p) => {
+            const pid = String(p.id || p).split("/").pop();
+            return pid === lineProdNum;
+          });
+        } else if (offer.applyTo === "COLLECTIONS") {
+          isEligible = Array.isArray(offer.collectionProductIds) && offer.collectionProductIds.length > 0 && offer.collectionProductIds.includes(lineProdNum);
+        }
       }
 
       if (isEligible) {
@@ -134,7 +143,7 @@ export function cartLinesDiscountsGenerateRun(input) {
       }
     }
 
-    // 3. Find matching gift line in cart
+    // 3. Find matching gift line in cart (strictly validating against configured gift variant/product IDs)
     let targetGiftLine = null;
     if (activeGiftTier?.freeGift) {
       const giftVarId = activeGiftTier.freeGift.variantId;
@@ -142,20 +151,20 @@ export function cartLinesDiscountsGenerateRun(input) {
       const giftProdId = activeGiftTier.freeGift.productId || activeGiftTier.freeGift.id;
       const giftProdNumeric = giftProdId ? String(giftProdId).split("/").pop() : null;
 
-      targetGiftLine = input.cart.lines.find((line) => {
-        if (line.attribute?.value === "true") return true;
+      // Filter only cart lines whose merchandise matches the configured free gift
+      const matchingGiftLines = input.cart.lines.filter((line) => {
         if (line.merchandise?.__typename !== "ProductVariant") return false;
         const lineVarId = line.merchandise.id || "";
         const lineProdId = line.merchandise.product?.id || "";
 
-        if (giftVarId && (lineVarId === giftVarId || (giftVarNumeric && lineVarId.endsWith(`/${giftVarNumeric}`)))) {
-          return true;
-        }
-        if (giftProdId && (lineProdId === giftProdId || (giftProdNumeric && lineProdId.endsWith(`/${giftProdNumeric}`)))) {
-          return true;
-        }
-        return false;
+        const matchesVariant = giftVarId && (lineVarId === giftVarId || (giftVarNumeric && lineVarId.endsWith(`/${giftVarNumeric}`)));
+        const matchesProduct = giftProdId && (lineProdId === giftProdId || (giftProdNumeric && lineProdId.endsWith(`/${giftProdNumeric}`)));
+
+        return Boolean(matchesVariant || matchesProduct);
       });
+
+      // Prefer the line flagged by UI attribute, or fallback to the first verified matching gift line
+      targetGiftLine = matchingGiftLines.find((l) => l.attribute?.value === "true") || matchingGiftLines[0] || null;
     }
 
     // 4. Apply Tier Line Discount (% or $)
@@ -165,19 +174,62 @@ export function cartLinesDiscountsGenerateRun(input) {
         const isFixed = String(activeDiscountTier.discountType).toUpperCase() === "FIXED_AMOUNT";
         // Convert fixed-amount discounts to customer's presentment currency; percentage is currency-neutral
         const convertedDiscountVal = isFixed ? (baseDiscountVal * currencyRate) : baseDiscountVal;
-        const discountMessage = isFixed
-          ? (activeDiscountTier.label || `${convertedDiscountVal.toFixed(2)} OFF`)
-          : (activeDiscountTier.label || `${baseDiscountVal}% OFF`);
+        const rawMaxCap = parseFloat(activeDiscountTier.maxCap || activeDiscountTier.maxDiscountAmount) || 0;
+        const convertedMaxCap = rawMaxCap > 0 ? (rawMaxCap * currencyRate) : 0;
+
         const eligibleLines = (isFiltered ? qualifyingLines : input.cart.lines)
           .filter((line) => line.id !== targetGiftLine?.id && line.attribute?.value !== "true");
 
         if (eligibleLines.length > 0) {
+          const eligibleSubtotal = eligibleLines.reduce(
+            (sum, line) => sum + (parseFloat(line.cost?.subtotalAmount?.amount) || 0),
+            0
+          );
+
+          let discountValueObj;
+          let discountDisplayStr;
+
+          if (isFixed) {
+            // Cap fixed discount if maxCap is configured and smaller
+            const cappedFixedVal = (convertedMaxCap > 0 && convertedDiscountVal > convertedMaxCap)
+              ? convertedMaxCap
+              : convertedDiscountVal;
+
+            discountDisplayStr = activeDiscountTier.label || `${cappedFixedVal.toFixed(2)} OFF`;
+            discountValueObj = {
+              fixedAmount: {
+                amount: String(cappedFixedVal.toFixed(2)),
+                appliesToEachItem: false,
+              },
+            };
+          } else {
+            // Percentage discount
+            const estimatedSavings = eligibleSubtotal * (baseDiscountVal / 100);
+            if (convertedMaxCap > 0 && estimatedSavings > convertedMaxCap) {
+              // Capped: convert to fixed amount so it does not exceed maxCap
+              discountDisplayStr = activeDiscountTier.label || `${convertedMaxCap.toFixed(2)} OFF`;
+              discountValueObj = {
+                fixedAmount: {
+                  amount: String(convertedMaxCap.toFixed(2)),
+                  appliesToEachItem: false,
+                },
+              };
+            } else {
+              // Normal percentage discount (clamped between 0 and 100)
+              const clampedPercentage = Math.min(100, Math.max(0, baseDiscountVal));
+              discountDisplayStr = activeDiscountTier.label || `${clampedPercentage}% OFF`;
+              discountValueObj = {
+                percentage: {
+                  value: clampedPercentage,
+                },
+              };
+            }
+          }
+
           productDiscountCandidates.push({
-            message: `${offer.title ? `${offer.title}: ` : ""}${discountMessage}`,
+            message: `${offer.title ? `${offer.title}: ` : ""}${discountDisplayStr}`,
             targets: eligibleLines.map((line) => ({ cartLine: { id: line.id } })),
-            value: isFixed
-              ? { fixedAmount: { amount: String((convertedDiscountVal / eligibleLines.length).toFixed(2)) } }
-              : { percentage: { value: baseDiscountVal } },
+            value: discountValueObj,
           });
         }
       }

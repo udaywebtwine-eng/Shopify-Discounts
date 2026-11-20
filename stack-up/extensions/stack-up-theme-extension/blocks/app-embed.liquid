@@ -14,7 +14,7 @@
       {% if cart_goal_data.first %}
         {{ cart_goal_data | json }}
       {% else %}
-        {{ cart_goal_data }}
+        {{ cart_goal_data | replace: '</script>', '<\/script>' }}
       {% endif %}
     </script>
   {% endif %}
@@ -23,7 +23,7 @@
       {% if cart_goal_widget_settings.first %}
         {{ cart_goal_widget_settings | json }}
       {% else %}
-        {{ cart_goal_widget_settings }}
+        {{ cart_goal_widget_settings | replace: '</script>', '<\/script>' }}
       {% endif %}
     </script>
   {% endif %}

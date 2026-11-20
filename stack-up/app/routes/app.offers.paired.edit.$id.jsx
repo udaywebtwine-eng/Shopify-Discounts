@@ -40,14 +40,26 @@ export const loader = async ({ request, params }) => {
 
     console.log("-------------------> [EditLoader] Loading offer for numericId:", numericId);
 
+    const cleanShop = shop.replace(".myshopify.com", "");
     const [dbFallback, shopTimezoneRes] = await Promise.all([
         prisma.offer.findFirst({
             where: {
-                OR: [
-                    { numericId },
-                    { discountId: `gid://shopify/PairedOffer/${numericId}` },
-                    { discountId: `gid://shopify/DiscountAutomaticNode/${numericId}` },
-                    { id: numericId },
+                AND: [
+                    {
+                        OR: [
+                            { shop },
+                            { shop: cleanShop },
+                            { shop: `${cleanShop}.myshopify.com` },
+                        ],
+                    },
+                    {
+                        OR: [
+                            { numericId },
+                            { discountId: `gid://shopify/PairedOffer/${numericId}` },
+                            { discountId: `gid://shopify/DiscountAutomaticNode/${numericId}` },
+                            { id: numericId },
+                        ],
+                    },
                 ],
             },
         }),
@@ -256,7 +268,18 @@ export const loader = async ({ request, params }) => {
     let dbOffer = null;
     try {
         dbOffer = await prisma.offer.findFirst({
-            where: { numericId },
+            where: {
+                AND: [
+                    {
+                        OR: [
+                            { shop },
+                            { shop: cleanShop },
+                            { shop: `${cleanShop}.myshopify.com` },
+                        ],
+                    },
+                    { numericId },
+                ],
+            },
             include: {
                 orders: {
                     take: 5,
@@ -327,15 +350,28 @@ export const loader = async ({ request, params }) => {
 export const action = async ({ request, params }) => {
     const { admin, session } = await authenticate.admin(request);
     const numericId = params.id;
+    const shop = session?.shop || "";
+    const cleanShop = shop.replace(".myshopify.com", "");
     const formData = await request.formData();
     const intent = formData.get("intent") || "update";
 
     const offerWhere = {
-        OR: [
-            { numericId },
-            { discountId: `gid://shopify/PairedOffer/${numericId}` },
-            { discountId: `gid://shopify/DiscountAutomaticNode/${numericId}` },
-            { id: numericId },
+        AND: [
+            {
+                OR: [
+                    { shop },
+                    { shop: cleanShop },
+                    { shop: `${cleanShop}.myshopify.com` },
+                ],
+            },
+            {
+                OR: [
+                    { numericId },
+                    { discountId: `gid://shopify/PairedOffer/${numericId}` },
+                    { discountId: `gid://shopify/DiscountAutomaticNode/${numericId}` },
+                    { id: numericId },
+                ],
+            },
         ],
     };
 

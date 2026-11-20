@@ -160,6 +160,42 @@ describe("BOGO Discount Function - Multi-Currency Precision Tests", () => {
       expect(candidates[0].value.fixedAmount.amount).toBe("835.00");
       expect(candidates[0].value.fixedAmount.appliesToEachItem).toBe(false);
     });
+
+    it("scales maximum discount cap for BUY_X_GET_X with FIXED discount in presentment currency", () => {
+      const offer = {
+        id: "bogo-fixed-cap-inr",
+        dealType: "BUY_X_GET_X",
+        buyQty: 1,
+        getQty: 2,
+        dType: "F",
+        dVal: 10.0, // $10 base discount per reward unit
+        maxD: 15.0, // $15 base cap -> ₹1,252.50 in INR at 83.5
+      };
+
+      // 3 items. Reward units = 2.
+      // Uncapped raw discount = 2 * (10 * 83.5) = ₹1,670.
+      // Cap is $15 * 83.5 = ₹1,252.50.
+      // ₹1,670 exceeds ₹1,252.50 cap -> must cap at ₹1,252.50.
+      const input = buildInput({
+        rate: "83.50",
+        bogoOffer: offer,
+        lines: [
+          {
+            productId: "302",
+            quantity: 3,
+            costAmount: "4000.00",
+          },
+        ],
+      });
+
+      const result = cartLinesDiscountsGenerateRun(input);
+      expect(result.operations.length).toBe(1);
+      const candidates = result.operations[0].productDiscountsAdd.candidates;
+      expect(candidates.length).toBe(1);
+      expect(candidates[0].value.fixedAmount).toBeDefined();
+      expect(candidates[0].value.fixedAmount.amount).toBe("1252.50");
+      expect(candidates[0].value.fixedAmount.appliesToEachItem).toBe(false);
+    });
   });
 
   describe("Percentage BOGO Discounts (Currency-Neutral)", () => {

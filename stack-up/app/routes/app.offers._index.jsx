@@ -193,7 +193,9 @@ export const loader = async ({ request }) => {
 };
 
 export const action = async ({ request }) => {
-    const { admin } = await authenticate.admin(request);
+    const { admin, session } = await authenticate.admin(request);
+    const shop = session?.shop || "";
+    const cleanShop = shop.replace(".myshopify.com", "");
     const formData = await request.formData();
     const intent = formData.get("intent");
     const id = formData.get("id");
@@ -204,11 +206,22 @@ export const action = async ({ request }) => {
 
         try {
             const whereClause = {
-                OR: [
-                    id ? { discountId: id } : undefined,
-                    numericId ? { numericId } : undefined,
-                    id ? { id } : undefined,
-                ].filter(Boolean),
+                AND: [
+                    {
+                        OR: [
+                            { shop },
+                            { shop: cleanShop },
+                            { shop: `${cleanShop}.myshopify.com` },
+                        ],
+                    },
+                    {
+                        OR: [
+                            id ? { discountId: id } : undefined,
+                            numericId ? { numericId } : undefined,
+                            id ? { id } : undefined,
+                        ].filter(Boolean),
+                    },
+                ],
             };
 
             const offerToDelete = await prisma.offer.findFirst({ where: whereClause });
