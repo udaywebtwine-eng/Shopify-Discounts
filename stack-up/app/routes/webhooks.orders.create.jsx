@@ -67,6 +67,13 @@ export const action = async ({ request }) => {
   const hasMasterSelected = appliedTitles.some((t) => (t.includes("stackup") || t.includes("stack-up")) && t.includes("selected"));
   const hasMasterPaired = appliedTitles.some((t) => (t.includes("stackup") || t.includes("stack-up")) && t.includes("paired"));
   const hasMasterVolume = appliedTitles.some((t) => ((t.includes("stackup") || t.includes("stack-up")) && (t.includes("volume") || t.includes("quantity"))) || t.includes("volume discount") || t.includes("buy more") || t.includes("quantity break"));
+  const hasMasterBogo = appliedTitles.some((t) => (t.includes("stackup") || t.includes("stack-up")) && (t.includes("bogo") || t.includes("buy x") || t.includes("buy 1")));
+  const hasMasterCartGoal = appliedTitles.some((t) =>
+    (t.includes("stackup") || t.includes("stack-up")) && (t.includes("cart goal") || t.includes("cart_goal")) ||
+    t.includes("cart goal") ||
+    t.includes("free gift") ||
+    t.includes("free shipping")
+  );
 
   const matchedOffers = [];
 
@@ -79,15 +86,22 @@ export const action = async ({ request }) => {
 
     // GATE 2: Product Membership (Strict) - Order MUST contain at least one product configured for this offer
     const offerProductIds = getOfferProductIds(off);
-    if (offerProductIds.size === 0) continue;
-
     let hasMatchingProduct = false;
-    for (const pid of offerProductIds) {
-      if (orderProductIds.has(pid)) {
-        hasMatchingProduct = true;
-        break;
+
+    if (off.type === "CART_GOAL") {
+      // Cart Goal is a cart-level storewide spend threshold offer. All products are eligible.
+      hasMatchingProduct = true;
+    } else {
+      if (offerProductIds.size === 0) continue;
+
+      for (const pid of offerProductIds) {
+        if (orderProductIds.has(pid)) {
+          hasMatchingProduct = true;
+          break;
+        }
       }
     }
+
     if (!hasMatchingProduct) {
       continue;
     }
@@ -107,6 +121,10 @@ export const action = async ({ request }) => {
       isMatched = true;
     } else if (off.type === "VOLUME" && hasMasterVolume) {
       isMatched = true;
+    } else if (off.type === "BOGO" && hasMasterBogo) {
+      isMatched = true;
+    } else if (off.type === "CART_GOAL" && (hasMasterCartGoal || titleMatches)) {
+      isMatched = true;
     }
 
     if (!isMatched) {
@@ -117,31 +135,19 @@ export const action = async ({ request }) => {
     const purchasedItems = [];
     let offerAllocatedDiscount = 0;
 
-    // Check line item discount allocations
-    const appIndex = Array.isArray(payload.discount_applications)
-      ? payload.discount_applications.findIndex((app) => {
-          const t = (app.title || app.description || app.code || "")?.toLowerCase().trim();
-          return t === title || t.includes(title);
-        })
-      : -1;
-
-    orderLines.forEach((item) => {
-      const pid = item.product_id ? String(item.product_id).trim() : "";
-      const gid = `gid://shopify/Product/${pid}`;
-
-      if (offerProductIds.has(pid) || offerProductIds.has(gid)) {
+    if (off.type === "CART_GOAL") {
+      orderLines.forEach((item) => {
+        const pid = item.product_id ? String(item.product_id).trim() : "";
+        const gid = pid.startsWith("gid://shopify/Product/") ? pid : `gid://shopify/Product/${pid}`;
         const itemQty = Number(item.quantity) || 1;
         const unitPrice = parseFloat(item.price) || 0;
 
         let lineDiscount = 0;
-        if (appIndex !== -1 && Array.isArray(item.discount_allocations)) {
+        if (Array.isArray(item.discount_allocations)) {
           for (const alloc of item.discount_allocations) {
-            if (alloc.discount_application_index === appIndex) {
-              lineDiscount += parseFloat(alloc.amount) || 0;
-            }
+            lineDiscount += parseFloat(alloc.amount) || 0;
           }
         }
-
         offerAllocatedDiscount += lineDiscount;
 
         purchasedItems.push({
@@ -151,8 +157,49 @@ export const action = async ({ request }) => {
           price: unitPrice,
           discountAmount: lineDiscount,
         });
+      });
+
+      if (offerAllocatedDiscount === 0) {
+        offerAllocatedDiscount = parseFloat(payload.total_discounts) || 0;
       }
-    });
+    } else {
+      // Check line item discount allocations
+      const appIndex = Array.isArray(payload.discount_applications)
+        ? payload.discount_applications.findIndex((app) => {
+            const t = (app.title || app.description || app.code || "")?.toLowerCase().trim();
+            return t === title || t.includes(title);
+          })
+        : -1;
+
+      orderLines.forEach((item) => {
+        const pid = item.product_id ? String(item.product_id).trim() : "";
+        const gid = `gid://shopify/Product/${pid}`;
+
+        if (offerProductIds.has(pid) || offerProductIds.has(gid)) {
+          const itemQty = Number(item.quantity) || 1;
+          const unitPrice = parseFloat(item.price) || 0;
+
+          let lineDiscount = 0;
+          if (appIndex !== -1 && Array.isArray(item.discount_allocations)) {
+            for (const alloc of item.discount_allocations) {
+              if (alloc.discount_application_index === appIndex) {
+                lineDiscount += parseFloat(alloc.amount) || 0;
+              }
+            }
+          }
+
+          offerAllocatedDiscount += lineDiscount;
+
+          purchasedItems.push({
+            productId: gid,
+            title: item.title || "Product",
+            quantity: itemQty,
+            price: unitPrice,
+            discountAmount: lineDiscount,
+          });
+        }
+      });
+    }
 
     matchedOffers.push({
       offer: off,

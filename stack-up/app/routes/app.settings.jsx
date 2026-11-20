@@ -12,6 +12,7 @@ import { syncAllActiveOffersToShopMetafield } from "../utils/bundleMetafields.se
 import { syncAllActiveSelectedOffersToShopMetafield } from "../utils/selectedOffersMetafields.server";
 import { syncAllActiveVolumeOffersToShopMetafield } from "../utils/volumeMetafields.server";
 import { syncAllActiveBogoOffersToShopMetafield } from "../utils/bogoMetafields.server";
+import { syncAllActiveCartGoalOffersToShopMetafield } from "../utils/cartGoalMetafields.server";
 
 export const loader = async ({ request }) => {
     const { admin, session } = await authenticate.admin(request);
@@ -95,6 +96,7 @@ export const action = async ({ request }) => {
             syncAllActiveSelectedOffersToShopMetafield(admin).catch(() => { }),
             syncAllActiveVolumeOffersToShopMetafield(admin).catch(() => { }),
             syncAllActiveBogoOffersToShopMetafield(admin).catch(() => { }),
+            syncAllActiveCartGoalOffersToShopMetafield(admin).catch(() => { }),
         ]);
         return Response.json({ success: true, message: "Master discounts resynced successfully!", masterDiscounts: res });
     }

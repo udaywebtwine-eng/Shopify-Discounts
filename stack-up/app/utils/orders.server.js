@@ -24,6 +24,23 @@ export function getOfferProducts(offer) {
       }
       return [];
     }
+    if (offer.type === "CART_GOAL") {
+      let giftProds = [];
+      try {
+        const cfg = typeof offer.configuration === "string" ? JSON.parse(offer.configuration) : offer.configuration;
+        const tiers = cfg?.tiers || [];
+        tiers.forEach((t) => {
+          if (t.freeGift && (t.freeGift.id || t.freeGift.productId)) {
+            giftProds.push({
+              id: t.freeGift.productId || t.freeGift.id,
+              title: t.freeGift.title || "Free Gift",
+              image: t.freeGift.image,
+            });
+          }
+        });
+      } catch {}
+      return giftProds;
+    }
     // SELECTED
     const p1 = JSON.parse(offer.targetProducts || "[]");
     const p2 = JSON.parse(offer.offeredProducts || offer.products || "[]");
@@ -207,9 +224,9 @@ export async function cleanupMismatchedOrders(shop) {
           continue;
         }
 
-        // 2. If purchasedProducts is populated, verify at least one product belongs to this offer
+        // 2. If purchasedProducts is populated, verify at least one product belongs to this offer (for product-specific offers)
         const prodData = usage.purchasedProducts ?? rawProductMap.get(usage.id);
-        if (prodData) {
+        if (prodData && offer.type !== "CART_GOAL" && offerProductIds.size > 0) {
           try {
             const items = JSON.parse(prodData || "[]");
             if (Array.isArray(items) && items.length > 0) {
@@ -403,6 +420,12 @@ export async function syncRecentOrdersFromShopify(admin, shop) {
       const hasMasterPaired = appliedTitles.some((t) => (t.includes("stackup") || t.includes("stack-up")) && t.includes("paired"));
       const hasMasterVolume = appliedTitles.some((t) => ((t.includes("stackup") || t.includes("stack-up")) && (t.includes("volume") || t.includes("quantity"))) || t.includes("volume discount") || t.includes("buy more") || t.includes("quantity break"));
       const hasMasterBogo = appliedTitles.some((t) => (t.includes("stackup") || t.includes("stack-up")) && (t.includes("bogo") || t.includes("buy x") || t.includes("buy 1")));
+      const hasMasterCartGoal = appliedTitles.some((t) =>
+        (t.includes("stackup") || t.includes("stack-up")) && (t.includes("cart goal") || t.includes("cart_goal")) ||
+        t.includes("cart goal") ||
+        t.includes("free gift") ||
+        t.includes("free shipping")
+      );
 
       const matchedOffers = [];
 
@@ -415,15 +438,22 @@ export async function syncRecentOrdersFromShopify(admin, shop) {
 
         // GATE 2: Product Membership (Strict) - Order MUST contain at least one product configured for this offer
         const offerProductIds = getOfferProductIds(off);
-        if (offerProductIds.size === 0) continue;
-
         let hasMatchingProduct = false;
-        for (const pid of offerProductIds) {
-          if (orderProductIds.has(pid)) {
-            hasMatchingProduct = true;
-            break;
+
+        if (off.type === "CART_GOAL") {
+          // Cart Goal is a cart-level storewide spend threshold offer. All products are eligible.
+          hasMatchingProduct = true;
+        } else {
+          if (offerProductIds.size === 0) continue;
+
+          for (const pid of offerProductIds) {
+            if (orderProductIds.has(pid)) {
+              hasMatchingProduct = true;
+              break;
+            }
           }
         }
+
         if (!hasMatchingProduct) {
           continue; // Order does not contain any of this offer's products!
         }
@@ -445,6 +475,8 @@ export async function syncRecentOrdersFromShopify(admin, shop) {
           isMatched = true;
         } else if (off.type === "BOGO" && hasMasterBogo) {
           isMatched = true;
+        } else if (off.type === "CART_GOAL" && (hasMasterCartGoal || titleMatches)) {
+          isMatched = true;
         }
 
         if (!isMatched) {
@@ -455,11 +487,10 @@ export async function syncRecentOrdersFromShopify(admin, shop) {
         const purchasedItems = [];
         let lineAllocTotal = 0;
 
-        orderLines.forEach((line) => {
-          const linePid = line.product?.id ? String(line.product.id).trim() : "";
-          const lineNumId = linePid.split("/").pop();
-
-          if (offerProductIds.has(linePid) || offerProductIds.has(lineNumId)) {
+        if (off.type === "CART_GOAL") {
+          orderLines.forEach((line) => {
+            const linePid = line.product?.id ? String(line.product.id).trim() : "";
+            const lineNumId = linePid.split("/").pop();
             const lineQty = Number(line.quantity) || 1;
             const unitPrice = parseFloat(
               line.discountedUnitPriceSet?.shopMoney?.amount ||
@@ -469,16 +500,7 @@ export async function syncRecentOrdersFromShopify(admin, shop) {
 
             let lineDiscount = 0;
             (line.discountAllocations || []).forEach((alloc) => {
-              const appTitle = (alloc.discountApplication?.title || alloc.discountApplication?.code || "")?.toLowerCase().trim();
-              if (
-                (appTitle && (appTitle === title || appTitle.includes(title))) ||
-                (hasMasterVolume && off.type === "VOLUME") ||
-                (hasMasterSelected && off.type === "SELECTED") ||
-                (hasMasterPaired && off.type === "PAIRED") ||
-                (hasMasterBogo && off.type === "BOGO")
-              ) {
-                lineDiscount += parseFloat(alloc.allocatedAmountSet?.shopMoney?.amount) || 0;
-              }
+              lineDiscount += parseFloat(alloc.allocatedAmountSet?.shopMoney?.amount) || 0;
             });
 
             lineAllocTotal += lineDiscount;
@@ -490,8 +512,46 @@ export async function syncRecentOrdersFromShopify(admin, shop) {
               price: unitPrice,
               discountAmount: lineDiscount,
             });
-          }
-        });
+          });
+        } else {
+          orderLines.forEach((line) => {
+            const linePid = line.product?.id ? String(line.product.id).trim() : "";
+            const lineNumId = linePid.split("/").pop();
+
+            if (offerProductIds.has(linePid) || offerProductIds.has(lineNumId)) {
+              const lineQty = Number(line.quantity) || 1;
+              const unitPrice = parseFloat(
+                line.discountedUnitPriceSet?.shopMoney?.amount ||
+                line.originalUnitPriceSet?.shopMoney?.amount ||
+                0
+              );
+
+              let lineDiscount = 0;
+              (line.discountAllocations || []).forEach((alloc) => {
+                const appTitle = (alloc.discountApplication?.title || alloc.discountApplication?.code || "")?.toLowerCase().trim();
+                if (
+                  (appTitle && (appTitle === title || appTitle.includes(title))) ||
+                  (hasMasterVolume && off.type === "VOLUME") ||
+                  (hasMasterSelected && off.type === "SELECTED") ||
+                  (hasMasterPaired && off.type === "PAIRED") ||
+                  (hasMasterBogo && off.type === "BOGO")
+                ) {
+                  lineDiscount += parseFloat(alloc.allocatedAmountSet?.shopMoney?.amount) || 0;
+                }
+              });
+
+              lineAllocTotal += lineDiscount;
+
+              purchasedItems.push({
+                productId: linePid.startsWith("gid://shopify/Product/") ? linePid : `gid://shopify/Product/${lineNumId}`,
+                title: line.title || line.product?.title || "Product",
+                quantity: lineQty,
+                price: unitPrice,
+                discountAmount: lineDiscount,
+              });
+            }
+          });
+        }
 
         matchedOffers.push({
           offer: off,
@@ -509,7 +569,9 @@ export async function syncRecentOrdersFromShopify(admin, shop) {
 
       for (const matched of matchedOffers) {
         let offerDiscount = matched.lineAllocTotal;
-        if (offerDiscount === 0) {
+        if (matched.offer.type === "CART_GOAL") {
+          offerDiscount = totalDiscounts || matched.lineAllocTotal;
+        } else if (offerDiscount === 0) {
           offerDiscount = matchedOffers.length === 1 ? totalDiscounts : (totalDiscounts / matchedOffers.length);
         }
 

@@ -780,4 +780,274 @@ html:has([data-stackup-embed-active]) .stackup-addons-widget,
   animation: stackup-slide-down 0.22s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
+/* ==========================================================================
+   StackUp Cart Goal & Tiered Cart-Value Discount Progress Bar
+   ========================================================================== */
+
+.stackup-cart-goal-wrapper {
+  display: block;
+  width: 100%;
+  margin: 12px 0 16px 0;
+  box-sizing: border-box;
+  font-family: inherit;
+}
+
+.stackup-cart-goal-card {
+  background: var(--stackup-goal-card-bg, #ffffff);
+  border: 1px solid var(--stackup-goal-border-color, #e5e7eb);
+  border-radius: var(--stackup-goal-card-radius, 12px);
+  padding: 14px 16px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+  box-sizing: border-box;
+  transition: all 0.25s ease;
+}
+
+.stackup-cart-goal-wrapper {
+  margin: 16px 0;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.stackup-cart-goal-on-page {
+  max-width: 680px;
+  margin: 18px auto 26px auto;
+  padding: 0 14px;
+}
+
+.stackup-cart-goal-card {
+  background-color: var(--stackup-goal-card-bg, #ffffff);
+  border: var(--stackup-goal-border-width, 1px) solid var(--stackup-goal-border-color, #e2e8f0);
+  border-radius: var(--stackup-goal-card-radius, 14px);
+  padding: 16px 20px 14px 20px;
+  box-shadow: 0 4px 15px -3px rgba(0, 0, 0, 0.05), 0 2px 6px -2px rgba(0, 0, 0, 0.03);
+  box-sizing: border-box;
+  transition: all 0.25s ease;
+  overflow: hidden;
+  text-align: center;
+}
+
+.stackup-cart-goal-headline {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 8px;
+  text-align: center;
+  color: var(--stackup-goal-text-color, #111827);
+  opacity: 0.75;
+}
+
+.stackup-cart-goal-badge-row {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.stackup-cart-goal-scope-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-size: 11.5px;
+  font-weight: 500;
+  line-height: 1.2;
+  padding: 4px 12px;
+  border-radius: 9999px;
+  background-color: #f8fafc;
+  color: #475569;
+  border: 1px solid #e2e8f0;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
+  max-width: 90%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stackup-cart-goal-scope-badge strong {
+  color: #0f172a;
+  font-weight: 600;
+}
+
+.stackup-cart-goal-header {
+  display: block;
+  text-align: center;
+  margin-bottom: 12px;
+}
+
+.stackup-cart-goal-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--stackup-goal-text-color, #0f172a);
+  line-height: 1.45;
+  letter-spacing: -0.01em;
+  text-align: center;
+}
+
+.stackup-goal-unlocked-text {
+  color: #16a34a !important;
+  font-weight: 800;
+  margin-right: 6px;
+  font-size: 15px;
+  display: inline-block;
+}
+
+.stackup-goal-next-text {
+  color: var(--stackup-goal-text-color, #0f172a);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.stackup-goal-next-text strong {
+  color: var(--stackup-goal-accent-color, #0f172a);
+  font-weight: 700;
+}
+
+.stackup-cart-goal-title strong {
+  color: var(--stackup-goal-accent-color, #0f172a);
+  font-weight: 700;
+}
+
+/* Track & Bar */
+.stackup-cart-goal-track-container {
+  position: relative;
+  width: 100%;
+  padding: 14px 14px 16px 14px;
+  box-sizing: border-box;
+}
+
+.stackup-cart-goal-track {
+  width: 100%;
+  height: 12px;
+  background-color: var(--stackup-goal-track-color, #eef2f6) !important;
+  border-radius: 9999px;
+  overflow: hidden;
+  position: relative;
+  display: block;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+
+.stackup-cart-goal-fill {
+  display: block !important;
+  height: 12px !important;
+  min-height: 12px !important;
+  background: linear-gradient(90deg, #22c55e 0%, #10b981 30%, #06b6d4 70%, #3b82f6 100%) !important;
+  box-shadow: 0 1px 4px rgba(6, 182, 212, 0.35);
+  border-radius: 9999px;
+  position: relative;
+  overflow: hidden;
+  transition: width 0.5s cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+.stackup-cart-goal-fill::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0) 0%, rgba(255, 255, 255, 0.28) 50%, rgba(255, 255, 255, 0) 100%);
+  animation: stackupGoalShimmer 2.2s infinite;
+}
+
+@keyframes stackupGoalShimmer {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+
+.stackup-cart-goal-fill.is-completed {
+  background: linear-gradient(90deg, #10b981 0%, #059669 100%) !important;
+}
+
+/* Milestone Markers */
+.stackup-cart-goal-markers {
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  right: 14px;
+  bottom: 0;
+  pointer-events: none;
+}
+
+.stackup-goal-marker {
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  pointer-events: auto;
+}
+
+.stackup-goal-marker[data-is-first="true"] {
+  transform: translateX(0);
+  align-items: flex-start;
+}
+
+.stackup-goal-marker[data-is-last="true"] {
+  transform: translateX(-100%);
+  align-items: flex-end;
+}
+
+.stackup-goal-marker-dot {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background-color: #ffffff;
+  border: 2.5px solid var(--stackup-goal-track-color, #e2e8f0);
+  margin-top: -8px;
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13.5px;
+  line-height: 1;
+  font-weight: 700;
+  color: #64748b;
+}
+
+.stackup-goal-marker.is-achieved .stackup-goal-marker-dot {
+  background: linear-gradient(135deg, #22c55e 0%, #06b6d4 100%) !important;
+  border: 2.5px solid #ffffff !important;
+  color: #ffffff !important;
+  box-shadow: 0 0 0 2px rgba(6, 182, 212, 0.4), 0 3px 10px rgba(6, 182, 212, 0.45) !important;
+  transform: scale(1.1);
+}
+
+.stackup-goal-marker-label {
+  display: none !important;
+}
+
+/* Free Gift Banner in Drawer */
+.stackup-goal-gift-banner {
+  margin-top: 10px;
+  padding: 8px 12px;
+  background-color: #f0fdf4;
+  border: 1px dashed #86efac;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  color: #166534;
+  animation: stackup-slide-down 0.25s ease;
+}
+
+.stackup-goal-gift-banner strong {
+  color: #15803d;
+}
+
+.stackup-goal-gift-tag {
+  background: #16a34a;
+  color: #ffffff;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 4px;
+  text-transform: uppercase;
+}
+
+
 

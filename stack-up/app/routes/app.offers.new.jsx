@@ -1,14 +1,34 @@
 import { useState, useEffect } from "react";
-import { useNavigate, useNavigation } from "react-router";
+import { useNavigate, useNavigation, useLoaderData } from "react-router";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
+import prisma from "../db.server";
 
 export const loader = async ({ request }) => {
-  await authenticate.admin(request);
-  return null;
+  const { session } = await authenticate.admin(request);
+  const shop = session?.shop || "";
+  const cleanShop = shop.replace(".myshopify.com", "");
+
+  const existingCartGoal = await prisma.offer.findFirst({
+    where: {
+      type: "CART_GOAL",
+      status: { not: "DEACTIVATED" },
+      OR: [
+        { shop: session.shop },
+        { shop: cleanShop },
+        { shop: `${cleanShop}.myshopify.com` },
+      ],
+    },
+    select: { id: true, numericId: true, title: true, status: true },
+    orderBy: { createdAt: "desc" },
+  });
+
+  return { existingCartGoal };
 };
 
 export default function NewOfferSelect() {
+  const { existingCartGoal } = useLoaderData() || {};
+  const hasCartGoal = Boolean(existingCartGoal);
   const navigate = useNavigate();
   const navigation = useNavigation();
   const shopify = useAppBridge();
@@ -259,6 +279,76 @@ export default function NewOfferSelect() {
                     disabled={isBusy ? true : undefined}
                   >
                     Create BOGO Offer
+                  </s-button>
+                </s-box>
+              </s-stack>
+            </s-box>
+
+            {/* Option 5: Cart Goal / Tiered Cart-Value Discount */}
+            <s-box
+              background="subdued"
+              border="small"
+              borderRadius="base"
+              padding="base"
+            >
+              <s-stack gap="base" justifyContent="space-between">
+                <s-stack gap="base">
+                  {/* Preview Image */}
+                  <s-box
+                    borderRadius="base"
+                    overflow="hidden"
+                    border="small"
+                    background="surface"
+                  >
+                    <s-image
+                      src="/img5.png"
+                      alt="Cart Goal & Tiered Cart Discount Preview"
+                      aspectRatio="16/9"
+                      objectFit="contain"
+                      inlineSize="fill"
+                    />
+                  </s-box>
+
+                  {/* Badge, Title & Description */}
+                  <s-stack gap="small">
+                    <s-stack direction="inline" justifyContent="space-between" alignItems="center">
+                      <s-badge tone="success">Cart & Order Discount</s-badge>
+                      {hasCartGoal && (
+                        <s-badge tone="attention">1 Active (Limit reached)</s-badge>
+                      )}
+                    </s-stack>
+                    <s-heading size="medium">Cart Goal / Spend More, Save More</s-heading>
+                    <s-text tone="subdued">
+                      Boost order value directly inside the cart drawer and on the cart page. Motivate customers to unlock tiered discounts, free shipping, and free gifts with an animated progress bar.
+                    </s-text>
+                    {hasCartGoal && (
+                      <s-box background="subdued" padding="small" borderRadius="base">
+                        <s-stack gap="extra-tight">
+                          <s-text size="small" tone="subdued">
+                            Only 1 Cart Goal campaign can run at a time to prevent duplicate progress bars.
+                          </s-text>
+                          <s-link href={`/app/offers/cart-goal/edit/${existingCartGoal.id || existingCartGoal.numericId}`}>
+                            Edit existing campaign ({existingCartGoal.title}) →
+                          </s-link>
+                        </s-stack>
+                      </s-box>
+                    )}
+                  </s-stack>
+                </s-stack>
+
+                {/* Action Button */}
+                <s-box paddingBlockStart="base">
+                  <s-button
+                    variant={hasCartGoal ? "secondary" : "primary"}
+                    inlineSize="fill"
+                    onClick={() => {
+                      if (hasCartGoal) return;
+                      handleSelect("CART_GOAL", "/app/offers/cart-goal/create");
+                    }}
+                    loading={selectedType === "CART_GOAL" ? true : undefined}
+                    disabled={(isBusy || hasCartGoal) ? true : undefined}
+                  >
+                    {hasCartGoal ? "Cart Goal Already Created" : "Create Cart Goal Offer"}
                   </s-button>
                 </s-box>
               </s-stack>

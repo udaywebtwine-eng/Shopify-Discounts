@@ -24,13 +24,14 @@ export const loader = async ({ request }) => {
   }
 
   // 2. Count active offers per type
-  let counts = { paired: 0, selected: 0, volume: 0, bogo: 0, total: 0 };
+  let counts = { paired: 0, selected: 0, volume: 0, bogo: 0, cartGoal: 0, total: 0 };
   try {
-    const [pairedCount, selectedCount, volumeCount, bogoCount] = await Promise.all([
+    const [pairedCount, selectedCount, volumeCount, bogoCount, cartGoalCount] = await Promise.all([
       db.offer.count({ where: { shop: session.shop, type: "PAIRED", status: "ACTIVE" } }),
       db.offer.count({ where: { shop: session.shop, type: "SELECTED", status: "ACTIVE" } }),
       db.offer.count({ where: { shop: session.shop, type: "VOLUME", status: "ACTIVE" } }),
       db.offer.count({ where: { shop: session.shop, type: "BOGO", status: "ACTIVE" } }),
+      db.offer.count({ where: { shop: session.shop, type: "CART_GOAL", status: "ACTIVE" } }),
     ]);
 
     counts = {
@@ -38,7 +39,8 @@ export const loader = async ({ request }) => {
       selected: selectedCount,
       volume: volumeCount,
       bogo: bogoCount,
-      total: pairedCount + selectedCount + volumeCount + bogoCount,
+      cartGoal: cartGoalCount,
+      total: pairedCount + selectedCount + volumeCount + bogoCount + cartGoalCount,
     };
   } catch (dbErr) {
     console.error("[Customization] DB count error:", dbErr);
@@ -116,6 +118,18 @@ export default function Customization() {
       activeOffers: counts.bogo,
       customizeUrl: "/app/customize/bogo",
     },
+    {
+      id: "cart-goal",
+      filterCategory: "cart-goal",
+      title: "Cart Goal Progress Bar",
+      badgeLabel: "Cart & Order Discount",
+      badgeTone: "success",
+      description: "Customize animated progress bar colors, milestone marker icons, motivational copy templates, and cart drawer placement.",
+      image: "/img5.png",
+      alt: "Cart Goal & Spend More, Save More Progress Bar Preview",
+      activeOffers: counts.cartGoal,
+      customizeUrl: "/app/customize/cart-goal",
+    },
   ];
 
   const filteredWidgets = activeFilter === "all"
@@ -180,6 +194,12 @@ export default function Customization() {
             onClick={() => setActiveFilter("bogo")}
           >
             Buy X Get Y
+          </s-button>
+          <s-button
+            variant={activeFilter === "cart-goal" ? "primary" : "secondary"}
+            onClick={() => setActiveFilter("cart-goal")}
+          >
+            Cart Goal
           </s-button>
         </s-stack>
       </s-box>

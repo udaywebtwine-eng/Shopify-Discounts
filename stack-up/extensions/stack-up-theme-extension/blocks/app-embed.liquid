@@ -1,4 +1,45 @@
 <span data-stackup-embed-active id="stackup-embed-marker" hidden style="display:none !important;"></span>
+
+{% assign app_status = shop.metafields.stack_up.stack_up_app_enabled.value %}
+{% assign is_app_enabled = true %}
+{% if app_status == 'false' or app_status == false %}
+  {% assign is_app_enabled = false %}
+{% endif %}
+
+{% if is_app_enabled %}
+  {% assign cart_goal_data = shop.metafields.stack_up.cart_goal_offers.value %}
+  {% assign cart_goal_widget_settings = shop.metafields.stack_up.cart_goal_widget_settings.value %}
+  {% if cart_goal_data != blank %}
+    <script id="stackup-cart-goal-config" type="application/json">
+      {% if cart_goal_data.first %}
+        {{ cart_goal_data | json }}
+      {% else %}
+        {{ cart_goal_data }}
+      {% endif %}
+    </script>
+  {% endif %}
+  {% if cart_goal_widget_settings != blank %}
+    <script id="stackup-cart-goal-widget-settings" type="application/json">
+      {% if cart_goal_widget_settings.first %}
+        {{ cart_goal_widget_settings | json }}
+      {% else %}
+        {{ cart_goal_widget_settings }}
+      {% endif %}
+    </script>
+  {% endif %}
+  <script id="stackup-cart-collection-map" type="application/json">
+    {
+      {% for item in cart.items %}
+        "{{ item.product_id }}": [
+          {% for c in item.product.collections %}
+            "{{ c.id }}", "{{ c.handle }}"{% unless forloop.last %},{% endunless %}
+          {% endfor %}
+        ]{% unless forloop.last %},{% endunless %}
+      {% endfor %}
+    }
+  </script>
+{% endif %}
+
 <script>
   (function() {
     function markActive() {

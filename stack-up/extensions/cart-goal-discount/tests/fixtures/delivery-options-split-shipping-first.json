@@ -1,0 +1,87 @@
+{
+  "payload": {
+    "export": "cart-delivery-options-discounts-generate-run",
+    "target": "cart.delivery-options.discounts.generate.run",
+    "input": {
+      "presentmentCurrencyRate": "155.0",
+      "discount": {
+        "discountClasses": [
+          "SHIPPING"
+        ]
+      },
+      "shop": {
+        "appStatus": {
+          "value": "true"
+        },
+        "cartGoalOffers": {
+          "value": "[{\"id\":\"1\",\"title\":\"Cart Goal\",\"status\":\"ACTIVE\",\"applyTo\":\"ALL\",\"tiers\":[{\"minAmount\":100,\"hasFreeShipping\":true,\"label\":\"Free Shipping\"}]}]"
+        }
+      },
+      "cart": {
+        "lines": [
+          {
+            "id": "gid://shopify/CartLine/0",
+            "quantity": 1,
+            "cost": {
+              "subtotalAmount": {
+                "amount": "16000.0"
+              }
+            },
+            "attribute": null,
+            "merchandise": {
+              "__typename": "ProductVariant",
+              "id": "gid://shopify/ProductVariant/101",
+              "product": {
+                "id": "gid://shopify/Product/1"
+              }
+            }
+          }
+        ],
+        "deliveryGroups": [
+          {
+            "id": "gid://shopify/CartDeliveryGroup/0",
+            "deliveryOptions": [
+              {
+                "deliveryMethodType": "SHIPPING"
+              }
+            ]
+          },
+          {
+            "id": "gid://shopify/CartDeliveryGroup/1",
+            "deliveryOptions": [
+              {
+                "deliveryMethodType": "PICK_UP"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "output": {
+      "operations": [
+        {
+          "deliveryDiscountsAdd": {
+            "candidates": [
+              {
+                "message": "Free Shipping",
+                "targets": [
+                  {
+                    "deliveryGroup": {
+                      "id": "gid://shopify/CartDeliveryGroup/0"
+                    }
+                  }
+                ],
+                "value": {
+                  "percentage": {
+                    "value": 100
+                  }
+                }
+              }
+            ],
+            "selectionStrategy": "ALL"
+          }
+        }
+      ]
+    }
+  }
+}

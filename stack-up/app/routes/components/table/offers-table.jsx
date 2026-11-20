@@ -119,6 +119,7 @@ export default function OffersTable({ offersData = [], currencySymbol = "$" }) {
                         <s-option value="Selected Products">Selected Products</s-option>
                         <s-option value="Volume Discount">Volume Discount</s-option>
                         <s-option value="BOGO & Buy X Get Y">BOGO & Buy X Get Y</s-option>
+                        <s-option value="Cart Goal">Cart Goal</s-option>
                     </s-select>
 
                     <s-box>
@@ -288,6 +289,8 @@ export default function OffersTable({ offersData = [], currencySymbol = "$" }) {
                                     ? `/app/offers/volume/edit/${offer.numericId}`
                                     : offer.discountType === "BOGO & Buy X Get Y" || offer.type === "BOGO"
                                     ? `/app/offers/bogo/edit/${offer.numericId}`
+                                    : offer.discountType === "Cart Goal" || offer.type === "CART_GOAL"
+                                    ? `/app/offers/cart-goal/edit/${offer.numericId}`
                                     : `/app/offers/paired/edit/${offer.numericId}`;
                             return (
                                 <s-table-row key={offer.id}>
@@ -309,6 +312,8 @@ export default function OffersTable({ offersData = [], currencySymbol = "$" }) {
                                                     ? "info"
                                                     : offer.discountType === "Volume Discount"
                                                     ? "success"
+                                                    : offer.discountType === "Cart Goal"
+                                                    ? "attention"
                                                     : "warning"
                                             }
                                         >{offer.discountType}</s-badge>

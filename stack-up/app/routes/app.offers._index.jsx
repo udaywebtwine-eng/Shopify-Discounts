@@ -24,6 +24,7 @@ import {
     removeBogoMetafieldFromProducts,
     getBogoBuyProducts,
 } from "../utils/bogoMetafields.server";
+import { syncAllActiveCartGoalOffersToShopMetafield } from "../utils/cartGoalMetafields.server";
 import { ensureMasterDiscounts, cleanupLegacyDiscounts } from "../utils/masterDiscount.server";
 
 export const loader = async ({ request }) => {
@@ -52,6 +53,7 @@ export const loader = async ({ request }) => {
         syncAllActiveSelectedOffersToShopMetafield(admin).catch(() => { }),
         syncAllActiveVolumeOffersToShopMetafield(admin).catch(() => { }),
         syncAllActiveBogoOffersToShopMetafield(admin).catch(() => { }),
+        syncAllActiveCartGoalOffersToShopMetafield(admin).catch(() => { }),
     ]);
 
     // Extract the live store-wide combinations directly from master discounts in Shopify
@@ -95,6 +97,14 @@ export const loader = async ({ request }) => {
             } else if (dbo.type === "BOGO") {
                 mainCount = JSON.parse(dbo.mainProducts || "[]").length;
                 subCount = JSON.parse(dbo.subProducts || "[]").length;
+            } else if (dbo.type === "CART_GOAL") {
+                let tiers = [];
+                try {
+                    const cfg = typeof dbo.configuration === "string" ? JSON.parse(dbo.configuration) : dbo.configuration;
+                    tiers = cfg?.tiers || [];
+                } catch {}
+                mainCount = tiers.length;
+                subCount = tiers.filter((t) => t.freeGift).length;
             }
         } catch {
             mainCount = 0;
@@ -119,32 +129,39 @@ export const loader = async ({ request }) => {
         const isSelected = dbo.type === "SELECTED";
         const isVolume = dbo.type === "VOLUME";
         const isBogo = dbo.type === "BOGO";
+        const isCartGoal = dbo.type === "CART_GOAL";
 
-        const typeLabel = isBogo
-            ? "BOGO & Gift"
-            : isVolume
-                ? "Quantity Breaks"
-                : isSelected
-                    ? "Product Add-ons"
-                    : "Frequently Bought";
+        const typeLabel = isCartGoal
+            ? "Cart Goal"
+            : isBogo
+                ? "BOGO & Gift"
+                : isVolume
+                    ? "Quantity Breaks"
+                    : isSelected
+                        ? "Product Add-ons"
+                        : "Frequently Bought";
 
-        const typeBadgeTone = isBogo
-            ? "magic"
-            : isVolume
-                ? "success"
-                : isSelected
-                    ? "caution"
-                    : "info";
+        const typeBadgeTone = isCartGoal
+            ? "success"
+            : isBogo
+                ? "magic"
+                : isVolume
+                    ? "success"
+                    : isSelected
+                        ? "caution"
+                        : "info";
 
-        const productSummary = isBogo
-            ? (subCount > 0
-                ? `${mainCount} Buy + ${subCount} Reward`
-                : `${mainCount} Product${mainCount === 1 ? "" : "s"} (BOGO)`)
-            : isVolume
-                ? `${mainCount} Product${mainCount === 1 ? "" : "s"} (${subCount} Tiers)`
-                : isSelected
-                    ? `${mainCount} Target + ${subCount} Add-on`
-                    : `${mainCount} Main + ${subCount} Sub`;
+        const productSummary = isCartGoal
+            ? `${mainCount} Tier${mainCount === 1 ? "" : "s"}${subCount > 0 ? ` (${subCount} Gift)` : ""}`
+            : isBogo
+                ? (subCount > 0
+                    ? `${mainCount} Buy + ${subCount} Reward`
+                    : `${mainCount} Product${mainCount === 1 ? "" : "s"} (BOGO)`)
+                : isVolume
+                    ? `${mainCount} Product${mainCount === 1 ? "" : "s"} (${subCount} Tiers)`
+                    : isSelected
+                        ? `${mainCount} Target + ${subCount} Add-on`
+                        : `${mainCount} Main + ${subCount} Sub`;
 
         return {
             id: dbo.discountId,
@@ -225,6 +242,7 @@ export const action = async ({ request }) => {
                 syncAllActiveSelectedOffersToShopMetafield(admin),
                 syncAllActiveVolumeOffersToShopMetafield(admin),
                 syncAllActiveBogoOffersToShopMetafield(admin),
+                syncAllActiveCartGoalOffersToShopMetafield(admin),
             ]);
 
             return { success: true };
@@ -303,6 +321,8 @@ export default function AllOffersIndex() {
             navigate(`/app/offers/volume/edit/${offer.numericId}`);
         } else if (offer.type === "BOGO") {
             navigate(`/app/offers/bogo/edit/${offer.numericId}`);
+        } else if (offer.type === "CART_GOAL") {
+            navigate(`/app/offers/cart-goal/edit/${offer.numericId}`);
         } else {
             navigate(`/app/offers/paired/edit/${offer.numericId}`);
         }
@@ -580,6 +600,9 @@ export default function AllOffersIndex() {
                     Product Add-ons Widget
                 </s-button>
 
+                <s-button href="/app/customize/cart-goal">
+                    Cart Goal Widget
+                </s-button>
             </s-menu>
             {/* KPI Metric Cards */}
             <s-box border="small" borderRadius="base" padding="small">
@@ -633,6 +656,7 @@ export default function AllOffersIndex() {
                                 <s-option value="SELECTED">Product Add-ons</s-option>
                                 <s-option value="VOLUME">Quantity Breaks</s-option>
                                 <s-option value="BOGO">BOGO & Gift</s-option>
+                                <s-option value="CART_GOAL">Cart Goal</s-option>
                             </s-select>
 
                             <s-box>
@@ -772,8 +796,9 @@ export default function AllOffersIndex() {
                                             ? `/app/offers/volume/edit/${offer.numericId}`
                                             : offer.type === "BOGO"
                                                 ? `/app/offers/bogo/edit/${offer.numericId}`
-                                                : `/app/offers/paired/edit/${offer.numericId}`;
-                                    console.log(offer.combinesWith.productDiscounts, "offerrr")
+                                                : offer.type === "CART_GOAL"
+                                                    ? `/app/offers/cart-goal/edit/${offer.numericId}`
+                                                    : `/app/offers/paired/edit/${offer.numericId}`;
                                     return (
                                         <s-table-row key={offer.id}>
                                             {/* Offer Name */}

@@ -14,6 +14,8 @@ export const MASTER_SELECTED_TITLE = "StackUp Selected Products (Do Not Delete)"
 export const MASTER_PAIRED_TITLE = "StackUp Paired Products (Do Not Delete)";
 export const MASTER_VOLUME_TITLE = "StackUp Volume Discounts (Do Not Delete)";
 export const MASTER_BOGO_TITLE = "StackUp BOGO & Buy X Get Y (Do Not Delete)";
+export const MASTER_CART_GOAL_TITLE = "StackUp Cart Goal (Do Not Delete)";
+export const MASTER_CART_GOAL_SHIPPING_TITLE = "StackUp Cart Goal Free Shipping (Do Not Delete)";
 
 /**
  * Queries all Shopify Functions installed in the store to find function IDs.
@@ -57,16 +59,25 @@ export async function getInstalledFunctionIds(admin) {
         fn.title?.toLowerCase().includes("bxgy") ||
         fn.id?.toLowerCase().includes("bxgy")
     );
+    const cartGoalFn = functions.find(
+      (fn) =>
+        fn.title?.toLowerCase().includes("cart-goal") ||
+        fn.title?.toLowerCase().includes("cart_goal") ||
+        fn.title?.toLowerCase().includes("cart goal") ||
+        fn.id?.toLowerCase().includes("cart-goal") ||
+        fn.id?.toLowerCase().includes("cart_goal")
+    );
 
     return {
       selectedFunctionId: selectedFn?.id || null,
       pairedFunctionId: pairedFn?.id || null,
       volumeFunctionId: volumeFn?.id || null,
       bogoFunctionId: bogoFn?.id || null,
+      cartGoalFunctionId: cartGoalFn?.id || null,
     };
   } catch (err) {
     console.error("[MasterDiscount] Error querying shopifyFunctions:", err);
-    return { selectedFunctionId: null, pairedFunctionId: null, volumeFunctionId: null, bogoFunctionId: null };
+    return { selectedFunctionId: null, pairedFunctionId: null, volumeFunctionId: null, bogoFunctionId: null, cartGoalFunctionId: null };
   }
 }
 
@@ -86,6 +97,7 @@ export async function getMasterDiscountsStatus(admin) {
               ... on DiscountAutomaticApp {
                 title
                 status
+                discountClasses
                 combinesWith {
                   orderDiscounts
                   productDiscounts
@@ -107,18 +119,23 @@ export async function getMasterDiscountsStatus(admin) {
     let pairedMaster = null;
     let volumeMaster = null;
     let bogoMaster = null;
+    let cartGoalMaster = null;
+    let cartGoalShippingMaster = null;
 
     for (const node of nodes) {
       const disc = node.discount;
       if (!disc || disc.__typename !== "DiscountAutomaticApp") continue;
 
       const titleLower = (disc.title || "").toLowerCase();
+      const classes = (disc.discountClasses || []).map((c) => String(c).toUpperCase());
+
       if (titleLower.includes("stackup selected products") || disc.title === MASTER_SELECTED_TITLE) {
         selectedMaster = {
           nodeId: node.id,
           numericId: node.id.split("/").pop(),
           title: disc.title,
           status: disc.status,
+          discountClasses: classes,
           combinesWith: disc.combinesWith || {
             orderDiscounts: true,
             productDiscounts: false,
@@ -131,6 +148,7 @@ export async function getMasterDiscountsStatus(admin) {
           numericId: node.id.split("/").pop(),
           title: disc.title,
           status: disc.status,
+          discountClasses: classes,
           combinesWith: disc.combinesWith || {
             orderDiscounts: true,
             productDiscounts: false,
@@ -143,6 +161,7 @@ export async function getMasterDiscountsStatus(admin) {
           numericId: node.id.split("/").pop(),
           title: disc.title,
           status: disc.status,
+          discountClasses: classes,
           combinesWith: disc.combinesWith || {
             orderDiscounts: true,
             productDiscounts: false,
@@ -155,19 +174,46 @@ export async function getMasterDiscountsStatus(admin) {
           numericId: node.id.split("/").pop(),
           title: disc.title,
           status: disc.status,
+          discountClasses: classes,
           combinesWith: disc.combinesWith || {
             orderDiscounts: true,
             productDiscounts: false,
             shippingDiscounts: true,
           },
         };
+      } else if (titleLower.includes("stackup cart goal free shipping") || disc.title === MASTER_CART_GOAL_SHIPPING_TITLE) {
+        cartGoalShippingMaster = {
+          nodeId: node.id,
+          numericId: node.id.split("/").pop(),
+          title: disc.title,
+          status: disc.status,
+          discountClasses: classes,
+          combinesWith: disc.combinesWith || {
+            orderDiscounts: true,
+            productDiscounts: true,
+            shippingDiscounts: true,
+          },
+        };
+      } else if (titleLower.includes("stackup cart goal") || disc.title === MASTER_CART_GOAL_TITLE) {
+        cartGoalMaster = {
+          nodeId: node.id,
+          numericId: node.id.split("/").pop(),
+          title: disc.title,
+          status: disc.status,
+          discountClasses: classes,
+          combinesWith: disc.combinesWith || {
+            orderDiscounts: true,
+            productDiscounts: true,
+            shippingDiscounts: true,
+          },
+        };
       }
     }
 
-    return { selectedMaster, pairedMaster, volumeMaster, bogoMaster };
+    return { selectedMaster, pairedMaster, volumeMaster, bogoMaster, cartGoalMaster, cartGoalShippingMaster };
   } catch (err) {
     console.error("[MasterDiscount] Error querying master discount nodes:", err);
-    return { selectedMaster: null, pairedMaster: null, volumeMaster: null, bogoMaster: null };
+    return { selectedMaster: null, pairedMaster: null, volumeMaster: null, bogoMaster: null, cartGoalMaster: null, cartGoalShippingMaster: null };
   }
 }
 
@@ -392,17 +438,78 @@ export async function createMasterBogoDiscount(admin, functionId, combinations =
 }
 
 /**
+ * Creates the Master Automatic Discount in Shopify for Cart Goal.
+ * Uses BOTH PRODUCT and SHIPPING discount classes so a single discount node powers:
+ * - Line item tier discounts (% or $)
+ * - 100% Free Gift products
+ * - Free Shipping on delivery rates
+ */
+export async function createMasterCartGoalDiscount(admin, functionId, combinations = {}) {
+  const mutation = `#graphql
+    mutation CreateMasterCartGoalDiscount($automaticAppDiscount: DiscountAutomaticAppInput!) {
+      discountAutomaticAppCreate(automaticAppDiscount: $automaticAppDiscount) {
+        automaticAppDiscount {
+          discountId
+          title
+          status
+        }
+        userErrors {
+          field
+          message
+        }
+      }
+    }
+  `;
+
+  const variables = {
+    automaticAppDiscount: {
+      title: MASTER_CART_GOAL_TITLE,
+      functionId,
+      startsAt: new Date().toISOString(),
+      discountClasses: ["PRODUCT", "SHIPPING"],
+      combinesWith: {
+        orderDiscounts: combinations.orderDiscounts !== false,
+        productDiscounts: Boolean(combinations.productDiscounts),
+        shippingDiscounts: combinations.shippingDiscounts !== false,
+      },
+      metafields: [
+        {
+          namespace: "$app:discount",
+          key: "function_configuration",
+          type: "json",
+          value: JSON.stringify({ isMaster: true }),
+        },
+      ],
+    },
+  };
+
+  const res = await admin.graphql(mutation, { variables });
+  const json = await res.json();
+  const userErrors = json.data?.discountAutomaticAppCreate?.userErrors || [];
+  if (userErrors.length > 0) {
+    console.error("[MasterDiscount] Error creating Cart Goal master discount:", userErrors);
+    throw new Error(userErrors.map((e) => e.message).join(", "));
+  }
+
+  const created = json.data?.discountAutomaticAppCreate?.automaticAppDiscount;
+  console.log("[MasterDiscount] Successfully created Cart Goal Master Discount:", created?.discountId);
+  return created;
+}
+
+/**
  * Ensures all Master Discounts exist in Shopify Admin.
  * Recreates them automatically if missing.
  */
 export async function ensureMasterDiscounts(admin, options = {}) {
-  const { selectedMaster, pairedMaster, volumeMaster, bogoMaster } = await getMasterDiscountsStatus(admin);
-  const { selectedFunctionId, pairedFunctionId, volumeFunctionId, bogoFunctionId } = await getInstalledFunctionIds(admin);
+  const { selectedMaster, pairedMaster, volumeMaster, bogoMaster, cartGoalMaster, cartGoalShippingMaster } = await getMasterDiscountsStatus(admin);
+  const { selectedFunctionId, pairedFunctionId, volumeFunctionId, bogoFunctionId, cartGoalFunctionId } = await getInstalledFunctionIds(admin);
 
   let updatedSelected = selectedMaster;
   let updatedPaired = pairedMaster;
   let updatedVolume = volumeMaster;
   let updatedBogo = bogoMaster;
+  let updatedCartGoal = cartGoalMaster;
+  let updatedCartGoalShipping = cartGoalShippingMaster;
 
   if (!selectedMaster && selectedFunctionId) {
     console.log("[MasterDiscount] Selected master discount missing in Shopify. Creating now...");
@@ -580,11 +687,101 @@ export async function ensureMasterDiscounts(admin, options = {}) {
     }
   }
 
+  // Clean up any separate Cart Goal Free Shipping master discount (consolidated into unified Cart Goal node)
+  if (cartGoalShippingMaster?.nodeId) {
+    console.log("[MasterDiscount] Removing obsolete separate Cart Goal shipping master discount:", cartGoalShippingMaster.nodeId);
+    try {
+      await admin.graphql(
+        `#graphql
+        mutation DeleteSeparateCartGoalShippingMaster($id: ID!) {
+          discountAutomaticDelete(id: $id) {
+            deletedAutomaticDiscountId
+          }
+        }`,
+        { variables: { id: cartGoalShippingMaster.nodeId } }
+      );
+      cartGoalShippingMaster = null;
+    } catch (delErr) {
+      console.warn("[MasterDiscount] Could not delete separate shipping master discount:", delErr.message);
+    }
+  }
+
+  // Verify Cart Goal Master has BOTH PRODUCT and SHIPPING classes (recreate if obsolete or single-class)
+  const cartGoalNeedsRecreation = Boolean(
+    cartGoalMaster &&
+    Array.isArray(cartGoalMaster.discountClasses) &&
+    cartGoalMaster.discountClasses.length > 0 &&
+    (!cartGoalMaster.discountClasses.includes("PRODUCT") || !cartGoalMaster.discountClasses.includes("SHIPPING"))
+  );
+
+  if (cartGoalNeedsRecreation && cartGoalMaster?.nodeId) {
+    console.log("[MasterDiscount] Recreating Cart Goal master with dual [PRODUCT, SHIPPING] classes...");
+    try {
+      await admin.graphql(
+        `#graphql
+        mutation DeleteObsoleteCartGoalMaster($id: ID!) {
+          discountAutomaticDelete(id: $id) {
+            deletedAutomaticDiscountId
+          }
+        }`,
+        { variables: { id: cartGoalMaster.nodeId } }
+      );
+      updatedCartGoal = null;
+    } catch (delErr) {
+      console.warn("[MasterDiscount] Could not delete obsolete cart goal discount:", delErr.message);
+    }
+  }
+
+  if (!updatedCartGoal && cartGoalFunctionId) {
+    console.log("[MasterDiscount] Cart Goal master discount missing in Shopify. Creating now...");
+    try {
+      const created = await createMasterCartGoalDiscount(admin, cartGoalFunctionId, options.cartGoalCombinations);
+      if (created) {
+        updatedCartGoal = {
+          nodeId: created.discountId,
+          numericId: created.discountId.split("/").pop(),
+          title: created.title,
+          status: created.status,
+          discountClasses: ["PRODUCT", "SHIPPING"],
+          combinesWith: {
+            orderDiscounts: true,
+            productDiscounts: true,
+            shippingDiscounts: true,
+          },
+        };
+      }
+    } catch (e) {
+      console.warn("[MasterDiscount] Could not auto-create Cart Goal master discount:", e.message);
+    }
+  } else if (updatedCartGoal && updatedCartGoal.status !== "ACTIVE" && updatedCartGoal.nodeId) {
+    try {
+      await admin.graphql(
+        `#graphql
+        mutation ReactivateCartGoalMaster($id: ID!) {
+          discountAutomaticActivate(id: $id) {
+            automaticDiscountNode {
+              id
+            }
+            userErrors {
+              message
+            }
+          }
+        }`,
+        { variables: { id: updatedCartGoal.nodeId } }
+      );
+      if (updatedCartGoal) updatedCartGoal.status = "ACTIVE";
+      console.log("[MasterDiscount] Automatically reactivated Cart Goal Master Discount:", updatedCartGoal.nodeId);
+    } catch (actErr) {
+      console.warn("[MasterDiscount] Could not auto-reactivate Cart Goal master discount:", actErr);
+    }
+  }
+
   return {
     selectedMaster: updatedSelected,
     pairedMaster: updatedPaired,
     volumeMaster: updatedVolume,
     bogoMaster: updatedBogo,
+    cartGoalMaster: updatedCartGoal,
   };
 }
 
@@ -659,20 +856,22 @@ export async function updateMasterDiscountCombinations(admin, nodeId, combinatio
 }
 
 /**
- * Updates combinations across ALL 4 Master Discounts in Shopify Admin:
+ * Updates combinations across ALL 5 Master Discounts in Shopify Admin:
  * 1. StackUp Selected Products
  * 2. StackUp Paired Products
  * 3. StackUp Volume Discounts
  * 4. StackUp BOGO & Buy X Get Y
+ * 5. StackUp Cart Goal (PRODUCT + SHIPPING)
  */
 export async function updateAllMasterDiscountCombinations(admin, combinations) {
-  const { selectedMaster, pairedMaster, volumeMaster, bogoMaster } = await getMasterDiscountsStatus(admin);
+  const { selectedMaster, pairedMaster, volumeMaster, bogoMaster, cartGoalMaster } = await getMasterDiscountsStatus(admin);
 
   const targets = [
     { master: selectedMaster, title: MASTER_SELECTED_TITLE },
     { master: pairedMaster, title: MASTER_PAIRED_TITLE },
     { master: volumeMaster, title: MASTER_VOLUME_TITLE },
     { master: bogoMaster, title: MASTER_BOGO_TITLE },
+    { master: cartGoalMaster, title: MASTER_CART_GOAL_TITLE },
   ];
 
   const results = [];
@@ -704,9 +903,9 @@ export async function updateAllMasterDiscountCombinations(admin, combinations) {
  */
 export async function cleanupLegacyDiscounts(admin) {
   try {
-    const { selectedFunctionId, pairedFunctionId, volumeFunctionId, bogoFunctionId } = await getInstalledFunctionIds(admin);
+    const { selectedFunctionId, pairedFunctionId, volumeFunctionId, bogoFunctionId, cartGoalFunctionId } = await getInstalledFunctionIds(admin);
     const targetFunctionIds = new Set();
-    [selectedFunctionId, pairedFunctionId, volumeFunctionId, bogoFunctionId].filter(Boolean).forEach((id) => {
+    [selectedFunctionId, pairedFunctionId, volumeFunctionId, bogoFunctionId, cartGoalFunctionId].filter(Boolean).forEach((id) => {
       targetFunctionIds.add(id);
       targetFunctionIds.add(String(id).replace("gid://shopify/ShopifyFunction/", "").trim());
     });
@@ -743,7 +942,8 @@ export async function cleanupLegacyDiscounts(admin) {
         title === MASTER_SELECTED_TITLE ||
         title === MASTER_PAIRED_TITLE ||
         title === MASTER_VOLUME_TITLE ||
-        title === MASTER_BOGO_TITLE;
+        title === MASTER_BOGO_TITLE ||
+        title === MASTER_CART_GOAL_TITLE;
 
       if (isMaster) continue; // Keep Master discounts safe!
 

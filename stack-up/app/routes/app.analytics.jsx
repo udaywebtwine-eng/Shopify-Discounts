@@ -223,6 +223,7 @@ export const loader = async ({ request }) => {
         if (off.type === "SELECTED") discountType = "Selected Products";
         else if (off.type === "VOLUME") discountType = "Volume Discount";
         else if (off.type === "BOGO") discountType = "BOGO & Buy X Get Y";
+        else if (off.type === "CART_GOAL") discountType = "Cart Goal";
 
         const prods = getOfferProductsList(off);
 

@@ -1101,7 +1101,9 @@
 
   function initStackUpWidgets() {
     const isEmbedActive = checkIsAppEnabled();
-    const widgets = document.querySelectorAll('.stackup-paired-widget, .stackup-addons-widget, .stackup-volume-widget, .stackup-bogo-container');
+    const widgets = document.querySelectorAll(
+      '.stackup-paired-widget, .stackup-addons-widget, .stackup-volume-widget, .stackup-bogo-container, .stackup-cart-goal-wrapper'
+    );
 
     if (!isEmbedActive) {
       widgets.forEach((w) => {
@@ -1136,6 +1138,16 @@
     } catch (e) {
       console.warn('[StackUp] Volume widget init warning:', e);
     }
+    try {
+      initStackUpCartGoal();
+    } catch (e) {
+      console.warn('[StackUp] Cart Goal widget init warning:', e);
+    }
+  }
+
+  // Safe alias to prevent ReferenceError
+  function initStackUpSelectedWidgets() {
+    return initStackUpAddonsWidgets();
   }
 
   function resetAllStackUpButtons() {
@@ -1190,6 +1202,897 @@
       if (btnIcon) btnIcon.style.display = 'inline-flex';
       if (btnSpinner) btnSpinner.style.display = 'none';
     });
+  }
+
+  // ==========================================================================
+  // STACKUP CART GOAL & TIERED CART-VALUE PROGRESS BAR ENGINE
+  // Multi-Theme Drawer Auto-Detect + Real-Time Ajax Cart State Machine
+  // ==========================================================================
+
+  let isCartGoalUpdating = false;
+  let cartGoalSyncTimeout = null;
+
+  function getCartGoalWidgetSettings() {
+    const el = document.getElementById('stackup-cart-goal-widget-settings');
+    if (el) {
+      try {
+        let text = (el.textContent || '').trim();
+        if (text) {
+          let parsed = JSON.parse(text);
+          while (typeof parsed === 'string') parsed = JSON.parse(parsed);
+          if (parsed && typeof parsed === 'object') return parsed;
+        }
+      } catch (e) {
+        console.warn('[StackUp:CartGoal] Error parsing widget settings:', e);
+      }
+    }
+    return null;
+  }
+
+  function getCartGoalOffers() {
+    const configElems = document.querySelectorAll('#stackup-cart-goal-config, script[data-stackup-cart-goal]');
+    for (const configElem of configElems) {
+      try {
+        const text = (configElem.textContent || '').trim();
+        if (!text) continue;
+        let data = JSON.parse(text);
+        while (typeof data === 'string') {
+          try {
+            data = JSON.parse(data);
+          } catch {
+            break;
+          }
+        }
+        if (Array.isArray(data) && data.length > 0) return data;
+        if (data && typeof data === 'object' && Array.isArray(data.tiers)) return [data];
+      } catch (err) {
+        console.warn('[StackUp:CartGoal] Error parsing config:', err);
+      }
+    }
+
+    if (window._stackupCartGoalOffers && Array.isArray(window._stackupCartGoalOffers)) {
+      return window._stackupCartGoalOffers;
+    }
+
+    // Fallback in Shopify Theme Editor (design_mode) to ensure immediate visual rendering
+    const isEditor = Boolean(
+      (window.Shopify && window.Shopify.designMode) ||
+      document.querySelector('[data-shopify-editor]') ||
+      document.body?.classList?.contains('shopify-design-mode') ||
+      window.location.search?.includes('design_mode')
+    );
+    if (isEditor) {
+      return [
+        {
+          id: 'editor-preview-goal',
+          title: 'Spend More, Save More',
+          widgetTitle: '',
+          status: 'ACTIVE',
+          tiers: [
+            { minAmount: 100, discountType: 'PERCENTAGE', discountValue: 10, label: '10% off', hasFreeShipping: false },
+            { minAmount: 200, discountType: 'PERCENTAGE', discountValue: 15, label: '15% off', hasFreeShipping: true }
+          ],
+          widget: {
+            heading: '{widgettitle}',
+            initialMessage: 'Add {{remaining}} more to unlock {{next_tier}}!',
+            progressMessage: '🎉 {{current_tier}} unlocked! Add {{remaining}} for {{next_tier}}!',
+            completedMessage: '🎉 Congratulations! You unlocked {{reward}}!',
+            barColor: '#000000',
+            trackColor: '#e5e7eb',
+            achievedColor: '#10b981',
+            cardSurface: '#ffffff',
+            borderColor: '#e5e7eb',
+            borderRadius: 12,
+            barHeight: 8,
+            textColor: '#111827',
+            milestoneTextColor: '#6b7280'
+          }
+        }
+      ];
+    }
+
+    return null;
+  }
+
+  const CART_DRAWER_SELECTORS = [
+    'cart-drawer .drawer__inner',
+    'cart-drawer .cart-drawer__content',
+    'cart-drawer .cart-drawer__body',
+    'cart-drawer [class*="inner"]',
+    'cart-drawer',
+    '#CartDrawer .drawer__inner',
+    '#CartDrawer',
+    '.drawer__inner',
+    '.cart-drawer__content',
+    '.cart-drawer__body',
+    '.mini-cart__content',
+    '.slideout-cart__content',
+    '[data-cart-drawer]',
+    '.drawer--is-open',
+    '.js-drawer.is-open',
+  ];
+
+  function isCartPage() {
+    const p = (window.location.pathname || '').toLowerCase();
+    return p === '/cart' || p.endsWith('/cart') || p.includes('/cart');
+  }
+
+  function createCartGoalMarkup(offer, elementId) {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'stackup-cart-goal-wrapper';
+    wrapper.id = elementId || 'stackup-cart-goal-bar';
+
+    const card = document.createElement('div');
+    card.className = 'stackup-cart-goal-card';
+
+    // Apply custom styling variables from cart_goal_widget_settings (or fallback to offer.widget)
+    const customSettings = getCartGoalWidgetSettings();
+    const w = customSettings?.styles || offer?.widget || {};
+    if (w) {
+      if (w.cardSurface) card.style.setProperty('--stackup-goal-card-bg', w.cardSurface);
+      if (w.borderColor) card.style.setProperty('--stackup-goal-border-color', w.borderColor);
+      if (w.borderRadius !== undefined) card.style.setProperty('--stackup-goal-card-radius', `${w.borderRadius}px`);
+      if (w.barColor) card.style.setProperty('--stackup-goal-fill-color', w.barColor);
+      if (w.trackColor) card.style.setProperty('--stackup-goal-track-color', w.trackColor);
+      if (w.achievedColor) card.style.setProperty('--stackup-goal-completed-color', w.achievedColor);
+      if (w.textColor) card.style.setProperty('--stackup-goal-text-color', w.textColor);
+    }
+
+    // Optional widget headline if defined
+    if (offer && offer.widgetTitle && offer.widgetTitle.trim()) {
+      const headline = document.createElement('div');
+      headline.className = 'stackup-cart-goal-headline';
+      headline.textContent = offer.widgetTitle;
+      card.appendChild(headline);
+    }
+
+    // Unified motivational message container (no detached icon span)
+    const header = document.createElement('div');
+    header.className = 'stackup-cart-goal-header';
+    header.innerHTML = '<div class="stackup-cart-goal-title">Add items to unlock discount rewards!</div>';
+
+    const trackContainer = document.createElement('div');
+    trackContainer.className = 'stackup-cart-goal-track-container';
+    trackContainer.innerHTML = '<div class="stackup-cart-goal-track"><div class="stackup-cart-goal-fill" style="width: 0%;"></div></div><div class="stackup-cart-goal-markers"></div>';
+
+    card.appendChild(header);
+    card.appendChild(trackContainer);
+    wrapper.appendChild(card);
+    return wrapper;
+  }
+
+  function ensureCartGoalInDrawer(offer) {
+    // Never auto-inject drawer widget on full /cart page (user added the Cart Goal Progress Bar theme block)
+    if (isCartPage()) return null;
+
+    let widget = document.getElementById('stackup-cart-goal-bar-drawer');
+    if (widget) return widget;
+
+    let drawer = null;
+    for (const sel of CART_DRAWER_SELECTORS) {
+      try {
+        const elem = document.querySelector(sel);
+        if (elem) {
+          drawer = elem;
+          break;
+        }
+      } catch { }
+    }
+
+    if (!drawer) return null;
+
+    // Check if drawer already contains a cart goal wrapper
+    const existingInDrawer = drawer.querySelector('.stackup-cart-goal-wrapper');
+    if (existingInDrawer) {
+      return existingInDrawer;
+    }
+
+    widget = createCartGoalMarkup(offer, 'stackup-cart-goal-bar-drawer');
+    widget.classList.add('stackup-cart-goal-in-drawer');
+
+    const drawerHeader = drawer.querySelector('.drawer__header, .cart-drawer__header, [class*="header"]');
+    const drawerItems = drawer.querySelector('cart-drawer-items, .cart__items, .cart-items, form[action^="/cart"], .drawer__contents');
+
+    if (drawerHeader && drawerHeader.parentNode && drawerHeader.nextSibling) {
+      drawerHeader.parentNode.insertBefore(widget, drawerHeader.nextSibling);
+    } else if (drawerItems && drawerItems.parentNode) {
+      drawerItems.parentNode.insertBefore(widget, drawerItems);
+    } else if (drawer.firstChild) {
+      drawer.insertBefore(widget, drawer.firstChild);
+    } else {
+      drawer.appendChild(widget);
+    }
+
+    return widget;
+  }
+
+  function ensureAllCartGoalWidgetsInDOM(offer) {
+    // 1. Immediately remove any previously auto-appended page widget to prevent duplicate progress bars
+    const oldPageWidget = document.getElementById('stackup-cart-goal-bar-page');
+    if (oldPageWidget) {
+      oldPageWidget.remove();
+    }
+
+    const widgets = [];
+
+    // 2. Discover all static Liquid theme block widgets added via Theme Editor ("Cart Goal Progress Bar")
+    document.querySelectorAll('.stackup-cart-goal-wrapper').forEach((w) => {
+      if (w.id !== 'stackup-cart-goal-bar-page' && !widgets.includes(w)) {
+        widgets.push(w);
+      }
+    });
+
+    // 3. For slide-out drawer on non-cart pages only (if no block is already present)
+    if (!isCartPage()) {
+      const drawerWidget = ensureCartGoalInDrawer(offer);
+      if (drawerWidget && !widgets.includes(drawerWidget)) {
+        widgets.push(drawerWidget);
+      }
+    }
+
+    return widgets;
+  }
+
+  async function updateCartGoalUI() {
+    if (isCartGoalUpdating) return;
+
+    const offers = getCartGoalOffers();
+    if (!offers || offers.length === 0) return;
+
+    const offer = offers[0];
+    const tiers = Array.isArray(offer.tiers) ? offer.tiers : [];
+    if (tiers.length === 0) return;
+
+    const widgets = ensureAllCartGoalWidgetsInDOM(offer);
+    if (!widgets || widgets.length === 0) return;
+
+    try {
+      const rootUrl = window.Shopify?.routes?.root || '/';
+      let cart = null;
+      try {
+        const res = await fetch(`${rootUrl}cart.js`, { credentials: 'same-origin' });
+        if (res.ok) {
+          cart = await res.json();
+        }
+      } catch (fetchErr) {
+        console.warn('[StackUp:CartGoal] cart.js fetch notice:', fetchErr);
+      }
+
+      // Compute subtotal in dollars (excluding free gift items)
+      const isSpecificProducts = offer.applyTo === 'PRODUCTS' && Array.isArray(offer.products) && offer.products.length > 0;
+      const isSpecificCollections = offer.applyTo === 'COLLECTIONS' && (
+        (Array.isArray(offer.collectionProductIds) && offer.collectionProductIds.length > 0) ||
+        (Array.isArray(offer.collections) && offer.collections.length > 0)
+      );
+      const isFiltered = isSpecificProducts || isSpecificCollections;
+
+      // Build Set of eligible product IDs
+      const eligibleProdIds = new Set();
+      if (isSpecificProducts) {
+        offer.products.forEach(p => {
+          const pid = String(p.id || p).split('/').pop();
+          if (pid) eligibleProdIds.add(pid);
+        });
+      }
+      if (isSpecificCollections && Array.isArray(offer.collectionProductIds)) {
+        offer.collectionProductIds.forEach(pid => {
+          const idStr = String(pid).split('/').pop();
+          if (idStr) eligibleProdIds.add(idStr);
+        });
+      }
+
+      // Read Liquid collections map if available
+      let liquidCollectionMap = {};
+      try {
+        const mapEl = document.getElementById('stackup-cart-collection-map');
+        if (mapEl) liquidCollectionMap = JSON.parse(mapEl.textContent || '{}');
+      } catch {}
+
+      const targetColIds = new Set((offer.collections || []).map(c => String(c.id || c).split('/').pop()));
+      const targetColHandles = new Set((offer.collections || []).map(c => String(c.handle || '').toLowerCase()).filter(Boolean));
+
+      // Multi-Currency & Exchange Rate Detection
+      const sampleWidget = document.querySelector('.stackup-cart-goal-wrapper');
+      const cartCurrencyCode = (
+        cart?.currency ||
+        sampleWidget?.dataset?.cartCurrencyCode ||
+        window.Shopify?.currency?.active ||
+        sampleWidget?.dataset?.shopCurrency ||
+        ''
+      ).toUpperCase();
+      const rawRate = window.Shopify && window.Shopify.currency && parseFloat(window.Shopify.currency.rate);
+      const currencyRate = (!rawRate || isNaN(rawRate) || rawRate <= 0) ? 1.0 : rawRate;
+
+      // Dynamic currency subunit divisor (e.g., 100 for USD/EUR/INR, 1 for JPY/KRW, 1000 for KWD)
+      function getSubunitDivisor(currencyCode) {
+        if (!currencyCode) return 100;
+        try {
+          const digits = new Intl.NumberFormat(undefined, {
+            style: 'currency',
+            currency: currencyCode,
+          }).resolvedOptions().maximumFractionDigits;
+          return typeof digits === 'number' ? Math.pow(10, digits) : 100;
+        } catch {
+          return 100;
+        }
+      }
+      const subunitDivisor = getSubunitDivisor(cartCurrencyCode);
+
+      function formatCartGoalMoney(amount, currency) {
+        const cur = (currency || cartCurrencyCode || sampleWidget?.dataset?.shopCurrency || '').toUpperCase();
+        try {
+          if (cur) {
+            return new Intl.NumberFormat(undefined, {
+              style: 'currency',
+              currency: cur,
+            }).format(amount);
+          }
+        } catch {}
+        const sym = sampleWidget?.dataset?.cartCurrencySymbol;
+        if (sym) {
+          return `${sym}${Number(amount || 0).toFixed(2)}`;
+        }
+        return `${Number(amount || 0).toFixed(2)}${cur ? ` ${cur}` : ''}`;
+      }
+
+      let totalCartItemsCount = 0;
+      let totalPaidSubtotalDollars = 0;
+      let eligibleSubtotalDollars = 0;
+      let freeGiftInCart = null;
+
+      if (cart && Array.isArray(cart.items)) {
+        for (const item of cart.items) {
+          const isGift = item.properties && (item.properties._stackup_free_gift === 'true' || item.properties._stackup_free_gift === true);
+          if (isGift) {
+            freeGiftInCart = item;
+          } else {
+            // Use pre-discount original price so applying the unlocked tier discount does not reduce progress
+            const linePrice = (item.original_line_price || item.final_line_price || item.line_price || 0) / subunitDivisor;
+            totalPaidSubtotalDollars += linePrice;
+            totalCartItemsCount += (item.quantity || 1);
+
+            let itemEligible = true;
+            const prodNum = String(item.product_id || '').split('/').pop();
+
+            if (isSpecificProducts) {
+              itemEligible = eligibleProdIds.has(prodNum);
+            } else if (isSpecificCollections) {
+              if (eligibleProdIds.has(prodNum)) {
+                itemEligible = true;
+              } else {
+                const itemCols = liquidCollectionMap[prodNum] || [];
+                itemEligible = itemCols.some(col => targetColIds.has(String(col).split('/').pop()) || targetColHandles.has(String(col).toLowerCase()));
+              }
+            }
+
+            if (itemEligible) {
+              eligibleSubtotalDollars += linePrice;
+            }
+          }
+        }
+      } else {
+        // Fallback: Read subtotal from cart block data attribute
+        const subtotalWidget = document.querySelector('.stackup-cart-goal-wrapper[data-cart-subtotal]');
+        if (subtotalWidget && subtotalWidget.dataset.cartSubtotal) {
+          totalPaidSubtotalDollars = (parseFloat(subtotalWidget.dataset.cartSubtotal) || 0) / subunitDivisor;
+          eligibleSubtotalDollars = totalPaidSubtotalDollars;
+          totalCartItemsCount = 1;
+        } else {
+          // If in Theme Editor with zero cart, show sample progress
+          const isDesignMode = Boolean((window.Shopify && window.Shopify.designMode) || document.querySelector('[data-shopify-editor]'));
+          if (isDesignMode) {
+            totalPaidSubtotalDollars = 50 * currencyRate;
+            eligibleSubtotalDollars = 50 * currencyRate;
+            totalCartItemsCount = 1;
+          }
+        }
+      }
+
+      const progressSubtotal = isFiltered ? eligibleSubtotalDollars : totalPaidSubtotalDollars;
+
+      // Sort tiers ascending and convert thresholds to customer's active currency
+      const sortedTiers = [...tiers].sort((a, b) => (Number(a.minAmount) || 0) - (Number(b.minAmount) || 0));
+      const maxTierAmount = Math.max(1, (Number(sortedTiers[sortedTiers.length - 1].minAmount) || 100) * currencyRate);
+
+      // Determine All Achieved Tiers (Cumulative, converted by currencyRate)
+      const achievedTiers = sortedTiers.filter(t => progressSubtotal >= ((Number(t.minAmount) || 0) * currencyRate));
+      const activeDiscountTier = achievedTiers.slice().reverse().find(t => parseFloat(t.discountValue) > 0);
+      const hasFreeShippingUnlocked = achievedTiers.some(t => Boolean(t.hasFreeShipping));
+      const activeGiftTier = achievedTiers.slice().reverse().find(t => t.freeGift && (t.freeGift.variantId || t.freeGift.productId || t.freeGift.id));
+
+      let currentTier = achievedTiers.length > 0 ? achievedTiers[achievedTiers.length - 1] : null;
+      let nextTier = sortedTiers.find(t => progressSubtotal < ((Number(t.minAmount) || 0) * currencyRate)) || null;
+
+      // Calculate progress percentage
+      let progressPercent = 0;
+      if (progressSubtotal >= maxTierAmount) {
+        progressPercent = 100;
+      } else {
+        progressPercent = Math.min(100, Math.max(0, (progressSubtotal / maxTierAmount) * 100));
+      }
+
+      // Helper to compute cumulative unlocked reward labels
+      function formatCumulativeRewards(achieved) {
+        if (!achieved || achieved.length === 0) return 'maximum savings';
+        const parts = [];
+        const discTier = achieved.slice().reverse().find(t => parseFloat(t.discountValue) > 0);
+        if (discTier) {
+          const val = parseFloat(discTier.discountValue);
+          const isFixed = String(discTier.discountType).toUpperCase() === 'FIXED_AMOUNT';
+          const displayVal = isFixed ? formatCartGoalMoney(val * currencyRate, cartCurrencyCode) : `${val}%`;
+          parts.push(isFixed ? `${displayVal} off` : `${val}% off`);
+        }
+        if (achieved.some(t => Boolean(t.hasFreeShipping))) {
+          parts.push('Free Shipping');
+        }
+        const giftTier = achieved.slice().reverse().find(t => t.freeGift && (t.freeGift.title || t.freeGift.variantId));
+        if (giftTier) {
+          parts.push(`Free ${giftTier.freeGift.title || 'Gift'}`);
+        }
+        return parts.length > 0 ? parts.join(' + ') : 'maximum savings';
+      }
+
+      function formatTierNewReward(tier) {
+        if (!tier) return 'next reward';
+        const parts = [];
+        const val = parseFloat(tier.discountValue) || 0;
+        if (val > 0) {
+          const isFixed = String(tier.discountType).toUpperCase() === 'FIXED_AMOUNT';
+          const displayVal = isFixed ? formatCartGoalMoney(val * currencyRate, cartCurrencyCode) : `${val}%`;
+          parts.push(isFixed ? `${displayVal} off` : `${val}% off`);
+        }
+        if (tier.hasFreeShipping) {
+          parts.push('Free Shipping');
+        }
+        if (tier.freeGift && (tier.freeGift.title || tier.freeGift.variantId)) {
+          parts.push(`Free ${tier.freeGift.title || 'Gift'}`);
+        }
+        return parts.length > 0 ? parts.join(' + ') : (tier.label || 'next tier');
+      }
+
+      let motivationalHtml = '';
+      if (progressPercent >= 100) {
+        const unlockedRewardText = formatCumulativeRewards(achievedTiers.length > 0 ? achievedTiers : sortedTiers);
+        motivationalHtml = `<span class="stackup-goal-unlocked-text">🎉 Congratulations!</span> <span class="stackup-goal-next-text">You unlocked <strong>${unlockedRewardText}</strong>!</span>`;
+      } else if (achievedTiers.length > 0 && nextTier) {
+        const nextThreshold = (Number(nextTier.minAmount) || 0) * currencyRate;
+        const remaining = Math.max(0, nextThreshold - progressSubtotal);
+        const remainingStr = formatCartGoalMoney(remaining, cartCurrencyCode);
+        const currentRewardText = formatCumulativeRewards(achievedTiers);
+        const nextRewardText = formatTierNewReward(nextTier);
+        motivationalHtml = `<span class="stackup-goal-unlocked-text">🎉 ${currentRewardText} unlocked!</span> <span class="stackup-goal-next-text">Add <strong>${remainingStr}</strong> for <strong>${nextRewardText}</strong>!</span>`;
+      } else if (nextTier) {
+        const nextThreshold = (Number(nextTier.minAmount) || 0) * currencyRate;
+        const remaining = Math.max(0, nextThreshold - progressSubtotal);
+        const remainingStr = formatCartGoalMoney(remaining, cartCurrencyCode);
+        const nextRewardText = formatTierNewReward(nextTier);
+        motivationalHtml = `<span class="stackup-goal-next-text">Add <strong>${remainingStr}</strong> more to unlock <strong>${nextRewardText}</strong>!</span>`;
+      }
+
+      // Update all active instances (Page and/or Drawer)
+      const customSettings = getCartGoalWidgetSettings();
+      const wStyles = customSettings?.styles || offer?.widget || {};
+
+      widgets.forEach((widget) => {
+        // Always show the progress bar whenever items are in the cart
+        if (totalCartItemsCount > 0) {
+          widget.style.display = '';
+        }
+        // Apply card styling from cart_goal_widget_settings
+        const card = widget.querySelector('.stackup-cart-goal-card');
+        if (card && wStyles) {
+          if (wStyles.cardSurface) card.style.setProperty('--stackup-goal-card-bg', wStyles.cardSurface);
+          if (wStyles.borderColor) card.style.setProperty('--stackup-goal-border-color', wStyles.borderColor);
+          if (wStyles.borderRadius !== undefined) card.style.setProperty('--stackup-goal-card-radius', `${wStyles.borderRadius}px`);
+          if (wStyles.barColor) card.style.setProperty('--stackup-goal-fill-color', wStyles.barColor);
+          if (wStyles.trackColor) card.style.setProperty('--stackup-goal-track-color', wStyles.trackColor);
+          if (wStyles.achievedColor) card.style.setProperty('--stackup-goal-completed-color', wStyles.achievedColor);
+          if (wStyles.textColor) card.style.setProperty('--stackup-goal-text-color', wStyles.textColor);
+        }
+
+        // Headline
+        if (offer && offer.widgetTitle && offer.widgetTitle.trim()) {
+          let headline = widget.querySelector('.stackup-cart-goal-headline');
+          if (!headline && card) {
+            headline = document.createElement('div');
+            headline.className = 'stackup-cart-goal-headline';
+            card.insertBefore(headline, card.firstChild);
+          }
+          if (headline) headline.textContent = offer.widgetTitle;
+        }
+
+        // Scope Badge: Informs customers when progress applies only to specific collections or products
+        let scopeBadgeText = '';
+        if (isSpecificCollections && Array.isArray(offer.collections) && offer.collections.length > 0) {
+          const colTitles = offer.collections.map(c => c.title || 'Collection').join(', ');
+          scopeBadgeText = `🏷️ Valid on: <strong>${colTitles}</strong> collection only`;
+        } else if (isSpecificProducts && Array.isArray(offer.products) && offer.products.length > 0) {
+          if (offer.products.length === 1) {
+            scopeBadgeText = `🏷️ Valid on: <strong>${offer.products[0].title || 'Product'}</strong> only`;
+          } else {
+            scopeBadgeText = `🏷️ Valid on selected <strong>${offer.products.length} products</strong> only`;
+          }
+        }
+
+        let badgeRow = card ? card.querySelector('.stackup-cart-goal-badge-row') : null;
+        if (scopeBadgeText) {
+          if (!badgeRow && card) {
+            badgeRow = document.createElement('div');
+            badgeRow.className = 'stackup-cart-goal-badge-row';
+            const badgeEl = document.createElement('div');
+            badgeEl.className = 'stackup-cart-goal-scope-badge';
+            badgeRow.appendChild(badgeEl);
+
+            const header = card.querySelector('.stackup-cart-goal-header');
+            if (header) {
+              card.insertBefore(badgeRow, header);
+            } else {
+              card.appendChild(badgeRow);
+            }
+          }
+          const badgeEl = badgeRow ? badgeRow.querySelector('.stackup-cart-goal-scope-badge') : null;
+          if (badgeEl) {
+            badgeEl.innerHTML = scopeBadgeText;
+          }
+          if (badgeRow) badgeRow.style.display = 'flex';
+        } else if (badgeRow) {
+          badgeRow.style.display = 'none';
+        }
+
+        // Update fill bar width
+        const fillBar = widget.querySelector('.stackup-cart-goal-fill');
+        if (fillBar) {
+          fillBar.style.setProperty('width', `${progressPercent}%`, 'important');
+          if (progressPercent >= 100) {
+            fillBar.classList.add('is-completed');
+          } else {
+            fillBar.classList.remove('is-completed');
+          }
+        }
+
+        // Update motivational copy (Single centered headline, no floating emoji)
+        const titleElem = widget.querySelector('.stackup-cart-goal-title');
+        if (titleElem && motivationalHtml) {
+          titleElem.innerHTML = motivationalHtml;
+        }
+
+        // Render milestone markers along track
+        const markersContainer = widget.querySelector('.stackup-cart-goal-markers');
+        if (markersContainer && (!markersContainer.dataset.rendered || markersContainer.dataset.tierCount !== String(sortedTiers.length))) {
+          markersContainer.dataset.rendered = 'true';
+          markersContainer.dataset.tierCount = String(sortedTiers.length);
+          markersContainer.innerHTML = '';
+
+          sortedTiers.forEach((tier, idx) => {
+            const isFirst = idx === 0;
+            const isLast = idx === sortedTiers.length - 1;
+            const tierThreshold = (Number(tier.minAmount) || 0) * currencyRate;
+            const markerPos = Math.min(100, Math.max(0, (tierThreshold / maxTierAmount) * 100));
+            const marker = document.createElement('div');
+            marker.className = 'stackup-goal-marker';
+            marker.style.left = markerPos + '%';
+            marker.dataset.minAmount = String(tierThreshold);
+            if (isFirst) marker.dataset.isFirst = 'true';
+            if (isLast) marker.dataset.isLast = 'true';
+
+            let icon = '🎯';
+            if (tier.hasFreeShipping) icon = '🚚';
+            if (tier.freeGift) icon = '🎁';
+            if (tier.discountValue > 0) icon = '%';
+
+            const markerTitle = tier.label || `${formatCartGoalMoney(tierThreshold, cartCurrencyCode)}`;
+            marker.innerHTML = `
+              <div class="stackup-goal-marker-dot" title="${markerTitle}">${icon}</div>
+            `;
+            markersContainer.appendChild(marker);
+          });
+        }
+
+        // Update achieved state on markers
+        if (markersContainer) {
+          markersContainer.querySelectorAll('.stackup-goal-marker').forEach((m) => {
+            const min = parseFloat(m.dataset.minAmount) || 0;
+            if (progressSubtotal >= min) {
+              m.classList.add('is-achieved');
+            } else {
+              m.classList.remove('is-achieved');
+            }
+          });
+        }
+      });
+
+      // Helper to instantly refresh the theme cart DOM via Shopify Section Rendering API (Zero Page Reload)
+      async function refreshThemeCartUI(updatedCartData) {
+        let updatedSuccessfully = false;
+
+        try {
+          const cartItemsElem = document.querySelector('cart-items');
+          const cartDrawerElem = document.querySelector('cart-drawer');
+
+          // 1. Gather all section IDs that need live re-rendering
+          const sectionsToFetch = new Set(['cart-icon-bubble', 'cart-live-region-text']);
+
+          const mainCartItems = document.getElementById('main-cart-items');
+          const mainCartFooter = document.getElementById('main-cart-footer');
+
+          if (mainCartItems) {
+            const secId = mainCartItems.dataset?.id || 'main-cart-items';
+            sectionsToFetch.add(secId);
+          } else {
+            sectionsToFetch.add('main-cart-items');
+          }
+
+          if (mainCartFooter) {
+            const secId = mainCartFooter.dataset?.id || 'main-cart-footer';
+            sectionsToFetch.add(secId);
+          } else {
+            sectionsToFetch.add('main-cart-footer');
+          }
+
+          if (cartDrawerElem || document.getElementById('CartDrawer')) {
+            sectionsToFetch.add('cart-drawer');
+          }
+
+          const sectionsQuery = Array.from(sectionsToFetch).join(',');
+          const res = await fetch(`${rootUrl}cart?sections=${encodeURIComponent(sectionsQuery)}`);
+          if (res.ok) {
+            const sectionsData = await res.json();
+            const parser = new DOMParser();
+
+            // A. Update Cart Items (On /cart page)
+            if (cartItemsElem && typeof cartItemsElem.renderContents === 'function') {
+              try {
+                cartItemsElem.renderContents({
+                  sections: sectionsData,
+                  item_count: updatedCartData?.item_count || 1,
+                });
+                updatedSuccessfully = true;
+              } catch (e) { }
+            }
+
+            // Fallback live DOM replacement for /cart page if renderContents didn't run or wasn't a function
+            if (!updatedSuccessfully && (mainCartItems || document.querySelector('.cart-items, .cart__items'))) {
+              for (const [secKey, secHtml] of Object.entries(sectionsData)) {
+                if (typeof secHtml !== 'string') continue;
+                const parsedDoc = parser.parseFromString(secHtml, 'text/html');
+
+                if (secKey.includes('items') || secKey.includes('main-cart-items') || parsedDoc.querySelector('.js-contents, .cart-items, .cart__items')) {
+                  const newContents = parsedDoc.querySelector('.js-contents') || parsedDoc.getElementById('main-cart-items') || parsedDoc.querySelector('.cart-items, .cart__items');
+                  const currentContents = document.querySelector('#main-cart-items .js-contents') || document.getElementById('main-cart-items') || document.querySelector('.cart-items, .cart__items');
+                  if (newContents && currentContents) {
+                    currentContents.innerHTML = newContents.innerHTML;
+                    updatedSuccessfully = true;
+                  }
+                }
+
+                if (secKey.includes('footer') || secKey.includes('main-cart-footer') || parsedDoc.querySelector('#main-cart-footer, .cart__footer')) {
+                  const newFooter = parsedDoc.querySelector('.js-contents') || parsedDoc.getElementById('main-cart-footer') || parsedDoc.querySelector('.cart__footer');
+                  const currentFooter = document.querySelector('#main-cart-footer .js-contents') || document.getElementById('main-cart-footer') || document.querySelector('.cart__footer');
+                  if (newFooter && currentFooter) {
+                    currentFooter.innerHTML = newFooter.innerHTML;
+                    updatedSuccessfully = true;
+                  }
+                }
+              }
+            }
+
+            // B. Update Cart Drawer silently (NEVER call this.open())
+            const isCartPage = Boolean(
+              window.location.pathname &&
+              window.location.pathname.replace(/\/$/, '').endsWith('/cart')
+            );
+
+            // Only update drawer DOM if NOT on /cart page (to avoid any layout interference or opening)
+            if (!isCartPage) {
+              const targetDrawer = cartDrawerElem || document.getElementById('CartDrawer');
+              if (targetDrawer && sectionsData['cart-drawer']) {
+                const parsedDoc = parser.parseFromString(sectionsData['cart-drawer'], 'text/html');
+                const newInner = parsedDoc.querySelector('.drawer__inner') || parsedDoc.querySelector('cart-drawer') || parsedDoc.getElementById('CartDrawer');
+                const currentInner = targetDrawer.querySelector('.drawer__inner') || targetDrawer;
+                if (newInner && currentInner) {
+                  currentInner.innerHTML = newInner.innerHTML;
+                  updatedSuccessfully = true;
+                }
+              }
+            }
+          }
+        } catch (domErr) {
+          console.warn('[StackUp:CartGoal] Live section update notice:', domErr);
+        }
+
+        // Notify theme silently without triggering theme drawer popups
+        ['cart:refresh'].forEach((evt) => {
+          try {
+            document.documentElement.dispatchEvent(new CustomEvent(evt, { bubbles: true }));
+          } catch (e) { }
+        });
+
+        // Safe Fallback: Only on older non-OS2.0 vintage themes where DOM sections could not be updated
+        const isCartPage = Boolean(window.location.pathname && window.location.pathname.replace(/\/$/, '').endsWith('/cart'));
+        if (isCartPage && !updatedSuccessfully) {
+          window.location.reload();
+        }
+      }
+
+      // ======================================================================
+      // SAFE FREE GIFT AUTO-ADD & AUTO-REMOVE STATE MACHINE (Cumulative)
+      // ======================================================================
+      const eligibleGift = activeGiftTier?.freeGift;
+      const eligibleGiftVariantId = eligibleGift?.variantId ? cleanVariantId(eligibleGift.variantId) : null;
+
+      if (eligibleGiftVariantId) {
+        // Customer qualified for a gift: check if it's already in the cart (either auto-added or merchant item)
+        const matchingGiftInCart = cart && Array.isArray(cart.items)
+          ? cart.items.find((item) => {
+            const isVarMatch = eligibleGiftVariantId && (
+              cleanVariantId(item.id) === eligibleGiftVariantId ||
+              cleanVariantId(item.variant_id) === eligibleGiftVariantId
+            );
+            return isVarMatch;
+          })
+          : null;
+
+        const isAlreadyInCart = Boolean(matchingGiftInCart);
+
+        if (!isAlreadyInCart && !isCartGoalUpdating) {
+          isCartGoalUpdating = true;
+          try {
+            const addRes = await fetch(`${rootUrl}cart/add.js`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                items: [
+                  {
+                    id: eligibleGiftVariantId,
+                    quantity: 1,
+                    properties: {
+                      _stackup_free_gift: 'true',
+                      _stackup_gift_tier: currentTier?.label || activeGiftTier?.label || 'Cart Goal',
+                    },
+                  },
+                ],
+              }),
+            });
+            const addData = addRes.ok ? await addRes.json() : null;
+            await refreshThemeCartUI(addData);
+          } catch (giftAddErr) {
+            console.warn('[StackUp:CartGoal] Could not auto-add free gift:', giftAddErr);
+          } finally {
+            setTimeout(() => { isCartGoalUpdating = false; }, 400);
+          }
+        }
+      } else if (freeGiftInCart && !isCartGoalUpdating) {
+        // Customer is NOT qualified for gift, but gift is currently in cart: remove it
+        isCartGoalUpdating = true;
+        try {
+          const changeRes = await fetch(`${rootUrl}cart/change.js`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              id: freeGiftInCart.key || freeGiftInCart.id,
+              quantity: 0,
+            }),
+          });
+          const changeData = changeRes.ok ? await changeRes.json() : null;
+          await refreshThemeCartUI(changeData);
+        } catch (giftRemoveErr) {
+          console.warn('[StackUp:CartGoal] Could not auto-remove unqualified free gift:', giftRemoveErr);
+        } finally {
+          setTimeout(() => { isCartGoalUpdating = false; }, 400);
+        }
+      }
+    } catch (e) {
+      console.warn('[StackUp:CartGoal] Error updating cart goal UI:', e);
+    }
+  }
+
+  function queueCartGoalSync(delay = 100) {
+    if (cartGoalSyncTimeout) clearTimeout(cartGoalSyncTimeout);
+    cartGoalSyncTimeout = setTimeout(() => {
+      updateCartGoalUI();
+    }, delay);
+  }
+
+  function initStackUpCartGoal() {
+    const offers = getCartGoalOffers();
+    if (offers && offers.length > 0) {
+      queueCartGoalSync(10);
+    } else {
+      [100, 300, 700, 1500].forEach((delay) => {
+        setTimeout(() => {
+          const retryOffers = getCartGoalOffers();
+          if (retryOffers && retryOffers.length > 0) {
+            queueCartGoalSync(30);
+          }
+        }, delay);
+      });
+    }
+
+    // Intercept Shopify Ajax Cart fetch & XHR requests to trigger live auto-sync
+    if (!window._stackupFetchIntercepted) {
+      window._stackupFetchIntercepted = true;
+      const originalFetch = window.fetch;
+      window.fetch = function () {
+        const rawUrl = arguments[0];
+        const url = typeof rawUrl === 'string' ? rawUrl : (rawUrl && rawUrl.url ? rawUrl.url : '');
+        const isCartApi = typeof url === 'string' && (
+          url.includes('/cart/add') ||
+          url.includes('/cart/change') ||
+          url.includes('/cart/update') ||
+          url.includes('/cart/clear')
+        );
+
+        const promise = originalFetch.apply(this, arguments);
+
+        if (isCartApi && !isCartGoalUpdating) {
+          promise.then(() => {
+            queueCartGoalSync(150);
+          }).catch(() => { });
+        }
+
+        return promise;
+      };
+    }
+
+    if (!window._stackupXHRIntercepted && window.XMLHttpRequest) {
+      window._stackupXHRIntercepted = true;
+      const originalOpen = XMLHttpRequest.prototype.open;
+      const originalSend = XMLHttpRequest.prototype.send;
+      XMLHttpRequest.prototype.open = function (method, url) {
+        this._stackupUrl = url;
+        return originalOpen.apply(this, arguments);
+      };
+      XMLHttpRequest.prototype.send = function () {
+        if (this._stackupUrl && typeof this._stackupUrl === 'string' && (
+          this._stackupUrl.includes('/cart/add') ||
+          this._stackupUrl.includes('/cart/change') ||
+          this._stackupUrl.includes('/cart/update') ||
+          this._stackupUrl.includes('/cart/clear')
+        )) {
+          this.addEventListener('load', () => {
+            if (!isCartGoalUpdating) queueCartGoalSync(150);
+          });
+        }
+        return originalSend.apply(this, arguments);
+      };
+    }
+
+    // Listen for custom theme cart events
+    ['cart:updated', 'cart:refresh', 'cart:change', 'cart:build'].forEach((eventName) => {
+      window.addEventListener(eventName, () => queueCartGoalSync(100));
+      document.addEventListener(eventName, () => queueCartGoalSync(100));
+    });
+
+    // Observer to detect when slide-out cart drawer opens in DOM
+    const observer = new MutationObserver((mutations) => {
+      for (const mutation of mutations) {
+        if (mutation.type === 'childList' || mutation.type === 'attributes') {
+          const target = mutation.target;
+          if (target && target.nodeType === 1) {
+            const tag = target.tagName ? target.tagName.toLowerCase() : '';
+            const className = typeof target.className === 'string' ? target.className.toLowerCase() : '';
+            if (
+              tag === 'cart-drawer' ||
+              className.includes('drawer') ||
+              className.includes('cart') ||
+              target.id === 'CartDrawer'
+            ) {
+              queueCartGoalSync(80);
+              break;
+            }
+          }
+        }
+      }
+    });
+
+    try {
+      observer.observe(document.body, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ['class', 'open', 'active', 'aria-hidden'],
+      });
+    } catch { }
   }
 
   // Ensure init runs on DOMContentLoaded and immediately if already loaded

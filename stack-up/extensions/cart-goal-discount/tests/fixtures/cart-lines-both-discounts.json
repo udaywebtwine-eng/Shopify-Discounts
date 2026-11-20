@@ -1,0 +1,67 @@
+{
+  "payload": {
+    "export": "cart-lines-discounts-generate-run",
+    "target": "cart.lines.discounts.generate.run",
+    "input": {
+      "presentmentCurrencyRate": "0.92",
+      "cart": {
+        "lines": [
+          {
+            "id": "gid://shopify/CartLine/0",
+            "quantity": 1,
+            "cost": {
+              "subtotalAmount": {
+                "amount": "100.0"
+              }
+            },
+            "attribute": null,
+            "merchandise": {
+              "__typename": "ProductVariant",
+              "id": "gid://shopify/ProductVariant/101",
+              "product": {
+                "id": "gid://shopify/Product/1"
+              }
+            }
+          }
+        ]
+      },
+      "discount": {
+        "discountClasses": ["PRODUCT", "ORDER", "SHIPPING"]
+      },
+      "shop": {
+        "appStatus": {
+          "value": "true"
+        },
+        "cartGoalOffers": {
+          "value": "[{\"id\":\"1\",\"title\":\"Cart Goal\",\"status\":\"ACTIVE\",\"applyTo\":\"ALL\",\"tiers\":[{\"minAmount\":100,\"discountType\":\"PERCENTAGE\",\"discountValue\":15,\"hasDiscount\":true,\"label\":\"15% off\"}]}]"
+        }
+      }
+    },
+    "output": {
+      "operations": [
+        {
+          "productDiscountsAdd": {
+            "candidates": [
+              {
+                "message": "Cart Goal: 15% off",
+                "targets": [
+                  {
+                    "cartLine": {
+                      "id": "gid://shopify/CartLine/0"
+                    }
+                  }
+                ],
+                "value": {
+                  "percentage": {
+                    "value": 15
+                  }
+                }
+              }
+            ],
+            "selectionStrategy": "ALL"
+          }
+        }
+      ]
+    }
+  }
+}
