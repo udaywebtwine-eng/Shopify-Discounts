@@ -1,4 +1,5 @@
 query CartInput {
+  presentmentCurrencyRate
   shop {
     appStatus: metafield(namespace: "stack_up", key: "stack_up_app_enabled") {
       value

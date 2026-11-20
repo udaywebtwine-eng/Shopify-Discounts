@@ -22,18 +22,20 @@ export default function CartGoalWidgetPreview({
   currency = "",
 }) {
   const [simulatedSubtotal, setSimulatedSubtotal] = useState(initialSubtotal);
+  const [selectedVariants, setSelectedVariants] = useState({});
 
   const formatMoney = (amount) => {
     const cur = currency ? currency.toUpperCase() : "";
     try {
       if (cur) {
-        return new Intl.NumberFormat(undefined, {
+        return new Intl.NumberFormat("en-US", {
           style: "currency",
           currency: cur,
+          currencyDisplay: "narrowSymbol",
         }).format(amount);
       }
-    } catch {}
-    return cur ? `${Number(amount || 0).toFixed(2)} ${cur}` : Number(amount || 0).toFixed(2);
+    } catch { }
+    return `$${Number(amount || 0).toFixed(2)}`;
   };
 
   // Default fallback settings
@@ -348,8 +350,8 @@ export default function CartGoalWidgetPreview({
             const markerTransform = isLast
               ? "translate(-100%, -50%)"
               : isFirst
-              ? "translate(0%, -50%)"
-              : "translate(-50%, -50%)";
+                ? "translate(0%, -50%)"
+                : "translate(-50%, -50%)";
             const markerAlign = isLast ? "flex-end" : isFirst ? "flex-start" : "center";
 
             return (
@@ -394,6 +396,204 @@ export default function CartGoalWidgetPreview({
             );
           })}
       </div>
+
+      {/* Eligible Products Section (When applyTo === "PRODUCTS" and products exist) */}
+      {applyTo === "PRODUCTS" && Array.isArray(products) && products.length > 0 && (
+        <div
+          style={{
+            marginTop: "16px",
+            paddingTop: "14px",
+            borderTop: "1px solid #f1f5f9",
+            textAlign: "left",
+          }}
+        >
+          <div
+            style={{
+              fontSize: "11.5px",
+              fontWeight: "700",
+              textTransform: "uppercase",
+              letterSpacing: "0.04em",
+              color: stylesConfig.textColor || "#334155",
+              opacity: 0.85,
+              marginBottom: "10px",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+            }}
+          >
+            <span>Eligible Products to Unlock This Goal ({products.length}):</span>
+            <span style={{ fontSize: "11px", fontWeight: "500", color: "#64748b" }}>
+              Add to unlock discount
+            </span>
+          </div>
+
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: "8px",
+              maxHeight: products.length > 3 ? "210px" : "none",
+              overflowY: products.length > 3 ? "auto" : "visible",
+              paddingRight: products.length > 3 ? "4px" : "0",
+            }}
+          >
+            {products.map((p, pIdx) => {
+              const pId = p.id || `prod-${pIdx}`;
+              const variants = Array.isArray(p.variants) && p.variants.length > 0
+                ? p.variants
+                : (p.variantId ? [{ id: p.variantId, title: "Default", price: p.price || 0 }] : []);
+              const hasMultipleVariants = variants.length > 1 && variants.some(v => v.title && v.title !== "Default Title");
+              const currentVariantId = selectedVariants[pId] || variants[0]?.id || "";
+              const activeVariant = variants.find(v => String(v.id) === String(currentVariantId)) || variants[0] || {};
+              const variantPrice = activeVariant.price || p.price || 0;
+
+              return (
+                <div
+                  key={pId}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "10px",
+                    padding: "8px 10px",
+                    background: "#f8fafc",
+                    border: "1px solid #e2e8f0",
+                    borderRadius: "8px",
+                    boxSizing: "border-box",
+                  }}
+                >
+                  {/* Thumbnail */}
+                  <div
+                    style={{
+                      width: "38px",
+                      height: "38px",
+                      borderRadius: "6px",
+                      overflow: "hidden",
+                      background: "#ffffff",
+                      border: "1px solid #e2e8f0",
+                      flexShrink: 0,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                    }}
+                  >
+                    {p.image ? (
+                      <img
+                        src={p.image}
+                        alt={p.title}
+                        style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                      />
+                    ) : (
+                      <span style={{ fontSize: "16px" }}>🛍️</span>
+                    )}
+                  </div>
+
+                  {/* Product Info & Variant Dropdown */}
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <a
+                      href={p.handle ? `/products/${p.handle}` : "#"}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{
+                        fontSize: "12px",
+                        fontWeight: "600",
+                        color: "#0f172a",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                        lineHeight: "1.3",
+                        textDecoration: "none",
+                        display: "block",
+                      }}
+                      title={p.title}
+                    >
+                      {p.title || "Product"}
+                    </a>
+
+                    <div style={{ display: "flex", alignItems: "center", gap: "6px", marginTop: "3px" }}>
+                      {variantPrice > 0 && (
+                        <span style={{ fontSize: "11px", fontWeight: "600", color: "#475569" }}>
+                          {formatMoney(variantPrice)}
+                        </span>
+                      )}
+
+                      {hasMultipleVariants && (
+                        <select
+                          value={currentVariantId}
+                          onChange={(e) => setSelectedVariants((prev) => ({ ...prev, [pId]: e.target.value }))}
+                          style={{
+                            fontSize: "11px",
+                            padding: "2px 6px",
+                            borderRadius: "4px",
+                            border: "1px solid #cbd5e1",
+                            background: "#ffffff",
+                            color: "#334155",
+                            maxWidth: "130px",
+                            cursor: "pointer",
+                          }}
+                        >
+                          {variants.map((v) => (
+                            <option key={v.id} value={v.id}>
+                              {v.title}
+                            </option>
+                          ))}
+                        </select>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Action Buttons */}
+                  <div style={{ display: "flex", alignItems: "center", gap: "6px", flexShrink: 0 }}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const addVal = variantPrice > 0 ? Number(variantPrice) : 50;
+                        setSimulatedSubtotal((prev) => prev + addVal);
+                      }}
+                      style={{
+                        fontSize: "11.5px",
+                        fontWeight: "600",
+                        padding: "5px 10px",
+                        background: stylesConfig.barColor || "#0f172a",
+                        color: "#ffffff",
+                        border: "none",
+                        borderRadius: "6px",
+                        cursor: "pointer",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "2px",
+                        boxShadow: "0 1px 2px rgba(0,0,0,0.06)",
+                      }}
+                      title="Add to cart"
+                    >
+                      + Add
+                    </button>
+
+                    <a
+                      href={p.handle ? `/products/${p.handle}` : "#"}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{
+                        fontSize: "11px",
+                        fontWeight: "500",
+                        padding: "4px 8px",
+                        background: "#ffffff",
+                        color: "#475569",
+                        border: "1px solid #cbd5e1",
+                        borderRadius: "6px",
+                        textDecoration: "none",
+                        cursor: "pointer",
+                      }}
+                      title="View product details"
+                    >
+                      View
+                    </a>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </div>
   );
 
@@ -438,7 +638,7 @@ export default function CartGoalWidgetPreview({
           />
 
           {/* Quick jump milestone preset buttons */}
-          <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", paddingTop: "2px" }}>
+          {/* <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", paddingTop: "2px" }}>
             <button
               type="button"
               onClick={() => setSimulatedSubtotal(30)}
@@ -476,7 +676,7 @@ export default function CartGoalWidgetPreview({
                 </button>
               );
             })}
-          </div>
+          </div> */}
         </div>
       )}
 

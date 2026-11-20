@@ -161,14 +161,18 @@ export function cartLinesDiscountsGenerateRun(input) {
       continue;
     }
 
+    const currencyRate = parseFloat(input.presentmentCurrencyRate) || 1.0;
     const discountType = String(qualifyingTier.t ?? qualifyingTier.type ?? 'P').toUpperCase();
+    const isFixed = (discountType === 'F' || discountType === 'FIXED');
+    const convertedDiscountVal = isFixed ? (discountVal * currencyRate) : discountVal;
     const tierMinQty = Number(qualifyingTier.mq ?? qualifyingTier.minQty ?? qualifyingTier.quantity ?? 0);
     const badgeText = qualifyingTier.b ?? qualifyingTier.badge ?? '';
     const subtitleText = qualifyingTier.s ?? qualifyingTier.subtitle ?? '';
 
-    // Dynamic message for the checkout savings pill
+    // Dynamic message for the checkout savings pill (currency-aware, no hardcoded symbols)
+    const discountText = isFixed ? `${convertedDiscountVal.toFixed(2)} OFF` : `${discountVal}% OFF`;
     const message = offerTitle ||
-      (subtitleText ? `${subtitleText}` : `Buy ${tierMinQty}+ (${discountVal}% OFF)`);
+      (subtitleText ? `${subtitleText}` : `Buy ${tierMinQty}+ (${discountText})`);
 
     const targets = group.lines.map((l) => ({
       cartLine: {
@@ -176,14 +180,14 @@ export function cartLinesDiscountsGenerateRun(input) {
       },
     }));
 
-    // Fixed amount off per item ($) vs Percentage off (%)
-    if (discountType === 'F' || discountType === 'FIXED') {
+    // Fixed amount off per item vs Percentage off (%)
+    if (isFixed) {
       candidates.push({
         message,
         targets,
         value: {
           fixedAmount: {
-            amount: discountVal,
+            amount: String(convertedDiscountVal.toFixed(2)),
             appliesToEachItem: true,
           },
         },

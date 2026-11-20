@@ -8,14 +8,47 @@
 
   // Shared Currency & String Helpers
   function formatMoney(cents) {
-    return '$' + (cents / 100).toFixed(2);
+    if (typeof cents !== 'number' || isNaN(cents)) cents = parseFloat(cents) || 0;
+    const activeCurrency = window.Shopify?.currency?.active || '';
+    if (window.Shopify && typeof window.Shopify.formatMoney === 'function') {
+      return window.Shopify.formatMoney(cents, window.Shopify.money_format || '{{amount}}');
+    }
+    try {
+      if (activeCurrency) {
+        return new Intl.NumberFormat(undefined, {
+          style: 'currency',
+          currency: activeCurrency,
+          currencyDisplay: 'narrowSymbol',
+        }).format(cents / 100);
+      }
+    } catch { }
+    return (cents / 100).toFixed(2) + (activeCurrency ? ` ${activeCurrency}` : '');
   }
+
+  let isStackUpInternalFetch = false;
+  let lastCartGoalSyncTime = 0;
 
   function cleanVariantId(id) {
     if (!id) return '';
     const str = String(id).trim();
     if (str.startsWith('sample')) return str;
+    // If it's explicitly a Product GID (not ProductVariant), DO NOT treat as variant ID
+    if (str.includes('/Product/') && !str.includes('ProductVariant')) {
+      return '';
+    }
+    const varMatch = str.match(/ProductVariant\/(\d+)/i);
+    if (varMatch) return varMatch[1];
     return str.replace(/\D/g, '');
+  }
+
+  function escapeHtml(str) {
+    if (str == null) return '';
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
   }
 
   function initStackUpPairedWidgets() {
@@ -805,16 +838,17 @@
         const buyTotal = buyPrice * buyQty;
         const getOriginalTotal = getPrice * getQty;
 
+        const currencyRate = parseFloat(window.Shopify?.currency?.rate) || 1.0;
         let rawDiscount = 0;
         if (discountType === 'F') {
-          rawDiscount = discountVal * 100 * getQty;
+          rawDiscount = discountVal * currencyRate * 100 * getQty;
         } else {
           rawDiscount = getOriginalTotal * (discountVal / 100);
         }
 
         let discountAmount = Math.min(getOriginalTotal, rawDiscount);
         if (maxDiscount && maxDiscount > 0) {
-          discountAmount = Math.min(discountAmount, maxDiscount * 100);
+          discountAmount = Math.min(discountAmount, maxDiscount * currencyRate * 100);
         }
 
         const discountedGetTotal = Math.max(0, getOriginalTotal - discountAmount);
@@ -1006,8 +1040,7 @@
           const savedCents = Math.max(0, origPrice - totalPrice);
 
           if (savedCents > 0 && discountVal > 0) {
-            const currencyPrefix = (formattedPrice.match(/^[^0-9]+/) || ['$'])[0];
-            const savedFmt = currencyPrefix + (savedCents / 100).toFixed(2);
+            const savedFmt = formatMoney(savedCents);
             if (savingsAmount) savingsAmount.textContent = savedFmt;
             if (savingsPct) savingsPct.textContent = `(${Math.round(discountVal)}% OFF)`;
             savingsBanner.style.setProperty('display', 'flex', 'important');
@@ -1366,8 +1399,8 @@
     if (isCartPage()) return null;
 
     let widget = document.getElementById('stackup-cart-goal-bar-drawer');
-    if (widget) return widget;
 
+    // 1. Locate the drawer container
     let drawer = null;
     for (const sel of CART_DRAWER_SELECTORS) {
       try {
@@ -1381,26 +1414,41 @@
 
     if (!drawer) return null;
 
-    // Check if drawer already contains a cart goal wrapper
-    const existingInDrawer = drawer.querySelector('.stackup-cart-goal-wrapper');
-    if (existingInDrawer) {
-      return existingInDrawer;
+    // 2. Identify the true inner container
+    const drawerInner = drawer.classList.contains('drawer__inner')
+      ? drawer
+      : (drawer.querySelector('.drawer__inner') || drawer);
+
+    // 3. Locate the drawer top header (strictly contains 'Your cart' and close button, NOT table headers)
+    const drawerHeader = drawerInner.querySelector('.drawer__header, .cart-drawer__header, .drawer-header, header.drawer__header') ||
+                         document.querySelector('cart-drawer .drawer__header, #CartDrawer .drawer__header, .drawer__header');
+
+    // 4. Locate the cart items container
+    const drawerItems = drawerInner.querySelector('cart-drawer-items, .cart-drawer__items, .cart__items, form[action^="/cart"], .drawer__contents') ||
+                        document.querySelector('cart-drawer cart-drawer-items, #CartDrawer cart-drawer-items');
+
+    if (!widget) {
+      // Check if drawer already contains a cart goal wrapper
+      const existingInDrawer = drawer.querySelector('.stackup-cart-goal-wrapper');
+      if (existingInDrawer) {
+        widget = existingInDrawer;
+      } else {
+        widget = createCartGoalMarkup(offer, 'stackup-cart-goal-bar-drawer');
+        widget.classList.add('stackup-cart-goal-in-drawer');
+      }
     }
 
-    widget = createCartGoalMarkup(offer, 'stackup-cart-goal-bar-drawer');
-    widget.classList.add('stackup-cart-goal-in-drawer');
-
-    const drawerHeader = drawer.querySelector('.drawer__header, .cart-drawer__header, [class*="header"]');
-    const drawerItems = drawer.querySelector('cart-drawer-items, .cart__items, .cart-items, form[action^="/cart"], .drawer__contents');
-
-    if (drawerHeader && drawerHeader.parentNode && drawerHeader.nextSibling) {
-      drawerHeader.parentNode.insertBefore(widget, drawerHeader.nextSibling);
-    } else if (drawerItems && drawerItems.parentNode) {
-      drawerItems.parentNode.insertBefore(widget, drawerItems);
-    } else if (drawer.firstChild) {
-      drawer.insertBefore(widget, drawer.firstChild);
-    } else {
-      drawer.appendChild(widget);
+    // PIN AT TOP: Ensure widget is positioned directly after drawerHeader
+    if (drawerHeader) {
+      if (drawerHeader.nextElementSibling !== widget) {
+        drawerHeader.after(widget);
+      }
+    } else if (drawerItems) {
+      if (drawerItems.previousElementSibling !== widget) {
+        drawerItems.before(widget);
+      }
+    } else if (drawerInner.firstChild !== widget) {
+      drawerInner.insertBefore(widget, drawerInner.firstChild);
     }
 
     return widget;
@@ -1449,6 +1497,7 @@
     try {
       const rootUrl = window.Shopify?.routes?.root || '/';
       let cart = null;
+      isStackUpInternalFetch = true;
       try {
         const res = await fetch(`${rootUrl}cart.js`, { credentials: 'same-origin' });
         if (res.ok) {
@@ -1456,6 +1505,8 @@
         }
       } catch (fetchErr) {
         console.warn('[StackUp:CartGoal] cart.js fetch notice:', fetchErr);
+      } finally {
+        isStackUpInternalFetch = false;
       }
 
       // Compute subtotal in dollars (excluding free gift items)
@@ -1486,7 +1537,7 @@
       try {
         const mapEl = document.getElementById('stackup-cart-collection-map');
         if (mapEl) liquidCollectionMap = JSON.parse(mapEl.textContent || '{}');
-      } catch {}
+      } catch { }
 
       const targetColIds = new Set((offer.collections || []).map(c => String(c.id || c).split('/').pop()));
       const targetColHandles = new Set((offer.collections || []).map(c => String(c.handle || '').toLowerCase()).filter(Boolean));
@@ -1522,12 +1573,13 @@
         const cur = (currency || cartCurrencyCode || sampleWidget?.dataset?.shopCurrency || '').toUpperCase();
         try {
           if (cur) {
-            return new Intl.NumberFormat(undefined, {
+            return new Intl.NumberFormat('en-US', {
               style: 'currency',
               currency: cur,
+              currencyDisplay: 'narrowSymbol',
             }).format(amount);
           }
-        } catch {}
+        } catch { }
         const sym = sampleWidget?.dataset?.cartCurrencySymbol;
         if (sym) {
           return `${sym}${Number(amount || 0).toFixed(2)}`;
@@ -1666,7 +1718,7 @@
         const remaining = Math.max(0, nextThreshold - progressSubtotal);
         const remainingStr = formatCartGoalMoney(remaining, cartCurrencyCode);
         const nextRewardText = formatTierNewReward(nextTier);
-        motivationalHtml = `<span class="stackup-goal-next-text">Add <strong>${remainingStr}</strong> more to unlock <strong>${nextRewardText}</strong>!</span>`;
+        motivationalHtml = `<span class="stackup-goal-next-text">Add <strong>${remainingStr}</strong>  more to unlock <strong>${nextRewardText}</strong>!</span>`;
       }
 
       // Update all active instances (Page and/or Drawer)
@@ -1674,9 +1726,11 @@
       const wStyles = customSettings?.styles || offer?.widget || {};
 
       widgets.forEach((widget) => {
-        // Always show the progress bar whenever items are in the cart
+        // Show progress bar when items are in cart; hide drawer instance if cart is empty
         if (totalCartItemsCount > 0) {
           widget.style.display = '';
+        } else if (widget.classList.contains('stackup-cart-goal-in-drawer')) {
+          widget.style.display = 'none';
         }
         // Apply card styling from cart_goal_widget_settings
         const card = widget.querySelector('.stackup-cart-goal-card');
@@ -1704,11 +1758,11 @@
         // Scope Badge: Informs customers when progress applies only to specific collections or products
         let scopeBadgeText = '';
         if (isSpecificCollections && Array.isArray(offer.collections) && offer.collections.length > 0) {
-          const colTitles = offer.collections.map(c => c.title || 'Collection').join(', ');
+          const colTitles = offer.collections.map(c => escapeHtml(c.title || 'Collection')).join(', ');
           scopeBadgeText = `🏷️ Valid on: <strong>${colTitles}</strong> collection only`;
         } else if (isSpecificProducts && Array.isArray(offer.products) && offer.products.length > 0) {
           if (offer.products.length === 1) {
-            scopeBadgeText = `🏷️ Valid on: <strong>${offer.products[0].title || 'Product'}</strong> only`;
+            scopeBadgeText = `🏷️ Valid on: <strong>${escapeHtml(offer.products[0].title || 'Product')}</strong> only`;
           } else {
             scopeBadgeText = `🏷️ Valid on selected <strong>${offer.products.length} products</strong> only`;
           }
@@ -1799,10 +1853,192 @@
             }
           });
         }
+
+        // Render Eligible Products Section (When applyTo === "PRODUCTS" and offer.products.length > 0)
+        let productsSection = card ? card.querySelector('.stackup-cart-goal-products-section') : null;
+        if (isSpecificProducts && Array.isArray(offer.products) && offer.products.length > 0) {
+          if (!productsSection && card) {
+            productsSection = document.createElement('div');
+            productsSection.className = 'stackup-cart-goal-products-section';
+            card.appendChild(productsSection);
+          }
+          if (productsSection) {
+            const currentOfferId = offer.id || '';
+            if (productsSection.dataset.renderedOfferId !== currentOfferId) {
+              productsSection.dataset.renderedOfferId = currentOfferId;
+              productsSection.innerHTML = renderCartGoalProductsList(offer.products, cartCurrencyCode, currencyRate);
+              attachCartGoalProductEvents(productsSection, offer.products);
+            }
+            productsSection.style.display = 'block';
+          }
+        } else if (productsSection) {
+          productsSection.style.display = 'none';
+        }
       });
 
-      // Helper to instantly refresh the theme cart DOM via Shopify Section Rendering API (Zero Page Reload)
+      function renderCartGoalProductsList(products, currencyCode, currencyRate) {
+        const isMulti = products.length > 3;
+        let html = `
+          <div class="stackup-cart-goal-products-header">
+            <span class="stackup-cart-goal-products-title">Eligible Products to Unlock This Goal (${products.length})</span>
+          </div>
+          <div class="stackup-cart-goal-products-list ${isMulti ? 'has-scroll' : ''}">
+        `;
+
+        products.forEach((p, idx) => {
+          const pId = escapeHtml(p.id || `prod-${idx}`);
+          const rawTitle = p.title || 'Product';
+          const title = escapeHtml(rawTitle);
+          const handle = escapeHtml(p.handle || '');
+          const image = escapeHtml(p.image || '');
+          const variants = Array.isArray(p.variants) && p.variants.length > 0 ? p.variants : [];
+          const hasMultipleVariants = variants.length > 1 && variants.some(v => v.title && v.title !== 'Default Title');
+          const firstVariant = variants[0] || {};
+          const rawPrice = firstVariant.price || p.price || 0;
+          const price = rawPrice * (currencyRate || 1);
+
+          html += `
+            <div class="stackup-cart-goal-product-item" data-product-id="${pId}">
+              <div class="stackup-cart-goal-product-thumb">
+                ${image ? `<img src="${image}" alt="${title}" loading="lazy">` : `<span class="stackup-thumb-fallback">🛍️</span>`}
+              </div>
+              <div class="stackup-cart-goal-product-info">
+                <a href="${handle ? `/products/${handle}` : 'javascript:void(0)'}" class="stackup-cart-goal-product-name" title="${title}">${title}</a>
+                <div class="stackup-cart-goal-product-subrow">
+                  ${price > 0 ? `<span class="stackup-cart-goal-product-price">${formatCartGoalMoney(price, currencyCode)}</span>` : ''}
+                  ${hasMultipleVariants ? `
+                    <select class="stackup-cart-goal-variant-select" data-product-id="${pId}">
+                      ${variants.map(v => `<option value="${escapeHtml(v.id)}">${escapeHtml(v.title)}</option>`).join('')}
+                    </select>
+                  ` : ''}
+                </div>
+              </div>
+              <div class="stackup-cart-goal-product-actions">
+                <button type="button" class="stackup-cart-goal-btn-add" data-product-id="${pId}" data-variant-id="${escapeHtml(firstVariant.id || '')}">+ Add</button>
+                ${handle ? `<a href="/products/${handle}" class="stackup-cart-goal-btn-view" target="_blank" rel="noopener noreferrer">View</a>` : ''}
+              </div>
+            </div>
+          `;
+        });
+
+        html += `</div>`;
+        return html;
+      }
+
+      const productVariantsCache = {};
+
+      async function getProductVariantId(product, selectedId) {
+        if (selectedId) {
+          const clean = cleanVariantId(selectedId);
+          if (clean && /^\d+$/.test(clean)) return clean;
+        }
+        if (Array.isArray(product.variants) && product.variants.length > 0) {
+          const first = product.variants[0];
+          const clean = cleanVariantId(first.id || first.variantId);
+          if (clean && /^\d+$/.test(clean)) return clean;
+        }
+        if (product.variantId) {
+          const clean = cleanVariantId(product.variantId);
+          if (clean && /^\d+$/.test(clean)) return clean;
+        }
+        // Fallback: If variants are not in product object, fetch storefront product JSON
+        if (product.handle) {
+          if (productVariantsCache[product.handle]) {
+            return productVariantsCache[product.handle];
+          }
+          try {
+            const rootUrl = window.Shopify?.routes?.root || '/';
+            const res = await fetch(`${rootUrl}products/${product.handle}.js`);
+            if (res.ok) {
+              const data = await res.json();
+              if (Array.isArray(data.variants) && data.variants.length > 0) {
+                const firstVar = data.variants.find(v => v.available) || data.variants[0];
+                const vId = String(firstVar.id);
+                productVariantsCache[product.handle] = vId;
+                product.variants = data.variants.map(v => ({
+                  id: String(v.id),
+                  title: v.title,
+                  price: (v.price || 0) / 100,
+                }));
+                return vId;
+              }
+            }
+          } catch (e) {
+            console.warn('[StackUp:CartGoal] Product handle fetch notice:', e);
+          }
+        }
+        return '';
+      }
+
+      function attachCartGoalProductEvents(container, products) {
+        if (!container) return;
+        const rootUrl = window.Shopify?.routes?.root || '/';
+
+        container.querySelectorAll('.stackup-cart-goal-variant-select').forEach((sel) => {
+          sel.addEventListener('change', (e) => {
+            const pId = sel.dataset.productId;
+            const addBtn = container.querySelector(`.stackup-cart-goal-btn-add[data-product-id="${pId}"]`);
+            if (addBtn) {
+              addBtn.dataset.variantId = e.target.value;
+            }
+          });
+        });
+
+        container.querySelectorAll('.stackup-cart-goal-btn-add').forEach((btn) => {
+          btn.addEventListener('click', async (e) => {
+            e.preventDefault();
+            const pId = btn.dataset.productId;
+            const p = products.find(prod => String(prod.id) === String(pId)) || {};
+            const select = container.querySelector(`.stackup-cart-goal-variant-select[data-product-id="${pId}"]`);
+            const selectedVal = select ? select.value : btn.dataset.variantId;
+
+            btn.disabled = true;
+            const origHtml = btn.innerHTML;
+            btn.innerHTML = '<span class="stackup-cart-goal-spinner"></span>';
+
+            try {
+              const variantId = await getProductVariantId(p, selectedVal);
+              if (!variantId) {
+                if (p?.handle) window.location.href = `/products/${p.handle}`;
+                return;
+              }
+
+              isStackUpInternalFetch = true;
+              const res = await fetch(`${rootUrl}cart/add.js`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+                body: JSON.stringify({ items: [{ id: Number(variantId), quantity: 1 }] }),
+              });
+              if (res.ok) {
+                const addedData = await res.json();
+                await refreshThemeCartUI(addedData);
+                queueCartGoalSync(10);
+              } else {
+                const errJson = await res.json().catch(() => ({}));
+                console.warn('[StackUp:CartGoal] Single add error:', errJson);
+              }
+            } catch (err) {
+              console.error('Error adding cart goal item:', err);
+            } finally {
+              isStackUpInternalFetch = false;
+              if (!isCartPage()) {
+                btn.innerHTML = origHtml;
+                btn.disabled = false;
+              }
+            }
+          });
+        });
+      }
+
+      // Helper to instantly refresh the theme cart DOM via Shopify Section Rendering API
       async function refreshThemeCartUI(updatedCartData) {
+        // When on the standalone /cart page, do a clean, instant page reload.
+        // This guarantees 100% native Liquid rendering for all titles, variants, and tables without any DOM glitch or popup.
+        if (isCartPage()) {
+          window.location.reload();
+          return;
+        }
+
         let updatedSuccessfully = false;
 
         try {
@@ -1834,7 +2070,13 @@
           }
 
           const sectionsQuery = Array.from(sectionsToFetch).join(',');
-          const res = await fetch(`${rootUrl}cart?sections=${encodeURIComponent(sectionsQuery)}`);
+          isStackUpInternalFetch = true;
+          let res;
+          try {
+            res = await fetch(`${rootUrl}cart?sections=${encodeURIComponent(sectionsQuery)}`);
+          } finally {
+            isStackUpInternalFetch = false;
+          }
           if (res.ok) {
             const sectionsData = await res.json();
             const parser = new DOMParser();
@@ -1877,13 +2119,8 @@
             }
 
             // B. Update Cart Drawer silently (NEVER call this.open())
-            const isCartPage = Boolean(
-              window.location.pathname &&
-              window.location.pathname.replace(/\/$/, '').endsWith('/cart')
-            );
-
             // Only update drawer DOM if NOT on /cart page (to avoid any layout interference or opening)
-            if (!isCartPage) {
+            if (!isCartPage()) {
               const targetDrawer = cartDrawerElem || document.getElementById('CartDrawer');
               if (targetDrawer && sectionsData['cart-drawer']) {
                 const parsedDoc = parser.parseFromString(sectionsData['cart-drawer'], 'text/html');
@@ -1908,8 +2145,7 @@
         });
 
         // Safe Fallback: Only on older non-OS2.0 vintage themes where DOM sections could not be updated
-        const isCartPage = Boolean(window.location.pathname && window.location.pathname.replace(/\/$/, '').endsWith('/cart'));
-        if (isCartPage && !updatedSuccessfully) {
+        if (isCartPage() && !updatedSuccessfully) {
           window.location.reload();
         }
       }
@@ -1920,7 +2156,44 @@
       const eligibleGift = activeGiftTier?.freeGift;
       const eligibleGiftVariantId = eligibleGift?.variantId ? cleanVariantId(eligibleGift.variantId) : null;
 
-      if (eligibleGiftVariantId) {
+      // 1. Detect any outdated StackUp free gifts in cart that no longer match the current eligible gift
+      const outdatedGiftsInCart = cart && Array.isArray(cart.items)
+        ? cart.items.filter((item) => {
+          const isGift = item.properties && (item.properties._stackup_free_gift === 'true' || item.properties._stackup_free_gift === true);
+          if (!isGift) return false;
+          if (!eligibleGiftVariantId) return true; // Not qualified for any gift
+          const isCurrentMatch = (
+            cleanVariantId(item.id) === eligibleGiftVariantId ||
+            cleanVariantId(item.variant_id) === eligibleGiftVariantId
+          );
+          return !isCurrentMatch; // Gift is from a different tier or old session
+        })
+        : [];
+
+      if (outdatedGiftsInCart.length > 0 && !isCartGoalUpdating) {
+        isCartGoalUpdating = true;
+        isStackUpInternalFetch = true;
+        try {
+          for (const oldGift of outdatedGiftsInCart) {
+            await fetch(`${rootUrl}cart/change.js`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                id: oldGift.key || oldGift.id,
+                quantity: 0,
+              }),
+            });
+          }
+          const changeRes = await fetch(`${rootUrl}cart.js`);
+          const updatedCart = changeRes.ok ? await changeRes.json() : null;
+          await refreshThemeCartUI(updatedCart);
+        } catch (giftRemoveErr) {
+          console.warn('[StackUp:CartGoal] Could not auto-remove outdated free gift:', giftRemoveErr);
+        } finally {
+          isStackUpInternalFetch = false;
+          setTimeout(() => { isCartGoalUpdating = false; }, 400);
+        }
+      } else if (eligibleGiftVariantId) {
         // Customer qualified for a gift: check if it's already in the cart (either auto-added or merchant item)
         const matchingGiftInCart = cart && Array.isArray(cart.items)
           ? cart.items.find((item) => {
@@ -1936,6 +2209,7 @@
 
         if (!isAlreadyInCart && !isCartGoalUpdating) {
           isCartGoalUpdating = true;
+          isStackUpInternalFetch = true;
           try {
             const addRes = await fetch(`${rootUrl}cart/add.js`, {
               method: 'POST',
@@ -1943,7 +2217,7 @@
               body: JSON.stringify({
                 items: [
                   {
-                    id: eligibleGiftVariantId,
+                    id: Number(eligibleGiftVariantId),
                     quantity: 1,
                     properties: {
                       _stackup_free_gift: 'true',
@@ -1958,12 +2232,14 @@
           } catch (giftAddErr) {
             console.warn('[StackUp:CartGoal] Could not auto-add free gift:', giftAddErr);
           } finally {
+            isStackUpInternalFetch = false;
             setTimeout(() => { isCartGoalUpdating = false; }, 400);
           }
         }
       } else if (freeGiftInCart && !isCartGoalUpdating) {
         // Customer is NOT qualified for gift, but gift is currently in cart: remove it
         isCartGoalUpdating = true;
+        isStackUpInternalFetch = true;
         try {
           const changeRes = await fetch(`${rootUrl}cart/change.js`, {
             method: 'POST',
@@ -1978,6 +2254,7 @@
         } catch (giftRemoveErr) {
           console.warn('[StackUp:CartGoal] Could not auto-remove unqualified free gift:', giftRemoveErr);
         } finally {
+          isStackUpInternalFetch = false;
           setTimeout(() => { isCartGoalUpdating = false; }, 400);
         }
       }
@@ -1986,9 +2263,15 @@
     }
   }
 
-  function queueCartGoalSync(delay = 100) {
+  function queueCartGoalSync(delay = 150) {
+    if (isCartGoalUpdating) return;
+    const now = Date.now();
+    if (now - lastCartGoalSyncTime < 600) {
+      return; // Throttle to prevent spamming
+    }
     if (cartGoalSyncTimeout) clearTimeout(cartGoalSyncTimeout);
     cartGoalSyncTimeout = setTimeout(() => {
+      lastCartGoalSyncTime = Date.now();
       updateCartGoalUI();
     }, delay);
   }
@@ -2024,9 +2307,9 @@
 
         const promise = originalFetch.apply(this, arguments);
 
-        if (isCartApi && !isCartGoalUpdating) {
+        if (isCartApi && !isCartGoalUpdating && !isStackUpInternalFetch) {
           promise.then(() => {
-            queueCartGoalSync(150);
+            queueCartGoalSync(250);
           }).catch(() => { });
         }
 
@@ -2050,7 +2333,7 @@
           this._stackupUrl.includes('/cart/clear')
         )) {
           this.addEventListener('load', () => {
-            if (!isCartGoalUpdating) queueCartGoalSync(150);
+            if (!isCartGoalUpdating && !isStackUpInternalFetch) queueCartGoalSync(250);
           });
         }
         return originalSend.apply(this, arguments);
@@ -2059,40 +2342,16 @@
 
     // Listen for custom theme cart events
     ['cart:updated', 'cart:refresh', 'cart:change', 'cart:build'].forEach((eventName) => {
-      window.addEventListener(eventName, () => queueCartGoalSync(100));
-      document.addEventListener(eventName, () => queueCartGoalSync(100));
+      window.addEventListener(eventName, () => queueCartGoalSync(150));
+      document.addEventListener(eventName, () => queueCartGoalSync(150));
     });
 
-    // Observer to detect when slide-out cart drawer opens in DOM
-    const observer = new MutationObserver((mutations) => {
-      for (const mutation of mutations) {
-        if (mutation.type === 'childList' || mutation.type === 'attributes') {
-          const target = mutation.target;
-          if (target && target.nodeType === 1) {
-            const tag = target.tagName ? target.tagName.toLowerCase() : '';
-            const className = typeof target.className === 'string' ? target.className.toLowerCase() : '';
-            if (
-              tag === 'cart-drawer' ||
-              className.includes('drawer') ||
-              className.includes('cart') ||
-              target.id === 'CartDrawer'
-            ) {
-              queueCartGoalSync(80);
-              break;
-            }
-          }
-        }
+    // Listen to user clicking cart drawer trigger buttons or links
+    document.addEventListener('click', (e) => {
+      if (e.target && e.target.closest && e.target.closest('a[href*="/cart"], cart-drawer, #CartDrawer, [aria-controls*="CartDrawer"], [data-cart-drawer-trigger], .header__icon--cart')) {
+        queueCartGoalSync(250);
       }
-    });
-
-    try {
-      observer.observe(document.body, {
-        childList: true,
-        subtree: true,
-        attributes: true,
-        attributeFilter: ['class', 'open', 'active', 'aria-hidden'],
-      });
-    } catch { }
+    }, true);
   }
 
   // Ensure init runs on DOMContentLoaded and immediately if already loaded

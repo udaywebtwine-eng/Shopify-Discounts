@@ -42,13 +42,15 @@ export const loader = async ({ request }) => {
   const timezoneAbbr = getTimezoneAbbr(shopTimezone);
   const currentTime = getShopCurrentTime(shopTimezone);
 
-  // Load widget settings
+  // Load widget settings & shop currency
   let widgetSettings = null;
+  let shopCurrency = "";
   try {
     const res = await admin.graphql(
       `#graphql
       query GetBogoWidgetSettings {
         shop {
+          currencyCode
           metafield(namespace: "stack_up", key: "bogo_widget_settings") {
             value
           }
@@ -56,6 +58,7 @@ export const loader = async ({ request }) => {
       }`
     );
     const json = await res.json();
+    shopCurrency = json.data?.shop?.currencyCode || "";
     const rawVal = json.data?.shop?.metafield?.value;
     if (rawVal) {
       widgetSettings = JSON.parse(rawVal);
@@ -84,6 +87,7 @@ export const loader = async ({ request }) => {
     timezoneAbbr,
     currentTime,
     shop,
+    shopCurrency,
     usedMainProducts,
     widgetSettings,
     nextOfferNumber: bogoCount + 1,
@@ -224,14 +228,26 @@ export const action = async ({ request }) => {
   }
 };
 
+function getCurrencySymbol(code) {
+  if (!code) return "";
+  try {
+    const parts = new Intl.NumberFormat("en-US", { style: "currency", currency: code }).formatToParts(0);
+    const part = parts.find((p) => p.type === "currency");
+    return part ? part.value : code;
+  } catch {
+    return code;
+  }
+}
+
 export default function BogoCreate() {
-  const { shopTimezone, timezoneAbbr, shop, usedMainProducts, widgetSettings, nextOfferNumber } = useLoaderData();
+  const { shopTimezone, timezoneAbbr, shop, shopCurrency, usedMainProducts, widgetSettings, nextOfferNumber } = useLoaderData();
   const actionData = useActionData();
   const navigation = useNavigation();
   const submit = useSubmit();
   const shopify = useAppBridge();
 
   const isSubmitting = navigation.state === "submitting";
+  const currencySymbol = useMemo(() => getCurrencySymbol(shopCurrency), [shopCurrency]);
 
   // Form State
   const [dealType, setDealType] = useState("BUY_X_GET_Y"); // "BUY_X_GET_Y" | "BUY_X_GET_X" | "BOGO"
@@ -861,7 +877,7 @@ export default function BogoCreate() {
                   label="Value *"
                   value={String(discountValue)}
                   disabled={dealType === "BOGO" ? "true" : undefined}
-                  suffix={discountType === "PERCENTAGE" ? "%" : "$"}
+                  suffix={discountType === "PERCENTAGE" ? "%" : (currencySymbol || "Fixed")}
                   onInput={(e) => setDiscountValue(Math.max(0, parseFloat(e.target.value || "0")))}
                 />
               </div>
@@ -870,7 +886,7 @@ export default function BogoCreate() {
                   label="Max discount"
                   value={maxDiscount}
                   disabled={dealType === "BOGO" ? "true" : undefined}
-                  prefix="$"
+                  prefix={currencySymbol}
                   placeholder="Optional cap"
                   onInput={(e) => setMaxDiscount(e.target.value)}
                 />
@@ -1007,8 +1023,8 @@ export default function BogoCreate() {
           <s-stack gap="tight">
             <s-text weight="bold">Reward discount</s-text>
             <s-paragraph tone="subdued">
-              • {dealType === "BOGO" ? "100% Free" : discountType === "PERCENTAGE" ? `${discountValue}% off` : `$${discountValue} off per item`}
-              {maxDiscount ? ` (Capped at $${maxDiscount})` : ""}
+              • {dealType === "BOGO" ? "100% Free" : discountType === "PERCENTAGE" ? `${discountValue}% off` : `${currencySymbol}${discountValue} off per item`}
+              {maxDiscount ? ` (Capped at ${currencySymbol}${maxDiscount})` : ""}
             </s-paragraph>
           </s-stack>
 

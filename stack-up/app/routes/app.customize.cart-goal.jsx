@@ -44,6 +44,7 @@ export const loader = async ({ request }) => {
 
   let savedSettings = null;
   let activeThemeId = null;
+  let shopCurrency = "";
 
   try {
     const response = await admin.graphql(
@@ -64,6 +65,7 @@ export const loader = async ({ request }) => {
       }`
     );
     const json = await response.json();
+    shopCurrency = json.data?.shop?.currencyCode || "";
     const rawMetafield = json.data?.shop?.metafield?.value;
     if (rawMetafield) {
       try {
@@ -85,8 +87,6 @@ export const loader = async ({ request }) => {
         clientId ? `&activateAppId=${encodeURIComponent(`${clientId}/cart-goal-bar`)}` : ""
       }`
     : `https://admin.shopify.com/store/${shopName}/themes/current/editor?context=apps`;
-
-  const shopCurrency = json.data?.shop?.currencyCode || "";
 
   return {
     settings: savedSettings || DEFAULT_SETTINGS,

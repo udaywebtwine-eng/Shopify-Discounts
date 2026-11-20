@@ -1049,5 +1049,383 @@ html:has([data-stackup-embed-active]) .stackup-addons-widget,
   text-transform: uppercase;
 }
 
+/* ==========================================================================
+   Cart Goal Eligible Products List Section (Bottom of Progress Bar)
+   ========================================================================== */
+.stackup-cart-goal-products-section {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px dashed #e2e8f0;
+  text-align: left;
+}
+
+.stackup-cart-goal-products-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.stackup-cart-goal-products-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #64748b;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.stackup-cart-goal-products-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  box-sizing: border-box;
+}
+
+.stackup-cart-goal-products-list.has-scroll {
+  max-height: 220px;
+  overflow-y: auto;
+  padding-right: 4px;
+  scrollbar-width: thin;
+  scrollbar-color: #cbd5e1 transparent;
+}
+
+.stackup-cart-goal-products-list::-webkit-scrollbar {
+  width: 5px;
+}
+
+.stackup-cart-goal-products-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.stackup-cart-goal-products-list::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 4px;
+}
+
+.stackup-cart-goal-products-list::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+.stackup-cart-goal-product-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  box-sizing: border-box;
+}
+
+.stackup-cart-goal-product-thumb {
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #f8fafc;
+  border: 1px solid #edf2f7;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.stackup-cart-goal-product-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.stackup-thumb-fallback {
+  font-size: 18px;
+}
+
+.stackup-cart-goal-product-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.stackup-cart-goal-product-name {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #0f172a;
+  text-decoration: none;
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.35;
+}
+
+.stackup-cart-goal-product-subrow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+  flex-wrap: wrap;
+}
+
+.stackup-cart-goal-product-price {
+  font-size: 12px;
+  font-weight: 700;
+  color: #0f172a;
+  letter-spacing: -0.01em;
+}
+
+.stackup-cart-goal-variant-select {
+  appearance: none;
+  -webkit-appearance: none;
+  font-size: 11px;
+  font-weight: 500;
+  padding: 3px 22px 3px 8px;
+  border-radius: 6px;
+  border: 1px solid #cbd5e1;
+  background: #f8fafc url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E") no-repeat right 7px center;
+  background-size: 10px;
+  color: #334155;
+  max-width: 130px;
+  height: 24px;
+  line-height: 1;
+  cursor: pointer;
+  box-sizing: border-box;
+}
+
+.stackup-cart-goal-variant-select:focus {
+  outline: none;
+  border-color: #0f172a;
+  box-shadow: 0 0 0 2px rgba(15, 23, 42, 0.08);
+}
+
+.stackup-cart-goal-product-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.stackup-cart-goal-btn-add {
+  font-size: 12px;
+  font-weight: 600;
+  height: 32px;
+  min-width: 64px;
+  padding: 0 14px;
+  background: var(--stackup-goal-fill-color, #0f172a);
+  color: #ffffff !important;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  white-space: nowrap;
+  transition: opacity 0.15s ease;
+}
+
+.stackup-cart-goal-btn-add:hover {
+  opacity: 0.92;
+}
+
+.stackup-cart-goal-btn-add:disabled {
+  opacity: 0.75;
+  cursor: not-allowed;
+}
+
+.stackup-cart-goal-btn-view {
+  font-size: 11.5px;
+  font-weight: 500;
+  height: 32px;
+  padding: 0 12px;
+  background: #ffffff;
+  color: #475569;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+/* ==========================================================================
+   Responsive & Drawer Specific Layout (Fits cleanly in 320px-360px drawers)
+   ========================================================================== */
+.stackup-cart-goal-in-drawer {
+  margin: 8px 0 14px 0;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.stackup-cart-goal-in-drawer .stackup-cart-goal-card {
+  padding: 12px 14px;
+}
+
+.stackup-cart-goal-in-drawer .stackup-cart-goal-product-item {
+  padding: 8px 10px;
+  gap: 10px;
+}
+
+.stackup-cart-goal-in-drawer .stackup-cart-goal-product-thumb {
+  width: 40px;
+  height: 40px;
+  min-width: 40px;
+  border-radius: 6px;
+}
+
+.stackup-cart-goal-in-drawer .stackup-cart-goal-product-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.stackup-cart-goal-in-drawer .stackup-cart-goal-product-name {
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.25;
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.stackup-cart-goal-in-drawer .stackup-cart-goal-product-subrow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 3px;
+}
+
+.stackup-cart-goal-in-drawer .stackup-cart-goal-product-price {
+  font-size: 11.5px;
+  font-weight: 700;
+}
+
+.stackup-cart-goal-in-drawer .stackup-cart-goal-variant-select {
+  height: 22px;
+  font-size: 10.5px;
+  padding: 2px 18px 2px 6px;
+  max-width: 95px;
+}
+
+.stackup-cart-goal-in-drawer .stackup-cart-goal-product-actions {
+  gap: 4px;
+}
+
+.stackup-cart-goal-in-drawer .stackup-cart-goal-btn-add {
+  height: 28px;
+  min-width: 50px;
+  padding: 0 10px;
+  font-size: 11px;
+}
+
+.stackup-cart-goal-in-drawer .stackup-cart-goal-btn-view {
+  height: 28px;
+  padding: 0 8px;
+  font-size: 11px;
+}
+
+@media (max-width: 480px) {
+  .stackup-cart-goal-product-item {
+    padding: 8px 10px;
+    gap: 10px;
+  }
+
+  .stackup-cart-goal-product-thumb {
+    width: 40px;
+    height: 40px;
+    min-width: 40px;
+    border-radius: 6px;
+  }
+
+  .stackup-cart-goal-product-info {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .stackup-cart-goal-product-name {
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1.25;
+    white-space: normal;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .stackup-cart-goal-product-subrow {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 3px;
+  }
+
+  .stackup-cart-goal-product-price {
+    font-size: 11.5px;
+    font-weight: 700;
+  }
+
+  .stackup-cart-goal-variant-select {
+    height: 22px;
+    font-size: 10.5px;
+    padding: 2px 18px 2px 6px;
+    max-width: 95px;
+  }
+
+  .stackup-cart-goal-product-actions {
+    gap: 4px;
+  }
+
+  .stackup-cart-goal-btn-add {
+    height: 28px;
+    min-width: 50px;
+    padding: 0 10px;
+    font-size: 11px;
+  }
+
+  .stackup-cart-goal-btn-view {
+    height: 28px;
+    padding: 0 8px;
+    font-size: 11px;
+  }
+}
+
+/* Rounded Rotating Spinner Loader */
+@keyframes stackup-spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+.stackup-spin {
+  display: inline-block;
+  animation: stackup-spin 0.75s linear infinite;
+  vertical-align: middle;
+}
+
+.stackup-cart-goal-spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  border-top-color: #ffffff;
+  border-radius: 50%;
+  animation: stackup-spin 0.65s linear infinite;
+  box-sizing: border-box;
+  vertical-align: middle;
+}
+
 
 

@@ -230,6 +230,73 @@ export async function syncAllActiveCartGoalOffersToShopMetafield(admin) {
         }
       }
 
+      let enrichedProducts = Array.isArray(cfg.products) ? cfg.products : [];
+      if (cfg.applyTo === "PRODUCTS" && enrichedProducts.length > 0) {
+        try {
+          const productIds = enrichedProducts.map((p) => (typeof p === "object" ? p.id : String(p))).filter(Boolean);
+          const fullGids = productIds.map((id) => (id.startsWith("gid://") ? id : `gid://shopify/Product/${id}`));
+
+          if (fullGids.length > 0) {
+            const prodRes = await admin.graphql(
+              `#graphql
+              query GetCartGoalProductsInfo($ids: [ID!]!) {
+                nodes(ids: $ids) {
+                  ... on Product {
+                    id
+                    title
+                    handle
+                    featuredImage {
+                      url
+                    }
+                    variants(first: 50) {
+                      nodes {
+                        id
+                        title
+                        price
+                      }
+                    }
+                  }
+                }
+              }`,
+              { variables: { ids: fullGids } }
+            );
+            const prodJson = await prodRes.json();
+            const nodes = prodJson.data?.nodes || [];
+            const prodMap = {};
+            nodes.forEach((n) => {
+              if (n && n.id) {
+                prodMap[n.id] = n;
+                const num = n.id.split("/").pop();
+                if (num) prodMap[num] = n;
+              }
+            });
+
+            enrichedProducts = enrichedProducts.map((p) => {
+              const pId = typeof p === "object" ? p.id : String(p);
+              const num = pId.split("/").pop();
+              const details = prodMap[pId] || prodMap[num];
+              if (!details) return typeof p === "object" ? p : { id: pId };
+
+              const variants = (details.variants?.nodes || []).map((v) => ({
+                id: v.id,
+                title: v.title,
+                price: parseFloat(v.price) || 0,
+              }));
+
+              return {
+                id: details.id,
+                title: details.title || (typeof p === "object" ? p.title : "") || "Product",
+                handle: details.handle || (typeof p === "object" ? p.handle : "") || "",
+                image: details.featuredImage?.url || (typeof p === "object" ? p.image : "") || "",
+                variants: variants.length > 0 ? variants : (p.variants || []),
+              };
+            });
+          }
+        } catch (prodErr) {
+          console.warn("[CartGoalMetafields] Could not enrich product info:", prodErr);
+        }
+      }
+
       activeOffersPayload.push({
         id: String(offer.numericId || offer.id),
         title: String(offer.title || "Cart Goal"),
@@ -238,7 +305,7 @@ export async function syncAllActiveCartGoalOffersToShopMetafield(admin) {
         applyTo: String(cfg.applyTo || "ALL"),
         collections: Array.isArray(cfg.collections) ? cfg.collections : [],
         collectionProductIds,
-        products: Array.isArray(cfg.products) ? cfg.products : [],
+        products: enrichedProducts,
         excludedProductIds: Array.isArray(cfg.excludedProductIds) ? cfg.excludedProductIds : [],
         tiers: normalizedTiers,
       });

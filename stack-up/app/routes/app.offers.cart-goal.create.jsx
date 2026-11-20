@@ -13,6 +13,7 @@ import {
   getShopTimezone,
   getShopTodayDate,
   getShopCurrentTime,
+  formatTime12h,
   getTimezoneAbbr,
   generateTimeOptions,
   dateToShopISO,
@@ -139,15 +140,14 @@ export const action = async ({ request }) => {
   const widgetTitle = (formData.get("widgetTitle") || "").trim();
   const status = formData.get("status") || "ACTIVE";
   const applyTo = formData.get("applyTo") || "ALL";
-  const exclusionsEnabled = formData.get("exclusionsEnabled") === "true";
 
   const collectionsRaw = formData.get("collections") || "[]";
   const productsRaw = formData.get("products") || "[]";
 
   let collections = [];
   let products = [];
-  try { collections = JSON.parse(collectionsRaw); } catch {}
-  try { products = JSON.parse(productsRaw); } catch {}
+  try { collections = JSON.parse(collectionsRaw); } catch { }
+  try { products = JSON.parse(productsRaw); } catch { }
 
   const tiersJsonRaw = formData.get("tiers") || "[]";
   let tiers = [];
@@ -206,22 +206,13 @@ export const action = async ({ request }) => {
   }
 
   const shopTimezone = await getShopTimezone(admin, shop);
-  const todayStr = getShopTodayDate(shopTimezone);
-
-  // If starting today and time is start of day, activate immediately
-  let effectiveStartsAt;
-  if (startsAtDate === todayStr && (!startsAtTime || startsAtTime === "00:00:00")) {
-    effectiveStartsAt = new Date(Date.now() - 60000).toISOString();
-  } else {
-    effectiveStartsAt = dateToShopISO(startsAtDate, startsAtTime, shopTimezone) || new Date().toISOString();
-  }
+  const effectiveStartsAt = dateToShopISO(startsAtDate, startsAtTime, shopTimezone) || new Date().toISOString();
   const effectiveEndsAt = hasEndDate && endsAtDate ? dateToShopISO(endsAtDate, endsAtTime, shopTimezone) : undefined;
 
   const configuration = {
     applyTo,
     collections,
     products,
-    exclusionsEnabled,
     tiers,
     widgetTitle,
   };
@@ -303,7 +294,6 @@ export default function CartGoalCreateRoute() {
   const [widgetTitle, setWidgetTitle] = useState("");
   const [status, setStatus] = useState("ACTIVE");
   const [applyTo, setApplyTo] = useState("ALL"); // "ALL" | "COLLECTIONS" | "PRODUCTS"
-  const [exclusionsEnabled, setExclusionsEnabled] = useState(false);
   const [selectedCollections, setSelectedCollections] = useState([]);
   const [selectedProducts, setSelectedProducts] = useState([]);
 
@@ -452,7 +442,13 @@ export default function CartGoalCreateRoute() {
         setSelectedProducts(selected.map((p) => ({
           id: p.id,
           title: p.title,
+          handle: p.handle || "",
           image: p.images?.[0]?.originalSrc || p.featuredImage?.url || "",
+          variants: Array.isArray(p.variants) ? p.variants.map((v) => ({
+            id: v.id,
+            title: v.title,
+            price: parseFloat(v.price) || 0,
+          })) : [],
         })));
       }
     } catch (err) {
@@ -466,7 +462,6 @@ export default function CartGoalCreateRoute() {
     widgetTitle.trim() !== "" ||
     status !== "ACTIVE" ||
     applyTo !== "ALL" ||
-    exclusionsEnabled ||
     selectedCollections.length > 0 ||
     selectedProducts.length > 0 ||
     tiers.length > 1 ||
@@ -588,7 +583,6 @@ export default function CartGoalCreateRoute() {
     formData.append("widgetTitle", widgetTitle);
     formData.append("status", status);
     formData.append("applyTo", applyTo);
-    formData.append("exclusionsEnabled", String(exclusionsEnabled));
     formData.append("collections", JSON.stringify(selectedCollections));
     formData.append("products", JSON.stringify(selectedProducts));
     formData.append("tiers", JSON.stringify(tiers));
@@ -640,7 +634,7 @@ export default function CartGoalCreateRoute() {
           {hasExistingActiveOffer && (
             <s-banner tone="critical" heading="Cannot Create: Cart Goal Already Exists">
               <s-paragraph>
-                You already have an active Cart Goal campaign (<strong>{existingActiveOffer?.title || "Active Campaign"}</strong>). 
+                You already have an active Cart Goal campaign (<strong>{existingActiveOffer?.title || "Active Campaign"}</strong>).
                 To maintain a clean cart experience, only one Cart Goal campaign can be active at a time.
               </s-paragraph>
               <s-stack direction="inline" gap="small" paddingBlockStart="small">
@@ -808,12 +802,6 @@ export default function CartGoalCreateRoute() {
                   )}
                 </s-stack>
               )}
-
-              <s-checkbox
-                label="Optionally exclude gift cards or selected clearance items from cart value goals"
-                checked={exclusionsEnabled}
-                onChange={(e) => setExclusionsEnabled(e.currentTarget.checked)}
-              ></s-checkbox>
             </s-stack>
           </s-section>
 
@@ -823,14 +811,6 @@ export default function CartGoalCreateRoute() {
               <s-paragraph tone="subdued">
                 Configure progressive cart value milestones. Customers unlock higher discounts, free shipping, or free gifts as their cart value grows.
               </s-paragraph>
-
-              <s-box background="subdued" padding="small" borderRadius="base">
-                <s-stack direction="inline" gap="small" alignItems="center">
-                  <s-text size="small" tone="subdued">
-                    🌍 <strong>Multi-Currency Enabled:</strong> Thresholds and fixed discounts are configured in your store's base currency (<strong>{shopCurrency || "Base currency"}</strong>). For customers shopping in other currencies, Shopify automatically converts these values in real-time at checkout based on live market exchange rates.
-                  </s-text>
-                </s-stack>
-              </s-box>
 
               {/* Horizontal Tier Tabs + Add Tier Button */}
               <s-stack direction="inline" justifyContent="space-between" alignItems="center">
@@ -877,7 +857,7 @@ export default function CartGoalCreateRoute() {
 
                   <div style={{ maxWidth: "260px" }}>
                     <s-number-field
-                      label={`Minimum cart value (${shopCurrency || "Base currency"}) *`}
+                      label={`Minimum cart value (${shopCurrency || "Base currency"})`}
                       prefix={currencySymbol}
                       min="1"
                       step="any"

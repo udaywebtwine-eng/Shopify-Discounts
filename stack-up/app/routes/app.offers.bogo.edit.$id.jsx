@@ -53,13 +53,15 @@ export const loader = async ({ request, params }) => {
   }
   const timezoneAbbr = getTimezoneAbbr(shopTimezone);
 
-  // Load widget settings
+  // Load widget settings & shop currency
   let widgetSettings = null;
+  let shopCurrency = "";
   try {
     const res = await admin.graphql(
       `#graphql
       query GetBogoWidgetSettings {
         shop {
+          currencyCode
           metafield(namespace: "stack_up", key: "bogo_widget_settings") {
             value
           }
@@ -67,6 +69,7 @@ export const loader = async ({ request, params }) => {
       }`
     );
     const json = await res.json();
+    shopCurrency = json.data?.shop?.currencyCode || "";
     const rawVal = json.data?.shop?.metafield?.value;
     if (rawVal) {
       widgetSettings = JSON.parse(rawVal);
@@ -279,6 +282,7 @@ export const loader = async ({ request, params }) => {
     shopTimezone,
     timezoneAbbr,
     shop,
+    shopCurrency,
     usedMainProducts,
     widgetSettings,
   };
@@ -488,8 +492,19 @@ export const action = async ({ request, params }) => {
   }
 };
 
+function getCurrencySymbol(code) {
+  if (!code) return "";
+  try {
+    const parts = new Intl.NumberFormat("en-US", { style: "currency", currency: code }).formatToParts(0);
+    const part = parts.find((p) => p.type === "currency");
+    return part ? part.value : code;
+  } catch {
+    return code;
+  }
+}
+
 export default function BogoEdit() {
-  const { offer, shopTimezone, timezoneAbbr, shop, usedMainProducts, widgetSettings } = useLoaderData();
+  const { offer, shopTimezone, timezoneAbbr, shop, shopCurrency, usedMainProducts, widgetSettings } = useLoaderData();
   const actionData = useActionData();
   const navigation = useNavigation();
   const submit = useSubmit();
@@ -497,6 +512,7 @@ export default function BogoEdit() {
   const shopify = useAppBridge();
 
   const isSubmitting = navigation.state === "submitting";
+  const currencySymbol = useMemo(() => getCurrencySymbol(shopCurrency), [shopCurrency]);
   const submittingIntent = navigation.formData?.get("intent");
   const isDeactivating = isSubmitting && submittingIntent === "deactivate";
   const isDeleting = isSubmitting && submittingIntent === "delete";
@@ -1279,7 +1295,7 @@ export default function BogoEdit() {
                   label="Value *"
                   value={String(discountValue)}
                   disabled={dealType === "BOGO" ? "true" : undefined}
-                  suffix={discountType === "PERCENTAGE" ? "%" : "$"}
+                  suffix={discountType === "PERCENTAGE" ? "%" : (currencySymbol || "Fixed")}
                   onInput={(e) => setDiscountValue(Math.max(0, parseFloat(e.target.value || "0")))}
                 />
               </div>
@@ -1288,7 +1304,7 @@ export default function BogoEdit() {
                   label="Max discount"
                   value={maxDiscount}
                   disabled={dealType === "BOGO" ? "true" : undefined}
-                  prefix="$"
+                  prefix={currencySymbol}
                   placeholder="Optional cap"
                   onInput={(e) => setMaxDiscount(e.target.value)}
                 />
@@ -1441,8 +1457,8 @@ export default function BogoEdit() {
           <s-stack gap="tight">
             <s-text weight="bold">Reward discount</s-text>
             <s-paragraph tone="subdued">
-              • {dealType === "BOGO" ? "100% Free" : discountType === "PERCENTAGE" ? `${discountValue}% off` : `$${discountValue} off per item`}
-              {maxDiscount ? ` (Capped at $${maxDiscount})` : ""}
+              • {dealType === "BOGO" ? "100% Free" : discountType === "PERCENTAGE" ? `${discountValue}% off` : `${currencySymbol}${discountValue} off per item`}
+              {maxDiscount ? ` (Capped at ${currencySymbol}${maxDiscount})` : ""}
             </s-paragraph>
           </s-stack>
 

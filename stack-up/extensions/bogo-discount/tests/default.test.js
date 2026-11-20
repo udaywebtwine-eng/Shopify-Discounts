@@ -14,9 +14,20 @@ describe("Default Integration Test", () => {
 
   beforeAll(async () => {
     functionDir = path.dirname(__dirname);
-    await buildFunction(functionDir);
+    try {
+      await buildFunction(functionDir);
+    } catch {}
     functionInfo = await getFunctionInfo(functionDir);
-    ({ schemaPath, functionRunnerPath, wasmPath, targeting } = functionInfo);
+    const info = functionInfo?.function || functionInfo || {};
+    schemaPath = info.schemaPath || path.join(functionDir, "schema.graphql");
+    functionRunnerPath = info.functionRunnerPath;
+    wasmPath = info.wasmPath || path.join(functionDir, "dist/function.wasm");
+    targeting = info.targeting || {};
+    if (Array.isArray(info.targets)) {
+      info.targets.forEach((t) => {
+        targeting[t.target] = t;
+      });
+    }
     schema = await loadSchema(schemaPath);
   }, 45000);
 

@@ -232,8 +232,10 @@ export function cartLinesDiscountsGenerateRun(input) {
 
         const lineCost = Number(line.cost?.subtotalAmount?.amount) || 0;
         const unitPrice = lineCost / lineQty;
+        const currencyRate = parseFloat(input.presentmentCurrencyRate) || 1.0;
+        const convertedDVal = dType === 'F' ? (Number(dVal) * currencyRate) : Number(dVal);
         const lineDiscount = dType === 'F'
-          ? dVal * targetedFromLine
+          ? convertedDVal * targetedFromLine
           : (unitPrice * targetedFromLine * (dVal / 100));
 
         totalDiscountEstimate += lineDiscount;
@@ -243,22 +245,27 @@ export function cartLinesDiscountsGenerateRun(input) {
 
     if (targets.length === 0) continue;
 
+    const currencyRate = parseFloat(input.presentmentCurrencyRate) || 1.0;
+    const convertedDVal = dType === 'F' ? (Number(dVal) * currencyRate) : Number(dVal);
+    const convertedMaxD = maxD > 0 ? (Number(maxD) * currencyRate) : 0;
+    const discountDisplayStr = dType === 'F' ? `${convertedDVal.toFixed(2)} OFF` : `${dVal}% OFF`;
+
     // Display title on savings pill
     const message = offerTitle || (
       dealType === 'BOGO' ? 'Buy 1 Get 1 Free' :
-      dealType === 'BUY_X_GET_X' ? (dType === 'F' ? `Buy ${buyQty} Get ${getQty} ($${dVal} OFF)` : `Buy ${buyQty} Get ${getQty} (${dVal}% OFF)`) :
-      (dType === 'F' ? `Buy ${buyQty} Get ${getQty} ($${dVal} OFF)` : `Buy ${buyQty} Get ${getQty} Special Deal`)
+      dealType === 'BUY_X_GET_X' ? `Buy ${buyQty} Get ${getQty} (${discountDisplayStr})` :
+      `Buy ${buyQty} Get ${getQty} Special Deal`
     );
 
-    // Check if Max Discount Cap is exceeded
-    if (maxD && maxD > 0 && totalDiscountEstimate > maxD) {
-      // Cap the total discount savings to maxD via fixedAmount
+    // Check if Max Discount Cap is exceeded (evaluated in presentment currency)
+    if (convertedMaxD > 0 && totalDiscountEstimate > convertedMaxD) {
+      // Cap the total discount savings to convertedMaxD via fixedAmount
       candidates.push({
         message,
         targets,
         value: {
           fixedAmount: {
-            amount: maxD,
+            amount: String(convertedMaxD.toFixed(2)),
             appliesToEachItem: false,
           },
         },
@@ -270,7 +277,7 @@ export function cartLinesDiscountsGenerateRun(input) {
           targets,
           value: {
             fixedAmount: {
-              amount: dVal,
+              amount: String(convertedDVal.toFixed(2)),
               appliesToEachItem: true,
             },
           },

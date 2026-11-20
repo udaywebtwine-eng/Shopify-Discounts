@@ -52,13 +52,15 @@ export const loader = async ({ request }) => {
     editUrl: `/app/offers/volume/edit/${info.numericId}`,
   }));
 
-  // Fetch saved widget settings for live preview sync
+  // Fetch saved widget settings and shop currency for live preview sync
   let widgetSettings = null;
+  let shopCurrency = "";
   try {
     const metaRes = await admin.graphql(
       `#graphql
       query GetVolumeWidgetSettings {
         shop {
+          currencyCode
           metafield(namespace: "stack_up", key: "volume_widget_settings") {
             value
           }
@@ -66,6 +68,7 @@ export const loader = async ({ request }) => {
       }`
     );
     const metaJson = await metaRes.json();
+    shopCurrency = metaJson.data?.shop?.currencyCode || "";
     const rawVal = metaJson.data?.shop?.metafield?.value;
     if (rawVal) {
       try {
@@ -78,7 +81,7 @@ export const loader = async ({ request }) => {
     console.warn("[VolumeCreate:Loader] Could not fetch volume_widget_settings:", err);
   }
 
-  return { shopTimezone, timezoneAbbr, currentTime, shop, usedMainProducts, widgetSettings };
+  return { shopTimezone, timezoneAbbr, currentTime, shop, shopCurrency, usedMainProducts, widgetSettings };
 };
 
 export const action = async ({ request }) => {
@@ -262,12 +265,25 @@ export const action = async ({ request }) => {
   }
 };
 
+function getCurrencySymbol(code) {
+  if (!code) return "";
+  try {
+    const parts = new Intl.NumberFormat("en-US", { style: "currency", currency: code }).formatToParts(0);
+    const part = parts.find((p) => p.type === "currency");
+    return part ? part.value : code;
+  } catch {
+    return code;
+  }
+}
+
 export default function VolumeCreate() {
-  const { shopTimezone, timezoneAbbr, currentTime, shop, usedMainProducts, widgetSettings } = useLoaderData();
+  const { shopTimezone, timezoneAbbr, currentTime, shop, shopCurrency, usedMainProducts, widgetSettings } = useLoaderData();
   const actionData = useActionData();
   const navigation = useNavigation();
   const submit = useSubmit();
   const shopify = useAppBridge();
+
+  const currencySymbol = useMemo(() => getCurrencySymbol(shopCurrency), [shopCurrency]);
 
   const todayStr = useMemo(() => getShopTodayDate(shopTimezone), [shopTimezone]);
   const defaultStartTime = currentTime || "00:00:00";
@@ -841,6 +857,8 @@ export default function VolumeCreate() {
                                   step="1"
                                   value={String(tier.value ?? tier.d ?? 0)}
                                   disabled={tier.discountType === "none" ? "true" : undefined}
+                                  prefix={tier.discountType === "fixed" ? currencySymbol : undefined}
+                                  suffix={tier.discountType === "percent" ? "%" : undefined}
                                   onInput={(e) => {
                                     const val = parseFloat(e.target.value) || 0;
                                     handleUpdateTier(idx, "value", val);
@@ -1052,7 +1070,7 @@ export default function VolumeCreate() {
                 const val = t.value ?? t.d ?? 0;
                 const discLabel = t.discountType === "none" || val === 0
                   ? "Standard price"
-                  : (t.discountType === "fixed" || t.t === "F" ? `$${val} off` : `${val}% off`);
+                  : (t.discountType === "fixed" || t.t === "F" ? `${currencySymbol}${val} off` : `${val}% off`);
                 const badgeText = t.badge || t.b;
                 return (
                   <s-paragraph key={i} tone="subdued">

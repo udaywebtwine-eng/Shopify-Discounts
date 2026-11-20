@@ -14,11 +14,14 @@ import {
   getShopTimezone,
   getShopTodayDate,
   getShopCurrentTime,
+  formatDateInShopTimezone,
+  formatTimeInShopTimezone,
   formatTime12h,
   getTimezoneAbbr,
   generateTimeOptions,
   dateToShopISO,
   setShopTimezoneCache,
+  computeOfferStatus,
 } from "../utils/timezone";
 import { ensureMasterDiscounts } from "../utils/masterDiscount.server";
 import { syncAllActiveCartGoalOffersToShopMetafield, getCartGoalConfiguration } from "../utils/cartGoalMetafields.server";
@@ -61,11 +64,17 @@ export const loader = async ({ request, params }) => {
 
   const configuration = getCartGoalConfiguration(offer);
 
-  const startsAtDate = offer.startsAt ? new Date(offer.startsAt).toISOString().split("T")[0] : "";
-  const startsAtTime = offer.startsAt ? new Date(offer.startsAt).toTimeString().split(" ")[0] : "00:00:00";
+  const computedStatus = computeOfferStatus({
+    startsAt: offer.startsAt,
+    endsAt: offer.endsAt,
+    status: offer.status,
+  });
+
+  const startsAtDate = offer.startsAt ? formatDateInShopTimezone(offer.startsAt, shopTimezone) : "";
+  const startsAtTime = offer.startsAt ? formatTimeInShopTimezone(offer.startsAt, shopTimezone, "00:00:00") : "00:00:00";
   const hasEndDate = Boolean(offer.endsAt);
-  const endsAtDate = offer.endsAt ? new Date(offer.endsAt).toISOString().split("T")[0] : "";
-  const endsAtTime = offer.endsAt ? new Date(offer.endsAt).toTimeString().split(" ")[0] : "23:59:59";
+  const endsAtDate = offer.endsAt ? formatDateInShopTimezone(offer.endsAt, shopTimezone) : "";
+  const endsAtTime = offer.endsAt ? formatTimeInShopTimezone(offer.endsAt, shopTimezone, "23:59:59") : "23:59:59";
 
   // Fetch saved widget settings & currency for live preview sync
   let widgetSettings = null;
@@ -102,6 +111,7 @@ export const loader = async ({ request, params }) => {
     widgetSettings,
     offer: {
       ...offer,
+      computedStatus,
       startsAtDate,
       startsAtTime,
       hasEndDate,
@@ -117,20 +127,81 @@ export const action = async ({ request, params }) => {
   const shop = session?.shop || "";
   const idOrNumericId = params.id;
   const formData = await request.formData();
+  const intent = formData.get("intent") || "update";
 
+  const offerWhere = {
+    type: "CART_GOAL",
+    OR: [
+      { id: idOrNumericId },
+      { numericId: idOrNumericId },
+    ],
+  };
+
+  const existingOffer = await prisma.offer.findFirst({
+    where: {
+      ...(shop ? { shop } : {}),
+      ...offerWhere,
+    },
+  }) || await prisma.offer.findFirst({ where: offerWhere });
+
+  if (!existingOffer) {
+    return redirect("/app/offers");
+  }
+
+  // Handle Deactivate
+  if (intent === "deactivate") {
+    try {
+      await prisma.offer.update({
+        where: { id: existingOffer.id },
+        data: { status: "EXPIRED" },
+      });
+      await syncAllActiveCartGoalOffersToShopMetafield(admin);
+      return redirect(`/app/offers/cart-goal/edit/${idOrNumericId}?deactivated=true`);
+    } catch (err) {
+      console.error("[CartGoalEdit:DeactivateAction] Error:", err);
+      return { error: err instanceof Error ? err.message : "Failed to deactivate offer." };
+    }
+  }
+
+  // Handle Activate
+  if (intent === "activate") {
+    try {
+      await prisma.offer.update({
+        where: { id: existingOffer.id },
+        data: { status: "ACTIVE" },
+      });
+      await syncAllActiveCartGoalOffersToShopMetafield(admin);
+      return redirect(`/app/offers/cart-goal/edit/${idOrNumericId}?activated=true`);
+    } catch (err) {
+      console.error("[CartGoalEdit:ActivateAction] Error:", err);
+      return { error: err instanceof Error ? err.message : "Failed to activate offer." };
+    }
+  }
+
+  // Handle Delete
+  if (intent === "delete") {
+    try {
+      await prisma.offer.delete({ where: { id: existingOffer.id } });
+      await syncAllActiveCartGoalOffersToShopMetafield(admin);
+      return redirect("/app/offers?deleted=true");
+    } catch (err) {
+      console.error("[CartGoalEdit:DeleteAction] Error:", err);
+      return { error: "Failed to delete promotion. " + (err.message || "") };
+    }
+  }
+
+  // Handle Update
   const title = (formData.get("title") || "").trim();
   const widgetTitle = (formData.get("widgetTitle") || "").trim();
-  const status = formData.get("status") || "ACTIVE";
   const applyTo = formData.get("applyTo") || "ALL";
-  const exclusionsEnabled = formData.get("exclusionsEnabled") === "true";
 
   const collectionsRaw = formData.get("collections") || "[]";
   const productsRaw = formData.get("products") || "[]";
 
   let collections = [];
   let products = [];
-  try { collections = JSON.parse(collectionsRaw); } catch {}
-  try { products = JSON.parse(productsRaw); } catch {}
+  try { collections = JSON.parse(collectionsRaw); } catch { }
+  try { products = JSON.parse(productsRaw); } catch { }
 
   const tiersJsonRaw = formData.get("tiers") || "[]";
   let tiers = [];
@@ -189,44 +260,23 @@ export const action = async ({ request, params }) => {
   }
 
   const shopTimezone = await getShopTimezone(admin, shop);
-  const todayStr = getShopTodayDate(shopTimezone);
-
-  // If starting today and time is start of day, activate immediately
-  let effectiveStartsAt;
-  if (startsAtDate === todayStr && (!startsAtTime || startsAtTime === "00:00:00")) {
-    effectiveStartsAt = new Date(Date.now() - 60000).toISOString();
-  } else {
-    effectiveStartsAt = dateToShopISO(startsAtDate, startsAtTime, shopTimezone) || new Date().toISOString();
-  }
+  const effectiveStartsAt = dateToShopISO(startsAtDate, startsAtTime, shopTimezone) || new Date().toISOString();
   const effectiveEndsAt = hasEndDate && endsAtDate ? dateToShopISO(endsAtDate, endsAtTime, shopTimezone) : undefined;
 
   const configuration = {
     applyTo,
     collections,
     products,
-    exclusionsEnabled,
     tiers,
     widgetTitle,
   };
 
   try {
-    const existingOffer = await prisma.offer.findFirst({
-      where: {
-        shop,
-        type: "CART_GOAL",
-        OR: [{ id: idOrNumericId }, { numericId: idOrNumericId }],
-      },
-    });
-
-    if (!existingOffer) {
-      return { error: "Offer not found." };
-    }
-
     await prisma.offer.update({
       where: { id: existingOffer.id },
       data: {
         title,
-        status,
+        status: existingOffer.status,
         startsAt: effectiveStartsAt,
         endsAt: effectiveEndsAt,
         configuration: JSON.stringify(configuration),
@@ -283,25 +333,57 @@ export default function CartGoalEditRoute() {
   const isRedirecting = navigation.state === "loading" && !navigation.location?.pathname.includes("/edit/");
   const isSubmitting = (isSaving || navigation.state === "submitting" || (navigation.state === "loading" && navigation.formMethod?.toLowerCase() === "post")) && !isRedirecting;
 
+  const submittingIntent = navigation.formData?.get("intent");
+  const isDeactivating = isSubmitting && submittingIntent === "deactivate";
+  const isDeleting = isSubmitting && submittingIntent === "delete";
+  const isActivating = isSubmitting && submittingIntent === "activate";
+
+  const isDeactivatedOrExpired = offer.status !== "ACTIVE";
+
+  const handleDeactivateOffer = () => {
+    const fd = new FormData();
+    fd.append("intent", "deactivate");
+    submit(fd, { method: "post" });
+  };
+
+  const handleActivateOffer = () => {
+    const fd = new FormData();
+    fd.append("intent", "activate");
+    submit(fd, { method: "post" });
+  };
+
+  const handleDeleteOffer = () => {
+    const fd = new FormData();
+    fd.append("intent", "delete");
+    submit(fd, { method: "post" });
+  };
+
   // Form State
-  const initialTitle = offer.title || "Cart Goal";
-  const initialWidgetTitle = configuration.widgetTitle || "";
-  const [title, setTitle] = useState(initialTitle);
-  const [widgetTitle, setWidgetTitle] = useState(initialWidgetTitle);
+  const [title, setTitle] = useState(offer.title || "Cart Goal");
+  const [widgetTitle, setWidgetTitle] = useState(configuration.widgetTitle || "");
   const [status, setStatus] = useState(offer.status || "ACTIVE");
   const [applyTo, setApplyTo] = useState(configuration.applyTo || "ALL");
-  const [exclusionsEnabled, setExclusionsEnabled] = useState(Boolean(configuration.exclusionsEnabled));
   const [selectedCollections, setSelectedCollections] = useState(Array.isArray(configuration.collections) ? configuration.collections : []);
   const [selectedProducts, setSelectedProducts] = useState(Array.isArray(configuration.products) ? configuration.products : []);
 
   // Progressive Tiers Builder State
   const [activeTierTab, setActiveTierTab] = useState(0);
-  const initialTiers = Array.isArray(configuration.tiers) && configuration.tiers.length > 0
-    ? configuration.tiers.map((t) => ({
-        ...t,
+  const initialTiers = useMemo(() => {
+    return Array.isArray(configuration.tiers) && configuration.tiers.length > 0
+      ? configuration.tiers.map((t) => ({
+        minAmount: t.minAmount,
+        discountType: t.discountType || "PERCENTAGE",
+        discountValue: t.discountValue || 0,
         hasDiscount: t.hasDiscount !== undefined ? Boolean(t.hasDiscount) : (parseFloat(t.discountValue) > 0),
+        hasFreeShipping: Boolean(t.hasFreeShipping),
+        freeGift: t.freeGift || null,
+        maxCap: t.maxCap || "",
+        label: t.label || "",
+        showFreeGift: Boolean(t.showFreeGift || (t.freeGift && (t.freeGift.variantId || t.freeGift.id))),
+        showFreeShipping: Boolean(t.showFreeShipping || t.hasFreeShipping),
+        showMaxCap: Boolean(t.showMaxCap || t.maxCap),
       }))
-    : [
+      : [
         {
           minAmount: 100,
           discountType: "PERCENTAGE",
@@ -316,25 +398,66 @@ export default function CartGoalEditRoute() {
           showMaxCap: false,
         },
       ];
+  }, [configuration.tiers]);
   const [tiers, setTiers] = useState(initialTiers);
 
   // Dates in shop's timezone
   const todayStr = getShopTodayDate(shopTimezone);
-  const defaultStartTime = currentTime?.time24 || "00:00:00";
+  const defaultStartTime = typeof currentTime === "string" ? currentTime : "00:00:00";
   const [startsAtDate, setStartsAtDate] = useState(offer.startsAtDate || todayStr);
-  const [startsAtTime, setStartsAtTime] = useState(offer.startsAtTime || defaultStartTime);
+  const [startsAtTime, setStartsAtTime] = useState(offer.startsAtTime || "00:00:00");
   const [hasEndDate, setHasEndDate] = useState(Boolean(offer.hasEndDate));
   const [endsAtDate, setEndsAtDate] = useState(offer.endsAtDate || "");
   const [endsAtTime, setEndsAtTime] = useState(offer.endsAtTime || "23:59:59");
   const tzAbbr = timezoneAbbr || getTimezoneAbbr(shopTimezone);
 
-  const startTimeOptions = useMemo(() => generateTimeOptions(false, defaultStartTime), [defaultStartTime]);
-  const endTimeOptions = useMemo(() => generateTimeOptions(true), []);
-
-  // Toast notification on save
+  // Sync form state when loader data changes (after save/activate/deactivate)
   useEffect(() => {
+    setTitle(offer.title || "");
+    setWidgetTitle(configuration.widgetTitle || "");
+    setStatus(offer.status || "ACTIVE");
+    setApplyTo(configuration.applyTo || "ALL");
+    setSelectedCollections(Array.isArray(configuration.collections) ? configuration.collections : []);
+    setSelectedProducts(Array.isArray(configuration.products) ? configuration.products : []);
+    setTiers(initialTiers);
+    setStartsAtDate(offer.startsAtDate || todayStr);
+    setStartsAtTime(offer.startsAtTime || "00:00:00");
+    setHasEndDate(Boolean(offer.hasEndDate));
+    setEndsAtDate(offer.endsAtDate || "");
+    setEndsAtTime(offer.endsAtTime || "23:59:59");
+    setIsSaving(false);
+    shopify.saveBar?.hide("edit-cart-goal-save-bar");
+  }, [offer, configuration, initialTiers, todayStr, shopify]);
+
+  const startTimeOptions = useMemo(() => generateTimeOptions(false, startsAtTime), [startsAtTime]);
+  const endTimeOptions = useMemo(() => generateTimeOptions(true, endsAtTime), [endsAtTime]);
+
+  // Toast notifications & modal cleanup based on query params
+  useEffect(() => {
+    if (searchParams.get("deactivated") === "true") {
+      shopify.toast.show("Offer deactivated successfully!");
+      shopify.modal.hide("deactivate-offer-modal");
+      const modal = document.getElementById("deactivate-offer-modal");
+      if (modal?.hideOverlay) {
+        modal.hideOverlay();
+      }
+      setSearchParams((prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete("deactivated");
+        return next;
+      }, { replace: true });
+    }
+    if (searchParams.get("activated") === "true") {
+      shopify.toast.show("Offer activated successfully!");
+      setSearchParams((prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete("activated");
+        return next;
+      }, { replace: true });
+    }
     if (searchParams.get("saved") === "true") {
       shopify.toast.show("Cart Goal offer updated successfully!");
+      shopify.saveBar?.hide("edit-cart-goal-save-bar");
       setSearchParams((prev) => {
         const next = new URLSearchParams(prev);
         next.delete("saved");
@@ -455,7 +578,13 @@ export default function CartGoalEditRoute() {
         setSelectedProducts(selected.map((p) => ({
           id: p.id,
           title: p.title,
+          handle: p.handle || "",
           image: p.images?.[0]?.originalSrc || p.featuredImage?.url || "",
+          variants: Array.isArray(p.variants) ? p.variants.map((v) => ({
+            id: v.id,
+            title: v.title,
+            price: parseFloat(v.price) || 0,
+          })) : [],
         })));
       }
     } catch (err) {
@@ -465,19 +594,21 @@ export default function CartGoalEditRoute() {
 
   // Dirty state calculation
   const isDirty = Boolean(
-    title !== initialTitle ||
-    widgetTitle !== initialWidgetTitle ||
-    status !== offer.status ||
+    title.trim() !== (offer.title || "").trim() ||
+    widgetTitle.trim() !== (configuration.widgetTitle || "").trim() ||
+    status !== (offer.status || "ACTIVE") ||
     applyTo !== (configuration.applyTo || "ALL") ||
-    exclusionsEnabled !== Boolean(configuration.exclusionsEnabled) ||
+    JSON.stringify(selectedCollections.map((c) => c.id || c)) !==
+    JSON.stringify((configuration.collections || []).map((c) => c.id || c)) ||
+    JSON.stringify(selectedProducts.map((p) => p.id || p)) !==
+    JSON.stringify((configuration.products || []).map((p) => p.id || p)) ||
     JSON.stringify(tiers) !== JSON.stringify(initialTiers) ||
     startsAtDate !== (offer.startsAtDate || todayStr) ||
-    startsAtTime !== (offer.startsAtTime || defaultStartTime) ||
+    startsAtTime !== (offer.startsAtTime || "00:00:00") ||
     hasEndDate !== Boolean(offer.hasEndDate) ||
-    endsAtDate !== (offer.endsAtDate || "")
+    (hasEndDate && endsAtDate !== (offer.endsAtDate || "")) ||
+    (hasEndDate && endsAtTime !== (offer.endsAtTime || "23:59:59"))
   );
-
-  const showSaveBar = (isDirty || isSubmitting) && !isRedirecting;
 
   useEffect(() => {
     if (isRedirecting) {
@@ -501,17 +632,16 @@ export default function CartGoalEditRoute() {
   const handleDiscard = (e) => {
     e?.preventDefault?.();
     e?.stopPropagation?.();
-    setTitle(initialTitle);
-    setWidgetTitle(initialWidgetTitle);
-    setStatus(offer.status);
+    setTitle(offer.title || "");
+    setWidgetTitle(configuration.widgetTitle || "");
+    setStatus(offer.status || "ACTIVE");
     setApplyTo(configuration.applyTo || "ALL");
-    setExclusionsEnabled(Boolean(configuration.exclusionsEnabled));
     setSelectedCollections(Array.isArray(configuration.collections) ? configuration.collections : []);
     setSelectedProducts(Array.isArray(configuration.products) ? configuration.products : []);
     setTiers(initialTiers);
     setActiveTierTab(0);
     setStartsAtDate(offer.startsAtDate || todayStr);
-    setStartsAtTime(offer.startsAtTime || defaultStartTime);
+    setStartsAtTime(offer.startsAtTime || "00:00:00");
     setHasEndDate(Boolean(offer.hasEndDate));
     setEndsAtDate(offer.endsAtDate || "");
     setEndsAtTime(offer.endsAtTime || "23:59:59");
@@ -560,11 +690,11 @@ export default function CartGoalEditRoute() {
     setIsSaving(true);
 
     const formData = new FormData();
+    formData.append("intent", "update");
     formData.append("title", title);
     formData.append("widgetTitle", widgetTitle);
     formData.append("status", status);
     formData.append("applyTo", applyTo);
-    formData.append("exclusionsEnabled", String(exclusionsEnabled));
     formData.append("collections", JSON.stringify(selectedCollections));
     formData.append("products", JSON.stringify(selectedProducts));
     formData.append("tiers", JSON.stringify(tiers));
@@ -586,13 +716,118 @@ export default function CartGoalEditRoute() {
         All Discounts
       </s-link>
 
-      <SaveBar id="edit-cart-goal-save-bar" open={showSaveBar}>
+      {/* Polaris Web Component More Actions Menu */}
+      <s-button
+        slot="secondary-actions"
+        commandFor="offer-actions"
+        loading={isActivating ? "true" : undefined}
+        disabled={isSubmitting ? "true" : undefined}
+      >
+        More actions
+      </s-button>
+
+      <s-menu
+        id="offer-actions"
+        accessibilityLabel="Offer actions"
+      >
+        {isDeactivatedOrExpired ? (
+          <s-button onClick={handleActivateOffer} loading={isActivating ? "true" : undefined} disabled={isSubmitting ? "true" : undefined}>
+            Activate
+          </s-button>
+        ) : (
+          <s-button
+            commandFor="deactivate-offer-modal"
+            command="--show"
+            disabled={isSubmitting ? "true" : undefined}
+          >
+            Deactivate
+          </s-button>
+        )}
+
+        <s-button
+          tone="critical"
+          commandFor="delete-offer-modal"
+          command="--show"
+          disabled={isSubmitting ? "true" : undefined}
+        >
+          Delete
+        </s-button>
+      </s-menu>
+
+      {/* Deactivate Confirmation Modal */}
+      <s-modal id="deactivate-offer-modal" heading="Deactivate offer?">
+        <s-stack gap="base">
+          <s-paragraph>
+            Are you sure you want to deactivate <b>&ldquo;{title || offer.title}&rdquo;</b>? Customers will no longer receive this discount at checkout.
+          </s-paragraph>
+          {isDirty && (
+            <s-paragraph tone="caution">
+              Note: Any unsaved changes you made will be discarded.
+            </s-paragraph>
+          )}
+        </s-stack>
+
+        <s-button
+          slot="primary-action"
+          variant="primary"
+          onClick={handleDeactivateOffer}
+          loading={isDeactivating ? "true" : undefined}
+          disabled={isSubmitting ? "true" : undefined}
+        >
+          Deactivate
+        </s-button>
+        <s-button
+          slot="secondary-actions"
+          variant="secondary"
+          commandFor="deactivate-offer-modal"
+          command="--hide"
+          disabled={isSubmitting ? "true" : undefined}
+        >
+          Cancel
+        </s-button>
+      </s-modal>
+
+      {/* Delete Confirmation Modal */}
+      <s-modal id="delete-offer-modal" heading="Delete offer?">
+        <s-stack gap="base">
+          <s-paragraph>
+            Are you sure you want to delete <b>&ldquo;{title || offer.title}&rdquo;</b>?
+          </s-paragraph>
+          <s-paragraph tone="critical">
+            This action cannot be undone.
+          </s-paragraph>
+        </s-stack>
+
+        <s-button
+          slot="primary-action"
+          variant="primary"
+          tone="critical"
+          commandFor="delete-offer-modal"
+          command="--hide"
+          onClick={handleDeleteOffer}
+          loading={isDeleting ? "true" : undefined}
+          disabled={isSubmitting ? "true" : undefined}
+        >
+          Delete offer
+        </s-button>
+        <s-button
+          slot="secondary-actions"
+          variant="secondary"
+          commandFor="delete-offer-modal"
+          command="--hide"
+          disabled={isSubmitting ? "true" : undefined}
+        >
+          Cancel
+        </s-button>
+      </s-modal>
+
+      <SaveBar id="edit-cart-goal-save-bar" open={isDirty}>
         <button
           type="button"
           variant="primary"
           onClick={handleSubmit}
           loading={isSubmitting ? "true" : undefined}
-          disabled={isSubmitting ? "true" : undefined}
+          disabled={!isDirty ? "true" : undefined}
         >
           Save
         </button>
@@ -765,12 +1000,6 @@ export default function CartGoalEditRoute() {
                   )}
                 </s-stack>
               )}
-
-              <s-checkbox
-                label="Optionally exclude gift cards or selected clearance items from cart value goals"
-                checked={exclusionsEnabled}
-                onChange={(e) => setExclusionsEnabled(e.currentTarget.checked)}
-              ></s-checkbox>
             </s-stack>
           </s-section>
 
@@ -780,14 +1009,6 @@ export default function CartGoalEditRoute() {
               <s-paragraph tone="subdued">
                 Configure progressive cart value milestones. Customers unlock higher discounts, free shipping, or free gifts as their cart value grows.
               </s-paragraph>
-
-              <s-box background="subdued" padding="small" borderRadius="base">
-                <s-stack direction="inline" gap="small" alignItems="center">
-                  <s-text size="small" tone="subdued">
-                    🌍 <strong>Multi-Currency Enabled:</strong> Thresholds and fixed discounts are configured in your store's base currency (<strong>{shopCurrency || "Base currency"}</strong>). For customers shopping in other currencies, Shopify automatically converts these values in real-time at checkout based on live market exchange rates.
-                  </s-text>
-                </s-stack>
-              </s-box>
 
               {/* Horizontal Tier Tabs + Add Tier Button */}
               <s-stack direction="inline" justifyContent="space-between" alignItems="center">
@@ -834,7 +1055,7 @@ export default function CartGoalEditRoute() {
 
                   <div style={{ maxWidth: "260px" }}>
                     <s-number-field
-                      label={`Minimum cart value (${shopCurrency || "Base currency"}) *`}
+                      label={`Minimum cart value (${shopCurrency || "Base currency"})`}
                       prefix={currencySymbol}
                       min="1"
                       step="any"
@@ -1106,6 +1327,22 @@ export default function CartGoalEditRoute() {
 
       {/* Right side Sidebar: Summary in slot="aside" */}
       <s-section slot="aside" heading="Summary">
+        <s-badge
+          slot="supplemental"
+          tone={
+            offer.computedStatus === "ACTIVE"
+              ? "success"
+              : offer.computedStatus === "SCHEDULED"
+                ? "info"
+                : "attention"
+          }
+        >
+          {offer.computedStatus === "ACTIVE"
+            ? "Active"
+            : offer.computedStatus === "SCHEDULED"
+              ? "Scheduled"
+              : "Deactivated"}
+        </s-badge>
         <s-stack gap="base">
           <s-stack gap="tight">
             <s-text weight="bold">Offer title</s-text>
